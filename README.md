@@ -2,6 +2,17 @@
 
 This is your complete IndexedDB foundation for the productivity app, built with vanilla JavaScript and MVVM architecture.
 
+## 📚 Documentation
+
+### Quick Start
+- **[Setup & Usage](README.md#quick-start)** - Get running in minutes
+- **[Testing Guide](README.md#testing-your-database)** - Verify everything works
+
+### Developer Documentation
+- **[Architecture Guide](docs/ARCHITECTURE.md)** - Complete system design and principles
+- **[API Reference](docs/API_REFERENCE.md)** - Detailed API documentation for all Models and ViewModels
+- **[Development Guide](docs/DEVELOPMENT.md)** - Setup, patterns, best practices, and troubleshooting
+
 ## 🚀 What You Have
 
 ### ✅ Complete Database Schema
@@ -12,13 +23,14 @@ This is your complete IndexedDB foundation for the productivity app, built with 
 
 ### ✅ MVVM Architecture
 - **Models**: Event, Item, Tag with full CRUD operations
-- **ViewModel**: MainViewModel with reactive state management
+- **ViewModels**: EventViewModel, TagViewModel, ItemViewModel, AppViewModel with reactive state
 - **View**: Basic test interface to verify everything works
 
 ### ✅ Core Features Working
 - **Quick Capture**: Type thoughts and press Enter
 - **Smart Parsing**: Automatically extracts hashtags and due dates
 - **Universal Tagging**: Same tags work across Events and Items
+- **Inventory Management**: Stock tracking with alerts
 - **Event Management**: Create, update, delete with full relationships
 
 ## 🏃‍♂️ Quick Start
@@ -49,6 +61,10 @@ The test interface lets you verify that:
 /
 ├── index.html              # Main page with test interface
 ├── package.json            # Dependencies (just Dexie + serve)
+├── docs/                   # Comprehensive documentation
+│   ├── ARCHITECTURE.md     # System architecture & principles
+│   ├── API_REFERENCE.md    # Complete API documentation
+│   └── DEVELOPMENT.md      # Development guide & best practices
 ├── css/
 │   └── main.css           # Basic styling
 └── js/
@@ -60,7 +76,10 @@ The test interface lets you verify that:
     │   ├── item.js        # Item model (Nouns)
     │   └── tag.js         # Tag model (Universal tagging)
     ├── viewmodels/
-    │   └── main-vm.js     # Main ViewModel (MVVM pattern)
+    │   ├── app-vm.js      # Main coordinator ViewModel
+    │   ├── event-vm.js    # Event state management
+    │   ├── tag-vm.js      # Tag state management
+    │   └── item-vm.js     # Item/inventory state management
     └── app.js             # Application entry point
 ```
 
@@ -116,6 +135,27 @@ The system automatically:
 - Creates proper Event objects
 - Links everything through the database
 
+## 🔧 Debugging & Development
+
+Access ViewModels in browser console:
+```javascript
+// Get ViewModels
+const appVM = getAppVM();      // Main coordinator
+const eventVM = getEventVM();  // Events
+const tagVM = getTagVM();      // Tags  
+const itemVM = getItemVM();    // Items
+
+// Quick operations
+appVM.createTestData();        // Creates test events and items
+eventVM.createTestEvent();     // Just events
+itemVM.createTestItem();       // Just items
+
+// Check state
+eventVM.getState();            // See all event data
+itemVM.getInventoryStats();    // Get analytics
+appVM.getDebugInfo();          // Full application state
+```
+
 ## 🚀 Ready for Phase 2
 
 Your IndexedDB foundation is complete! You now have:
@@ -124,5 +164,6 @@ Your IndexedDB foundation is complete! You now have:
 - ✅ MVVM patterns established  
 - ✅ Smart capture working
 - ✅ Test interface to verify everything
+- ✅ Comprehensive documentation
 
 Time to build your real UI on top of this solid foundation!
