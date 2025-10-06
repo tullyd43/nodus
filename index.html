@@ -1,25 +1,27 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Productivity App</title>
     <link rel="stylesheet" href="css/main.css">
 </head>
+
 <body>
     <div id="app">
         <header>
             <h1>Productivity App</h1>
             <div id="status">Initializing...</div>
         </header>
-        
+
         <main>
             <section id="quick-capture">
                 <h2>Quick Capture</h2>
                 <textarea id="capture-input" placeholder="What's on your mind?"></textarea>
                 <button id="capture-submit">Capture</button>
             </section>
-            
+
             <section id="data-test">
                 <h2>Database Test</h2>
                 <button id="test-insert">Add Test Event</button>
@@ -32,7 +34,7 @@
 
     <!-- Load Dexie from CDN for now -->
     <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
-    
+
     <!-- Our modules -->
     <script src="js/database/schema.js"></script>
     <script src="js/database/db.js"></script>
@@ -43,6 +45,8 @@
     <script src="js/viewmodels/tag-vm.js"></script>
     <script src="js/viewmodels/item-vm.js"></script>
     <script src="js/viewmodels/app-vm.js"></script>
+    <script src="js/views/main-view.js"></script>
     <script src="js/app.js"></script>
 </body>
+
 </html>
