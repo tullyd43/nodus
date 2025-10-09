@@ -1,0 +1,7 @@
+
+TABLE OF CONTENTS OF FILES AND FUNCTIONS WITHIN THEM WITH DECRIPTIONS OF EACH
+
+
+Create new project navigation reference
+    This document provides a complete overview of the project structure, files, and their contents for easy navigation and understanding.
+

@@ -1,0 +1,31 @@
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+body {
+	height: 100vh;
+	width: 100vw;
+	display: grid;
+	grid-template-areas:
+		"header header"
+		"sidebar main";
+	grid-template-rows: 80px 1fr; /* Header height and the rest of the space */
+	grid-template-columns: 300px 1fr; /* Sidebar width and the rest of the space */
+}
+
+header {
+	grid-area: header;
+	background-color: #222; /* Example color */
+}
+
+aside {
+	grid-area: sidebar;
+	background-color: #333; /* Example color */
+}
+
+main {
+	grid-area: main;
+	background-color: gray;
+	overflow-y: auto; /* Allow main content to scroll */
+}

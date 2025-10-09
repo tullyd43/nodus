@@ -1,0 +1,233 @@
+Architectural Specification for Multi-Tiered Logging and Compliance: Securing the Full-Featured Organizational Ecosystem
+Executive Summary and Strategic Mandate
+Robust logging is a critical, non-negotiable requirement for supporting the sophisticated feature set of the application, encompassing personal productivity, complex collaboration, and a public developer ecosystem. Logging transcends simple troubleshooting; it is the fundamental mechanism for ensuring security, maintaining regulatory compliance, facilitating forensic auditing, and guaranteeing system observability.1 This report details the architecture required to deliver comprehensive logging across all user tiers—system administration, security, and end-users. The architecture is built upon a strict, two-tier logging system—Operational Logs (for diagnostic purposes) and Security Audit Logs (for governance and compliance)—mandating data integrity and rigorous PII protection throughout the application’s lifecycle.
+
+Part I: Foundational Logging Architecture and Data Integrity
+1. Defining the Logging Tiers: Operational vs. Security Audit Logs
+The application must enforce a strict separation between logs intended for system diagnostics and those required for governance, owing to the fundamental differences in purpose, content, immutability, and retention policy.1
+
+The Security Audit Logs (The Immutable Ledger) capture activities that modify the state or configuration of the application, especially those related to security, access control, object creation, modification, and financial data. These logs are engineered to serve as legal evidence and are mandatory for compliance with regulatory requirements.1 The necessity for immutability dictates that these records must be written to a dedicated, write-once repository, such as a secured cloud storage bucket, immediately upon generation. This process ensures that a chronological record of changes—such as modifications to a critical Event Type or a user's role—cannot be altered after the fact.2 This tamper-proof chain grants the logs forensic integrity and legal standing.
+
+The Operational Logs (The System Diagnostic) are functionally distinct, capturing data essential for performance monitoring, troubleshooting, and debugging internal flow. This includes successful API requests, automation engine execution steps, and high-volume INFO or DEBUG data. Unlike Audit Logs, these are short-lived, high-volume, and are typically excluded from mandatory compliance oversight because they contain less sensitive long-term data.
+
+2. The Universal Structured Log Schema (JSON)
+To ensure reliable parsing, querying, and automated analysis across the entire application architecture, all log data must adhere to a consistent, structured format, with JSON being the industry standard recommendation.5 This uniformity streamlines the integration with centralized log aggregation tools and supports robust querying capabilities.8
+
+Every log entry, regardless of its tier (Operational or Audit), must include a common set of identifying and contextual fields. These requirements include core metadata fields such as the immutable timestamp (in RFC 3339 format) 9, a unique
+
+event_id 9, and essential actor context (the
+
+actor User ID or Service ID, session_id, client user agent, and ip_address).1 Crucially, the system must enforce the propagation of a
+
+correlation_id, which is a unique identifier linking all logs related to a single user request or automated workflow execution.6 Given the application features the complex Developer/Plugin API and the Automation Rules engine, which execute functions across multiple microservices asynchronously, the rigorous enforcement of the
+
+correlation_id is essential. When an initial user action triggers a sequence of subsequent service calls or automation steps, this ID is the only mechanism that allows developers and administrators to trace the full execution path, diagnose cascading failures, or conduct detailed security breach investigations.11
+
+3. Log Severity Levels and Categorization
+Effective logging requires the consistent use of a uniform set of severity levels applied universally across all components.5 This practice is foundational for effective filtering, priority-based alerting, and rapidly addressing system failures.13 For instance, a
+
+FATAL level is reserved for system-critical unavailability, demanding immediate administrative intervention, while ERROR signals a specific function failure where recovery is possible, warranting high-priority troubleshooting. WARN flags potential issues, such as repeated failed login attempts or slow API responses, that require monitoring before escalation. Granular levels such as DEBUG and TRACE are reserved exclusively for developers during runtime debugging, providing the detailed state inspection necessary for complex logic analysis (such as the smart-value calculations within the Automation Rules feature).
+
+Part II: Security, PII Handling, and Access Control
+1. PII Identification and Data Masking Strategy
+The application handles a variety of sensitive data, including user emails, rich data from Financial Fields (Section I of the feature list), names of family members (VI), and sensitive identity information used in Private Role Assignments for social events (VII). Logs containing this information are highly sensitive and must be protected for compliance with regulations such as GDPR.14
+
+A comprehensive data taxonomy is required to classify sensitive data fields, ensuring that redaction or masking policies are applied before the log is ingested into the storage system.16 The strategy employs two main techniques:
+
+Redaction (replacing the data field entirely with a placeholder like "") for highly sensitive fields where even partial information is risky 18, and
+
+Masking (replacing most characters while leaving enough context, such as the last four digits of a financial account).19
+
+The complexity of the application, particularly the allowance for user-defined Custom Fields, necessitates a strategic approach to redaction. The redaction pipeline must be configured to classify and scrub data based on the field type defined in the Event Type template, rather than relying solely on fixed field names.17 If a user creates a new, sensitive Event Type containing a Custom Field designated as "Client Contact Number," the system must recognize the sensitive nature of this field type and apply character substitution or regex pattern matching to the value within the log stream.19
+
+2. Implementation of the Redaction Pipeline and Audit Trail
+The logging service requires a dedicated pre-processing step to scrub or mask data fields in real-time. Techniques utilized include Regex pattern matching for predictable PII like email addresses, and character substitution for financial data.19 Furthermore, sensitive unique identifiers, such as the specific User ID associated with a Private Role Assignment in the Interactive Game Planner (VII), should be subjected to
+
+Data Tokenization, converting them into non-exploitable tokens for generalized logging purposes.19
+
+Crucially, to maintain compliance evidence and prove due diligence, the redaction process itself must be auditable. A separate, highly controlled "Redaction Audit Trail" must be maintained, logging precisely what data was redacted, when the operation occurred, and which specific policy triggered the action.22
+
+3. Role-Based Access Control (RBAC) for Log Viewing
+Access to the logs must be strictly governed by Role-Based Access Control (RBAC) to adhere to the principle of least privilege.24 This prevents unauthorized viewing of PII and critical audit data by restricting access based on administrative roles.26
+
+Access is partitioned into three log categories: Operational Logs (accessible mainly by Developers for troubleshooting), Standard Audit Logs (accessible by System Admins and Security Officers for standard configuration changes and user activity), and High-Security Audit Logs (restricted access for Security Officers and designated Compliance Auditors only). The latter category includes logs containing redacted or tokenized PII and records of sensitive security events, such as failed authentication attempts.26 Implementing RBAC not only improves security but simplifies auditability by automatically linking all actions to a user's defined role and permissions.24
+
+Part III: Application and Change Audit Schema Deep Dive
+The complexity of the application, which allows users to define highly customized data structures (Event Types, Goals, Routines), necessitates a sophisticated audit schema capable of tracking state transformations reliably across the entire data model.28
+
+1. The Core Immutable Audit Log Schema for Object Change
+The Audit Log must be structurally defined to capture the complete lifecycle of application objects.9 The structure is modeled to track state changes by including both the object's condition before and after any modification.10
+
+Core fields include an immutable timestamp, the actor (User ID or Service ID) responsible for the action 1, and the
+
+action name (e.g., Event.Updated, Goal.Progressed). Most importantly, the schema must include two dedicated JSON objects: prior_state and resulting_state.10
+
+The inclusion of prior_state and resulting_state is a functional requirement for an app based on user configuration. If an Event Type or an Automation Rule is modified, this schema allows administrators to forensically pinpoint who made the change, when it happened, and, crucially, to reconstruct the entire structure of the object, including its Custom Fields, prior to the modification.28 This capability is essential for incident response and recovering from accidental data corruption or loss. The
+
+object_type field (e.g., Event, Event_Type, Goal) further enhances filtering and contextual analysis.29
+
+2. Auditing Application Object Lifecycles
+All critical Create, Read, Update, and Delete (CRUD) operations on application objects must trigger an immutable audit log entry.
+
+A distinction is made between High-Value Configuration Audit (Admin Activity) and Operational Object Audit (User Activity). Admin Activity logs—such as the creation, modification, or sharing of new Event Types (I, IX) and changes to user permissions—must always be written, as they affect the core metadata and governance of the application.2 Operational Object Audit logs track daily user actions, such as moving an Event across Kanban columns or updating a Note in the Knowledge Base (VIII). While standard data retrieval (
+
+GET requests) is usually excluded to manage volume, any read action involving critical PII or access to sensitive logs must be logged to prevent non-repudiation issues.30
+
+3. User Self-Service Audit Trails (Transparency Layer)
+To empower users and promote trust, a curated, transparent view of the primary Audit Log must be provided to the individual user.30 This log must not present raw JSON data; instead, the User Activity Log UI must translate the complex
+
+prior_state and resulting_state information into simplified, human-readable summaries.31 For example, the log should read: "You changed the
+
+Budget field on the 'Italy Project' from $3,000 to $4,500."
+
+This self-service log must be filtered based on the individual user's ID and provide interactive filtering options by date, object type, and action.32 This capability allows users to perform their own basic troubleshooting and verify shared accountability, which is particularly vital in collaborative spaces like the Family Hub (VI) and Social Invitation panels (VII).1
+
+Part IV: Specialized Engines and External API Logging
+The application relies on proactive, internal components (Automation Rules) and external integrations (Developer API), which require highly contextual logging to trace complex execution flows and diagnose failures across service boundaries.
+
+1. Automation Rules Engine Logging (V)
+The Automation Engine executes system actions based on conditional logic, often without direct user initiation. Logging here is necessary to trace non-user-driven state changes and logic failures within the system.
+
+Every time an Automation Rule is triggered, a dedicated log must be generated, capturing the full execution context.34 This log must include the unique
+
+rule_id, the trigger_event that initiated the action (e.g., Event.Status_Changed), and the execution_status (Success, Partial Success, or Failure).34
+
+The log must explicitly track the array of actions_executed and their individual outcomes. The status "Partial Success" is a critical indicator; it means the conditional logic executed, but one of the subsequent actions failed (e.g., successfully updated the Event status but failed to send an external payment API request). Without explicitly logging which actions succeeded and which failed, such a silent failure would be impossible to trace, leading to significant system drift. Furthermore, contextual data, such as the runtime variables or debug output from the rule's custom smart logic, must be captured to allow for deep debugging of complex rule configurations.35
+
+2. Plugin and Developer Ecosystem Auditing (IX)
+The public, external nature of the Plugin API necessitates rigorous logging for both security and developer support. Both successful and failed API calls must be logged to diagnose issues related to external integrations.13
+
+Incoming API requests require logging of the method, URL, non-sensitive request_body, and the authenticated client_id (identifying the specific plugin or developer accessing the API).36 Outgoing responses must log the
+
+status_code and response_time.36 For critical failures, the logs must include structured stack traces (preferably in JSON format) to enable rapid debugging by developers.6 Additionally, comprehensive Ecosystem Governance Logging is required to audit all actions related to plugin lifecycle—installation, activation, permission changes, and removal from the Community Marketplace. This governance log is vital for rapid identification and deactivation of faulty or malicious third-party plugins.
+
+Part V: Compliance, Data Retention, and Lifecycle Management
+Achieving compliance is reliant on defining and enforcing differential retention policies and rigorous, automated data lifecycle management.
+
+1. GDPR and Data Minimization Alignment
+The logging retention policy must strictly align with GDPR principles, particularly the Storage Limitation principle (Art. 5), which mandates that personal data must not be stored longer than necessary for its intended purpose.37 The regulatory environment requires that organizations do not just apply fixed retention limits but must
+
+justify the duration for which every log category is retained.38 For instance, a retention period of 90 days for operational logs may be justified solely by the business need for performance troubleshooting, whereas financial records may require a statutory period of seven years.39 Retaining operational logs longer than their justified troubleshooting period increases both security risk and compliance exposure.40
+
+2. Defining the Log Retention Policy
+Retention must be dynamic and dictated by the purpose and sensitivity of the log data.41 The policy distinguishes between high-value audit data and high-volume operational data.
+
+Log Retention Policy by Type and Regulatory Requirement
+
+Log Type
+
+Primary Purpose
+
+PII/Sensitivity
+
+Minimum Retention Period (Justified)
+
+Security Audit Logs
+
+Compliance, Incident Response (ISO 27001)
+
+High (Redacted PII)
+
+1-5 Years 41
+
+Financial Audit Logs
+
+Statutory Financial Records (e.g., Budget changes)
+
+Medium (Masked)
+
+7 Years (Industry Standard/Statutory) 39
+
+System/Config Audit Logs
+
+Governance, Historical Change Tracking
+
+Low/Medium
+
+12 Months (Audit Readiness) 42
+
+Operational/Debugging Logs (INFO/DEBUG)
+
+Performance Monitoring, Troubleshooting
+
+Low
+
+14-90 Days 41
+
+3. Automated Enforcement and Archival
+Retention policies must be automated and consistently enforced to ensure secure compliance.40 The system must utilize automated lifecycle management features (available in cloud platforms) to transition logs from readily accessible ("hot") storage to archival ("cold") storage after a defined period (e.g., 3-6 months), thereby managing cost. Logs that exceed their justifiable retention period must be subject to automated and secure purging, which often involves encrypting the data before its final erasure.40 The archival system must ensure that logs remain accessible should a future incident or investigation require the historical data.42
+
+Part VI: Administrative and User Visibility (Dashboards and UX)
+Logging data must be translated into actionable intelligence through specialized dashboards tailored for distinct user groups (Administrators and End-Users).
+
+1. System Administrator Dashboard Requirements
+The primary administrative dashboard must be highly interactive, centralized, and optimized for complex forensic investigation.31
+
+Core visibility requirements include displaying Activity by User, offering charts that group actions (such as Events created or API calls) by user to highlight dormant accounts or unusual activity spikes.32 It must also visualize Error Rates by Service/API, quickly identifying which component or external integration is generating the most
+
+ERROR and FATAL logs.46 Visualization must also track Event Type Modification Audits, showing how often high-value structures like Event Types, Goals, and Routines are being created or changed.47
+
+For interaction, the dashboard requires advanced filtering capabilities, supporting complex queries based on structured fields (log_level, object_type, time range).46 Furthermore, it must provide
+
+contextual drill-down functionality, allowing administrators to click on a visual anomaly (such as a spike in warnings) and immediately access the full structured JSON log data and linked operational logs using the correlation_id.48 By integrating behavioral monitoring, such as tracking users triggering unusual Git or API events 45, the dashboard converts raw logs into actionable security intelligence, alerting teams to potential misuse of the Developer/Plugin API or compromised accounts.
+
+2. User Activity Log UI/UX
+The self-service log must prioritize usability, presenting complex audit data in a simplified, consumable format for the user.33 Users must be provided with interactive filters to segment their personal activity history by Date/Time, Event Type, and specific actions (Create, Edit, Delete), and the interface should offer adjustable visualizations, allowing the user to focus on specific temporal periods.33
+
+To resolve the inherent complexity of the prior_state and resulting_state JSON objects, the UI must automatically generate simplified change summaries. For example, instead of displaying raw data, the log should summarize: "Event 'Dinner with Jen' was updated by you, changing the Time from 6:00 PM to 7:00 PM." In collaborative modules (Family Hub, Social Invites), the log must clearly show who performed an action (e.g., "Partner accepted the invitation to Vacation Project") to reinforce shared accountability and foster trust within the shared organizational space.1
+
+Conclusions and Implementation Roadmap
+The logging infrastructure described in this report is designed to serve as the secure backbone for the complex scheduling and knowledge management application. By establishing two distinct tiers of logging—Operational for diagnostics and Audit for compliance—and enforcing strict principles of structured logging, PII redaction, and Role-Based Access Control, the architecture ensures data integrity and operational transparency across the entire platform.
+
+The non-functional requirements detailed herein—specifically the implementation of the correlation_id propagation, the automated PII masking pipeline based on Custom Field type, and the differential, purpose-justified retention policies—are critical. These features protect the application legally and structurally, mitigating the inherent risks associated with user-defined complexity and integration with external APIs. The immediate next steps for development must involve finalizing the JSON log schemas, implementing the automated redaction service, and building the RBAC infrastructure to secure log access, ensuring the core platform can proceed with confidence.
+
+Works cited
+Audit Logging: What It Is & How It Works | Datadog, accessed October 4, 2025, https://www.datadoghq.com/knowledge-center/audit-logging/
+Cloud Audit Logs overview - Google Cloud, accessed October 4, 2025, https://cloud.google.com/logging/docs/audit
+Immutable Audit Logs: The Baseline for Security, Compliance, and Operational Integrity, accessed October 4, 2025, https://hoop.dev/blog/immutable-audit-logs-the-baseline-for-security-compliance-and-operational-integrity/
+Audit trails: What they are & how they work - New Relic, accessed October 4, 2025, https://newrelic.com/pt/blog/best-practices/what-is-an-audit-trail
+Understanding Logging in Microservices: Best Practices & Challenges - Edge Delta, accessed October 4, 2025, https://edgedelta.com/company/blog/logging-in-microservices-challenges-and-best-practices
+Logging BEST Practices in software development and automation testing | by Rabi Yireh, accessed October 4, 2025, https://medium.com/@rabiyireh/logging-best-practices-in-software-development-and-automation-testing-eb35e7130d8c
+Practical Structured Logging for Modern Applications - Dash0, accessed October 4, 2025, https://www.dash0.com/guides/structured-logging-for-modern-applications
+Accelerate troubleshooting with structured logs in Amazon CloudWatch, accessed October 4, 2025, https://aws.amazon.com/blogs/mt/accelerate-troubleshooting-with-structured-logs-in-amazon-cloudwatch/
+Contents of an Audit Log Event - Oracle Help Center, accessed October 4, 2025, https://docs.oracle.com/en-us/iaas/Content/Audit/Reference/logeventreference.htm
+Audit Log JSON Schema - Mattermost documentation, accessed October 4, 2025, https://docs.mattermost.com/administration-guide/comply/embedded-json-audit-log-schema.html
+Logging Best Practices: 12 Dos and Don'ts | Better Stack Community, accessed October 4, 2025, https://betterstack.com/community/guides/logging/logging-best-practices/
+Expert Guide to Logging Best Practices - New Relic, accessed October 4, 2025, https://newrelic.com/blog/best-practices/best-log-management-practices
+API Request Logging: Best Practices - DreamFactory Blog, accessed October 4, 2025, https://blog.dreamfactory.com/api-request-logging-best-practices
+Security auditing • Audit logging overview - Palantir, accessed October 4, 2025, https://palantir.com/docs/foundry/security/audit-logs-overview/
+Best Logging Practices for Safeguarding Sensitive Data | Better Stack Community, accessed October 4, 2025, https://betterstack.com/community/guides/logging/sensitive-data/
+What is Data Masking? Importance & Techniques - Salesforce, accessed October 4, 2025, https://www.salesforce.com/platform/data-masking/what-is-data-masking/
+Log redaction | OpenTelemetry, accessed October 4, 2025, https://opentelemetry.io/docs/languages/dotnet/logs/redaction/
+How to Keep Sensitive Data Out of Your Logs: 9 Best Practices - Skyflow, accessed October 4, 2025, https://www.skyflow.com/post/how-to-keep-sensitive-data-out-of-your-logs-nine-best-practices
+What is Data Redaction and When to Use it? | Cribl Glossary, accessed October 4, 2025, https://cribl.io/glossary/data-redaction/
+How to use Microsoft.Extensions.Compliance.Redaction package - GitHub Gist, accessed October 4, 2025, https://gist.github.com/joperezr/f5f022bcb4d0ce8f077e40e1f77239c8
+How to redact sensitive / PII data in your logs - OpenObserve, accessed October 4, 2025, https://openobserve.ai/blog/redact-sensitive-data-in-logs/
+How to Handle PII in Investigations - Reveal-Brainspace, accessed October 4, 2025, https://www.revealdata.com/blog/how-to-handle-pii-in-investigations
+NetSuite Applications Suite - Personally Identifiable Information (PII) Redaction, accessed October 4, 2025, https://docs.oracle.com/en/cloud/saas/netsuite-openair/nsoa-online-help/article_8035530880.html
+Role-Based Access Control (RBAC): A Comprehensive Guide - Pathlock, accessed October 4, 2025, https://pathlock.com/blog/role-based-access-control-rbac/
+Role-based access control (RBAC) with Microsoft Intune, accessed October 4, 2025, https://learn.microsoft.com/en-us/intune/intune-service/fundamentals/role-based-access-control
+Best practices for Cloud Audit Logs, accessed October 4, 2025, https://cloud.google.com/logging/docs/audit/best-practices
+What Is Role Based Access Control? Everything You Need To Know - acre security, accessed October 4, 2025, https://acresecurity.com/blog/what-is-role-based-access-control-everything-you-need-to-know
+Track Schema Changes in Production with Postgres Event Triggers - Neon Guides, accessed October 4, 2025, https://neon.com/guides/schema-change-log
+Office 365 Management Activity API schema - Microsoft Learn, accessed October 4, 2025, https://learn.microsoft.com/en-us/office/office-365-management-api/office-365-management-activity-api-schema
+Best practices for audit logging in a SAAS business/application - Chris Dermody, accessed October 4, 2025, https://chrisdermody.com/best-practices-for-audit-logging-in-a-saas-business-app/
+How to Create a Good Admin Panel: Design Tips & Features List - Aspirity, accessed October 4, 2025, https://aspirity.com/blog/good-admin-panel-design
+Audit Event Types - Talend Data Catalog - Qlik Help, accessed October 4, 2025, https://help.qlik.com/talend/en-US/talend-data-catalog/8.1/Subsystems/UserGuide/Content/Audit-Event-Types.htm
+10 Data Visualization UX Best Practices in SaaS - Userpilot, accessed October 4, 2025, https://userpilot.com/blog/data-visualization-ux-best-practices/
+Monitor the health of your Microsoft Sentinel automation rules and playbooks, accessed October 4, 2025, https://learn.microsoft.com/en-us/azure/sentinel/monitor-automation-health
+Debug an automation rule - Atlassian Support, accessed October 4, 2025, https://support.atlassian.com/cloud-automation/docs/debug-an-automation-rule/
+What to Log and What Not to Log in APIs & Controllers | by Vivek Vala - Medium, accessed October 4, 2025, https://medium.com/@valavivek001/what-to-log-and-what-not-to-log-in-apis-controllers-7fc47d288c96
+GDPR Data Retention: Compliance Guidelines & Best Practices - Usercentrics, accessed October 4, 2025, https://usercentrics.com/knowledge-hub/gdpr-data-retention/
+Principle (e): Storage limitation | ICO, accessed October 4, 2025, https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/data-protection-principles/a-guide-to-the-data-protection-principles/storage-limitation/
+Data retention and the GDPR: Best practices for compliance - DPO Centre, accessed October 4, 2025, https://www.dpocentre.com/data-retention-and-the-gdpr-best-practices-for-compliance/
+6 Best Practices for GDPR Logging and Monitoring - CookieYes, accessed October 4, 2025, https://www.cookieyes.com/blog/gdpr-logging-and-monitoring/
+Log Retention: Policies, Best Practices & Tools (With Examples) - Last9, accessed October 4, 2025, https://last9.io/blog/log-retention/
+Security log retention: Best practices and compliance guide - AuditBoard, accessed October 4, 2025, https://auditboard.com/blog/security-log-retention-best-practices-guide
+Security Audit Logging Guideline, accessed October 4, 2025, https://security.berkeley.edu/security-audit-logging-guideline
+Create custom data visualizations with dashboards | New Relic Documentation, accessed October 4, 2025, https://docs.newrelic.com/docs/query-your-data/explore-query-data/dashboards/introduction-dashboards/
+Admin settings - System Activity dashboards | Looker - Google Cloud, accessed October 4, 2025, https://cloud.google.com/looker/docs/system-activity-dashboards
+AI-Powered Log Management & Monitoring Software | New Relic, accessed October 4, 2025, https://newrelic.com/platform/log-management
+Audit log activities | Microsoft Learn, accessed October 4, 2025, https://learn.microsoft.com/en-us/purview/audit-log-activities
+Log Management and Analytics - Dynatrace, accessed October 4, 2025, https://www.dynatrace.com/platform/log-management-analytics/
+How to Track User Activity on Website - The Ultimate Guide - UXCam, accessed October 4, 2025, https://uxcam.com/blog/how-to-track-user-activity-on-website/

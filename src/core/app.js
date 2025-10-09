@@ -1,47 +1,46 @@
 /**
  * Application Entry Point
- * 
+ *
  * ONLY handles application initialization and coordination.
  * All UI logic has been moved to MainView following proper MVVM separation.
  */
 
 class App {
-    constructor() {
-        this.appViewModel = null;
-        this.mainView = null;
-    }
+	constructor() {
+		this.appViewModel = null;
+		this.mainView = null;
+	}
 
-    async initialize() {
-        try {
-            console.log('Initializing app...');
-            
-            // Create the main AppViewModel (which coordinates all child ViewModels)
-            this.appViewModel = new AppViewModel();
-            
-            // Initialize the app (database + all ViewModels)
-            await this.appViewModel.initialize();
+	async initialize() {
+		try {
+			console.log("Initializing app...");
 
-            console.log('Creating main view...');
-            
-            // Create the main view and bind it to the AppViewModel
-            this.mainView = new MainView(this.appViewModel);
-            
-            // Initialize the view (UI bindings and listeners)
-            this.mainView.initialize();
+			// Create the main AppViewModel (which coordinates all child ViewModels)
+			this.appViewModel = new AppViewModel();
 
-            console.log('App initialized successfully');
-            
-        } catch (error) {
-            console.error('Failed to initialize app:', error);
-            this.showError('Error: ' + error.message);
-        }
-    }
+			// Initialize the app (database + all ViewModels)
+			await this.appViewModel.initialize();
 
-    showError(message) {
-        // Fallback error display if MainView isn't available
-        const errorDiv = document.createElement('div');
-        errorDiv.textContent = message;
-        errorDiv.style.cssText = `
+			console.log("Creating main view...");
+
+			// Create the main view and bind it to the AppViewModel
+			this.mainView = new MainView(this.appViewModel);
+
+			// Initialize the view (UI bindings and listeners)
+			this.mainView.initialize();
+
+			console.log("App initialized successfully");
+		} catch (error) {
+			console.error("Failed to initialize app:", error);
+			this.showError("Error: " + error.message);
+		}
+	}
+
+	showError(message) {
+		// Fallback error display if MainView isn't available
+		const errorDiv = document.createElement("div");
+		errorDiv.textContent = message;
+		errorDiv.style.cssText = `
             position: fixed;
             top: 20px;
             right: 20px;
@@ -52,48 +51,48 @@ class App {
             z-index: 1000;
             background: #f44336;
         `;
-        document.body.appendChild(errorDiv);
-    }
+		document.body.appendChild(errorDiv);
+	}
 
-    // === GETTERS FOR DEBUGGING ===
+	// === GETTERS FOR DEBUGGING ===
 
-    getAppViewModel() {
-        return this.appViewModel;
-    }
+	getAppViewModel() {
+		return this.appViewModel;
+	}
 
-    getMainView() {
-        return this.mainView;
-    }
+	getMainView() {
+		return this.mainView;
+	}
 
-    // === CLEANUP ===
+	// === CLEANUP ===
 
-    destroy() {
-        if (this.mainView) {
-            this.mainView.destroy();
-        }
-        
-        if (this.appViewModel) {
-            // AppViewModel cleanup if needed
-        }
-        
-        console.log('App destroyed');
-    }
+	destroy() {
+		if (this.mainView) {
+			this.mainView.destroy();
+		}
+
+		if (this.appViewModel) {
+			// AppViewModel cleanup if needed
+		}
+
+		console.log("App destroyed");
+	}
 }
 
 // Initialize the app when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    const app = new App();
-    app.initialize();
-    
-    // Make app globally available for debugging
-    window.app = app;
-    
-    // Expose ViewModels for debugging (delegated to app)
-    window.getAppVM = () => app.getAppViewModel();
-    window.getEventVM = () => app.getAppViewModel()?.getEventViewModel();
-    window.getTagVM = () => app.getAppViewModel()?.getTagViewModel();
-    window.getItemVM = () => app.getAppViewModel()?.getItemViewModel();
-    
-    // Expose View for debugging
-    window.getMainView = () => app.getMainView();
+document.addEventListener("DOMContentLoaded", () => {
+	const app = new App();
+	app.initialize();
+
+	// Make app globally available for debugging
+	window.app = app;
+
+	// Expose ViewModels for debugging (delegated to app)
+	window.getAppVM = () => app.getAppViewModel();
+	window.getEventVM = () => app.getAppViewModel()?.getEventViewModel();
+	window.getTagVM = () => app.getAppViewModel()?.getTagViewModel();
+	window.getItemVM = () => app.getAppViewModel()?.getItemViewModel();
+
+	// Expose View for debugging
+	window.getMainView = () => app.getMainView();
 });
