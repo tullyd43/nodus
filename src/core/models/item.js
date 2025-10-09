@@ -1,220 +1,235 @@
 /**
  * Item Model
- * 
+ *
  * This implements the "Item" (Noun) concept from our architecture.
  * Items represent quantifiable, trackable assets.
  */
 
+import appDb from "../database/db.js";
+import TagModel from "./tag.js";
+
 class ItemModel {
-    constructor() {
-        this.db = appDb.getDb();
-    }
+	constructor() {
+		this.tagModel = new TagModel();
+		this.db = appDb;
+	}
 
-    /**
-     * Create a new item
-     */
-    async create(itemData) {
-        try {
-            if (!itemData.name) {
-                throw new Error('Name is required');
-            }
+	/**
+	 * Create a new item
+	 */
+	async create(itemData) {
+		try {
+			if (!itemData.name) {
+				throw new Error("Name is required");
+			}
 
-            const item = {
-                user_id: appDb.getCurrentUserId(),
-                item_type_id: itemData.item_type_id || await this.getDefaultItemTypeId(),
-                name: itemData.name,
-                description: itemData.description || '',
-                stock_quantity: itemData.stock_quantity || 0,
-                metadata: itemData.metadata || {}
-            };
+			const item = {
+				user_id: appDb.getCurrentUserId(),
+				item_type_id:
+					itemData.item_type_id ||
+					(await this.getDefaultItemTypeId()),
+				name: itemData.name,
+				description: itemData.description || "",
+				stock_quantity: itemData.stock_quantity || 0,
+				metadata: itemData.metadata || {},
+			};
 
-            const itemId = await this.db.items.add(item);
-            
-            // Handle tags if provided
-            if (itemData.tags && itemData.tags.length > 0) {
-                await this.assignTags(itemId, itemData.tags);
-            }
+			const itemId = await this.db.items.add(item);
 
-            return await this.getById(itemId);
-        } catch (error) {
-            console.error('Failed to create item:', error);
-            throw error;
-        }
-    }
+			// Handle tags if provided
+			if (itemData.tags && itemData.tags.length > 0) {
+				await this.assignTags(itemId, itemData.tags);
+			}
 
-    /**
-     * Get item by ID with related data
-     */
-    async getById(itemId) {
-        try {
-            const item = await this.db.items.get(itemId);
-            if (!item) return null;
+			return await this.getById(itemId);
+		} catch (error) {
+			console.error("Failed to create item:", error);
+			throw error;
+		}
+	}
 
-            // Enrich with related data
-            item.item_type = await this.db.item_types.get(item.item_type_id);
-            item.tags = await this.getItemTags(itemId);
+	/**
+	 * Get item by ID with related data
+	 */
+	async getById(itemId) {
+		try {
+			const item = await this.db.items.get(itemId);
+			if (!item) return null;
 
-            return item;
-        } catch (error) {
-            console.error('Failed to get item:', error);
-            throw error;
-        }
-    }
+			// Enrich with related data
+			item.item_type = await this.db.item_types.get(item.item_type_id);
+			item.tags = await this.getItemTags(itemId);
 
-    /**
-     * Update an item
-     */
-    async update(itemId, updateData) {
-        try {
-            await this.db.items.update(itemId, updateData);
-            return await this.getById(itemId);
-        } catch (error) {
-            console.error('Failed to update item:', error);
-            throw error;
-        }
-    }
+			return item;
+		} catch (error) {
+			console.error("Failed to get item:", error);
+			throw error;
+		}
+	}
 
-    /**
-     * Delete an item
-     */
-    async delete(itemId) {
-        try {
-            // Remove related data first (tags, links, etc.)
-            await this.removeAllTags(itemId);
-            
-            // Delete the item
-            await this.db.items.delete(itemId);
-            return true;
-        } catch (error) {
-            console.error('Failed to delete item:', error);
-            throw error;
-        }
-    }
+	/**
+	 * Update an item
+	 */
+	async update(itemId, updateData) {
+		try {
+			await this.db.items.update(itemId, updateData);
+			return await this.getById(itemId);
+		} catch (error) {
+			console.error("Failed to update item:", error);
+			throw error;
+		}
+	}
 
-    /**
-     * Query items with filters
-     */
-    async query(filters = {}) {
-        try {
-            let query = this.db.items.where('user_id').equals(appDb.getCurrentUserId());
+	/**
+	 * Delete an item
+	 */
+	async delete(itemId) {
+		try {
+			// Remove related data first (tags, links, etc.)
+			await this.removeAllTags(itemId);
 
-            if (filters.item_type_id) {
-                query = query.and(item => item.item_type_id === filters.item_type_id);
-            }
+			// Delete the item
+			await this.db.items.delete(itemId);
+			return true;
+		} catch (error) {
+			console.error("Failed to delete item:", error);
+			throw error;
+		}
+	}
 
-            if (filters.low_stock) {
-                query = query.and(item => item.stock_quantity <= (filters.low_stock_threshold || 5));
-            }
+	/**
+	 * Query items with filters
+	 */
+	async query(filters = {}) {
+		try {
+			let query = this.db.items
+				.where("user_id")
+				.equals(appDb.getCurrentUserId());
 
-            const items = await query.toArray();
+			// Apply filters
+			if (filters.item_type_id) {
+				query = query.and(
+					(item) => item.item_type_id === filters.item_type_id
+				);
+			}
 
-            // Enrich with basic related data
-            for (const item of items) {
-                item.item_type = await this.db.item_types.get(item.item_type_id);
-                item.tag_count = await this.getItemTagCount(item.item_id);
-            }
+			if (filters.low_stock) {
+				query = query.and(
+					(item) =>
+						item.stock_quantity <=
+						(filters.low_stock_threshold || 5)
+				);
+			}
 
-            return items;
-        } catch (error) {
-            console.error('Failed to query items:', error);
-            throw error;
-        }
-    }
+			const items = await query.toArray();
 
-    /**
-     * Assign tags to an item (reuses tag logic from EventModel)
-     */
-    async assignTags(itemId, tagNames) {
-        try {
-            const eventModel = new EventModel();
-            
-            for (const tagName of tagNames) {
-                const tag = await eventModel.getOrCreateTag(tagName);
-                
-                const existingAssignment = await this.db.tag_assignments
-                    .where('[tag_id+taggable_id+taggable_type]')
-                    .equals([tag.tag_id, itemId, 'item'])
-                    .first();
+			// Enrich with basic related data
+			for (const item of items) {
+				item.item_type = await this.db.item_types.get(
+					item.item_type_id
+				);
+				item.tags = await this.getItemTags(item.item_id);
+			}
 
-                if (!existingAssignment) {
-                    await this.db.tag_assignments.add({
-                        tag_id: tag.tag_id,
-                        taggable_id: itemId,
-                        taggable_type: 'item'
-                    });
-                }
-            }
-        } catch (error) {
-            console.error('Failed to assign tags to item:', error);
-            throw error;
-        }
-    }
+			return items;
+		} catch (error) {
+			console.error("Failed to query items:", error);
+			throw error;
+		}
+	}
 
-    /**
-     * Get tags for an item
-     */
-    async getItemTags(itemId) {
-        try {
-            const assignments = await this.db.tag_assignments
-                .where('[taggable_type+taggable_id]')
-                .equals(['item', itemId])
-                .toArray();
+	/**
+	 * Assign tags to an item (reuses tag logic from EventModel)
+	 */
+	async assignTags(itemId, tagNames) {
+		try {
+			for (const tagName of tagNames) {
+				const tag = await this.tagModel.getOrCreate(tagName);
 
-            const tags = [];
-            for (const assignment of assignments) {
-                const tag = await this.db.tags.get(assignment.tag_id);
-                if (tag) tags.push(tag);
-            }
+				const existingAssignment = await this.db.tag_assignments
+					.where("[tag_id+taggable_type+taggable_id]")
+					.equals([tag.tag_id, "item", itemId])
+					.first();
 
-            return tags;
-        } catch (error) {
-            console.error('Failed to get item tags:', error);
-            return [];
-        }
-    }
+				if (!existingAssignment) {
+					await this.db.tag_assignments.add({
+						tag_id: tag.tag_id,
+						taggable_id: itemId,
+						taggable_type: "item",
+					});
+				}
+			}
+		} catch (error) {
+			console.error("Failed to assign tags to item:", error);
+			throw error;
+		}
+	}
 
-    /**
-     * Get tag count for an item
-     */
-    async getItemTagCount(itemId) {
-        try {
-            return await this.db.tag_assignments
-                .where('[taggable_type+taggable_id]')
-                .equals(['item', itemId])
-                .count();
-        } catch (error) {
-            return 0;
-        }
-    }
+	/**
+	 * Get tags for an item
+	 */
+	async getItemTags(itemId) {
+		try {
+			const assignments = await this.db.tag_assignments
+				.where("[taggable_type+taggable_id]")
+				.equals(["item", itemId])
+				.toArray();
 
-    /**
-     * Remove all tags from an item
-     */
-    async removeAllTags(itemId) {
-        try {
-            await this.db.tag_assignments
-                .where('[taggable_type+taggable_id]')
-                .equals(['item', itemId])
-                .delete();
-        } catch (error) {
-            console.error('Failed to remove tags from item:', error);
-        }
-    }
+			const tags = [];
+			for (const assignment of assignments) {
+				const tag = await this.db.tags.get(assignment.tag_id);
+				if (tag) tags.push(tag);
+			}
 
-    /**
-     * Get default item type ID
-     */
-    async getDefaultItemTypeId() {
-        try {
-            const defaultType = await this.db.item_types
-                .where('name')
-                .equals('Consumable')
-                .first();
-            return defaultType ? defaultType.item_type_id : 1;
-        } catch (error) {
-            return 1;
-        }
-    }
+			return tags;
+		} catch (error) {
+			console.error("Failed to get item tags:", error);
+			return [];
+		}
+	}
+
+	/**
+	 * Get tag count for an item
+	 */
+	async getItemTagCount(itemId) {
+		try {
+			return await this.db.tag_assignments
+				.where("[taggable_type+taggable_id]")
+				.equals(["item", itemId])
+				.count();
+		} catch (error) {
+			return 0;
+		}
+	}
+
+	/**
+	 * Remove all tags from an item
+	 */
+	async removeAllTags(itemId) {
+		try {
+			await this.db.tag_assignments
+				.where("[taggable_type+taggable_id]")
+				.equals(["item", itemId])
+				.delete();
+		} catch (error) {
+			console.error("Failed to remove tags from item:", error);
+		}
+	}
+
+	/**
+	 * Get default item type ID
+	 */
+	async getDefaultItemTypeId() {
+		try {
+			const defaultType = await this.db.item_types
+				.where("name")
+				.equals("Consumable")
+				.first();
+			return defaultType ? defaultType.item_type_id : 1;
+		} catch (error) {
+			return 1;
+		}
+	}
 }
 
-window.ItemModel = ItemModel;
+export default ItemModel;

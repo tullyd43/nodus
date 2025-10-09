@@ -1,6 +1,6 @@
 /**
  * Database Schema Definition
- * 
+ *
  * This file defines the complete IndexedDB schema based on our PostgreSQL design.
  * It implements the core architectural principles:
  * - Events vs Items (Verbs vs Nouns)
@@ -10,225 +10,210 @@
  */
 
 const DB_SCHEMA = {
-    version: 1,
-    name: 'ProductivityApp',
-    
-    stores: {
-        // === FOUNDATIONAL LAYER ===
-        
-        users: {
-            keyPath: 'user_id',
-            autoIncrement: true,
-            indexes: {
-                'email': { unique: true },
-                'username': { unique: true }
-            }
-        },
+	version: 1,
+	name: "ProductivityApp",
 
-        // Core Objects: The Verb/Noun Dichotomy
-        events: {
-            keyPath: 'event_id',
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'event_type_id': {},
-                'status': {},
-                'due_date': {},
-                'project_id': {},
-                'phase_id': {},
-                'assigned_to_id': {},
-                'created_at': {},
-                'updated_at': {},
-                // Compound indexes for common queries
-                '[user_id+status]': {},
-                '[user_id+event_type_id]': {},
-                '[user_id+due_date]': {}
-            }
-        },
+	stores: {
+		// === FOUNDATIONAL LAYER ===
 
-        items: {
-            keyPath: 'item_id',
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'item_type_id': {},
-                'name': {},
-                'created_at': {},
-                'updated_at': {},
-                '[user_id+item_type_id]': {}
-            }
-        },
+		users: {
+			keyPath: "user_id",
+			autoIncrement: true,
+			indexes: {
+				email: { unique: true },
+				username: { unique: true },
+			},
+		},
 
-        // === TEMPLATING SYSTEM ===
-        
-        event_types: {
-            keyPath: 'event_type_id',
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'name': {},
-                'is_system': {}
-            }
-        },
+		// Core Objects: The Verb/Noun Dichotomy
+		events: {
+			keyPath: "event_id",
+			autoIncrement: true,
+			indexes: {
+				user_id: {},
+				event_type_id: {},
+				status: {},
+				due_date: {},
+				project_id: {},
+				phase_id: {},
+				assigned_to_id: {},
+				created_at: {},
+				updated_at: {},
+				// Compound indexes for common queries
+				"[user_id+status]": {},
+				"[user_id+event_type_id]": {},
+				"[user_id+due_date]": {},
+			},
+		},
 
-        item_types: {
-            keyPath: 'item_type_id', 
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'name': {},
-                'is_system': {}
-            }
-        },
+		items: {
+			keyPath: "item_id",
+			autoIncrement: true,
+			indexes: {
+				user_id: {},
+				item_type_id: {},
+				name: {},
+				created_at: {},
+				updated_at: {},
+				"[user_id+item_type_id]": {},
+			},
+		},
 
-        custom_fields: {
-            keyPath: 'field_id',
-            autoIncrement: true,
-            indexes: {
-                'object_type': {},
-                'object_id': {},
-                'field_name': {},
-                '[object_type+object_id]': {}
-            }
-        },
+		// === TEMPLATING SYSTEM ===
 
-        custom_field_values: {
-            keyPath: 'value_id',
-            autoIncrement: true,
-            indexes: {
-                'field_id': {},
-                'object_type': {},
-                'object_id': {},
-                '[object_type+object_id]': {},
-                '[field_id+object_id]': {}
-            }
-        },
+		event_types: {
+			keyPath: "event_type_id",
+			autoIncrement: true,
+			indexes: {
+				user_id: {},
+				name: {},
+				is_system: {},
+			},
+		},
 
-        // === UNIVERSAL ORGANIZATION LAYER ===
-        
-        project_phases: {
-            keyPath: 'phase_id',
-            autoIncrement: true,
-            indexes: {
-                'project_event_id': {},
-                'sequence_order': {},
-                '[project_event_id+sequence_order]': {}
-            }
-        },
+		item_types: {
+			keyPath: "item_type_id",
+			autoIncrement: true,
+			indexes: {
+				user_id: {},
+				name: {},
+				is_system: {},
+			},
+		},
 
-        tags: {
-            keyPath: 'tag_id',
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'tag_name': {},
-                '[user_id+tag_name]': { unique: true }
-            }
-        },
+		custom_fields: {
+			keyPath: "field_id",
+			autoIncrement: true,
+			indexes: {
+				object_type: {},
+				object_id: {},
+				field_name: {},
+				"[object_type+object_id]": {},
+			},
+		},
 
-        // Polymorphic join table for universal tagging
-        tag_assignments: {
-            keyPath: 'assignment_id',
-            autoIncrement: true,
-            indexes: {
-                'tag_id': {},
-                'taggable_id': {},
-                'taggable_type': {},
-                '[taggable_type+taggable_id]': {},
-                '[tag_id+taggable_type]': {},
-                '[tag_id+taggable_id+taggable_type]': { unique: true }
-            }
-        },
+		custom_field_values: {
+			keyPath: "value_id",
+			autoIncrement: true,
+			indexes: {
+				field_id: {},
+				object_type: {},
+				object_id: {},
+				"[object_type+object_id]": {},
+				"[field_id+object_id]": {},
+			},
+		},
 
-        // Polymorphic join table for bi-directional linking
-        links: {
-            keyPath: 'link_id',
-            autoIncrement: true,
-            indexes: {
-                'source_id': {},
-                'source_type': {},
-                'target_id': {},
-                'target_type': {},
-                '[source_type+source_id]': {},
-                '[target_type+target_id]': {},
-                '[source_id+target_id]': { unique: true }
-            }
-        },
+		// === UNIVERSAL ORGANIZATION LAYER ===
 
-        // === PROACTIVE SYSTEMS ===
-        
-        routines: {
-            keyPath: 'routine_id',
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'name': {},
-                'is_active': {},
-                '[user_id+is_active]': {}
-            }
-        },
+		project_phases: {
+			keyPath: "phase_id",
+			autoIncrement: true,
+			indexes: {
+				project_event_id: {},
+				sequence_order: {},
+				"[project_event_id+sequence_order]": {},
+			},
+		},
 
-        goals: {
-            keyPath: 'goal_id',
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'title': {},
-                'target_date': {},
-                'is_active': {},
-                '[user_id+is_active]': {}
-            }
-        },
+		tags: {
+			keyPath: "tag_id",
+			autoIncrement: true,
+			indexes: {
+				user_id: {},
+				tag_name: {},
+				color: {},
+				"[user_id+tag_name]": { unique: true },
+			},
+		},
 
-        collections: {
-            keyPath: 'collection_id',
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'name': {},
-                'is_active': {},
-                '[user_id+is_active]': {}
-            }
-        },
+		tag_assignments: {
+			keyPath: "assignment_id",
+			autoIncrement: true,
+			indexes: {
+				tag_id: {},
+				taggable_type: {},
+				taggable_id: {},
+				"[taggable_type+taggable_id]": {},
+				"[tag_id+taggable_type+taggable_id]": { unique: true },
+			},
+		},
 
-        lists: {
-            keyPath: 'list_id',
-            autoIncrement: true,
-            indexes: {
-                'user_id': {},
-                'title': {},
-                'created_at': {},
-                'updated_at': {}
-            }
-        },
+		links: {
+			keyPath: "link_id",
+			autoIncrement: true,
+			indexes: {
+				from_type: {},
+				from_id: {},
+				to_type: {},
+				to_id: {},
+				relationship_type: {},
+				"[from_type+from_id]": {},
+				"[to_type+to_id]": {},
+				"[from_type+from_id+to_type+to_id]": { unique: true },
+			},
+		},
 
-        // === AUDIT FRAMEWORK ===
-        
-        audit_logs: {
-            keyPath: 'log_id',
-            autoIncrement: true,
-            indexes: {
-                'actor_user_id': {},
-                'action_type': {},
-                'object_type': {},
-                'object_id': {},
-                'timestamp': {},
-                '[actor_user_id+timestamp]': {},
-                '[object_type+object_id]': {}
-            }
-        },
+		goals: {
+			keyPath: "goal_id",
+			autoIncrement: true,
+			indexes: {
+				user_id: {},
+				title: {},
+				target_date: {},
+				is_active: {},
+				"[user_id+is_active]": {},
+			},
+		},
 
-        operational_logs: {
-            keyPath: 'op_log_id',
-            autoIncrement: true,
-            indexes: {
-                'severity_level': {},
-                'timestamp': {},
-                'correlation_id': {}
-            }
-        }
-    }
+		collections: {
+			keyPath: "collection_id",
+			autoIncrement: true,
+			indexes: {
+				user_id: {},
+				name: {},
+				is_active: {},
+				"[user_id+is_active]": {},
+			},
+		},
+
+		lists: {
+			keyPath: "list_id",
+			autoIncrement: true,
+			indexes: {
+				user_id: {},
+				title: {},
+				created_at: {},
+				updated_at: {},
+			},
+		},
+
+		// === AUDIT FRAMEWORK ===
+
+		audit_logs: {
+			keyPath: "log_id",
+			autoIncrement: true,
+			indexes: {
+				actor_user_id: {},
+				action_type: {},
+				object_type: {},
+				object_id: {},
+				timestamp: {},
+				"[actor_user_id+timestamp]": {},
+				"[object_type+object_id]": {},
+			},
+		},
+
+		operational_logs: {
+			keyPath: "op_log_id",
+			autoIncrement: true,
+			indexes: {
+				severity_level: {},
+				timestamp: {},
+				correlation_id: {},
+			},
+		},
+	},
 };
 
-// Export for use in other modules
-window.DB_SCHEMA = DB_SCHEMA;
+export { DB_SCHEMA };

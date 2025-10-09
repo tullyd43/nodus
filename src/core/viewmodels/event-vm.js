@@ -1,440 +1,457 @@
 /**
  * Event ViewModel
- * 
+ *
  * Manages all event-related state and operations.
  * Follows MVVM principles - no DOM manipulation, pure state management.
  */
 
+import appDb from "../database/db.js";
+import EventModel from "../models/event.js";
+
 class EventViewModel {
-    constructor() {
-        this.eventModel = new EventModel();
-        
-        // Observable state specific to events
-        this.state = {
-            // Data
-            events: [],
-            selectedEvent: null,
-            eventTypes: [],
-            
-            // UI State  
-            isLoading: false,
-            isCreating: false,
-            isUpdating: false,
-            
-            // Filters specific to events
-            filters: {
-                status: null,
-                event_type_id: null,
-                due_date_from: null,
-                due_date_to: null,
-                project_id: null
-            },
-            
-            // Search
-            searchQuery: '',
-            searchResults: [],
-            
-            // Quick capture
-            captureText: '',
-            isCaptureProcessing: false,
-            
-            // Pagination
-            currentPage: 1,
-            pageSize: 50,
-            totalCount: 0
-        };
-        
-        // Event listeners
-        this.listeners = {
-            stateChange: [],
-            eventsChange: [],
-            eventCreated: [],
-            eventUpdated: [],
-            eventDeleted: [],
-            filtersChange: []
-        };
-    }
+	constructor() {
+		this.eventModel = new EventModel();
 
-    // === STATE MANAGEMENT ===
+		// Observable state specific to events
+		this.state = {
+			// Data
+			events: [],
+			selectedEvent: null,
+			eventTypes: [],
 
-    setState(newState) {
-        const previousState = { ...this.state };
-        this.state = { ...this.state, ...newState };
-        
-        // Notify listeners
-        this.notifyListeners('stateChange', { 
-            previousState, 
-            currentState: this.state,
-            changes: newState 
-        });
+			// UI State
+			isLoading: false,
+			isCreating: false,
+			isUpdating: false,
 
-        // Specific notifications
-        if (newState.events !== undefined) {
-            this.notifyListeners('eventsChange', this.state.events);
-        }
-        
-        if (newState.filters !== undefined) {
-            this.notifyListeners('filtersChange', this.state.filters);
-        }
-    }
+			// Filters specific to events
+			filters: {
+				status: null,
+				event_type_id: null,
+				due_date_from: null,
+				due_date_to: null,
+				project_id: null,
+			},
 
-    getState() {
-        return { ...this.state };
-    }
+			// Search
+			searchQuery: "",
+			searchResults: [],
 
-    // === EVENT LISTENERS ===
+			// Quick capture
+			captureText: "",
+			isCaptureProcessing: false,
 
-    on(event, callback) {
-        if (!this.listeners[event]) {
-            this.listeners[event] = [];
-        }
-        this.listeners[event].push(callback);
-    }
+			// Pagination
+			currentPage: 1,
+			pageSize: 50,
+			totalCount: 0,
+		};
 
-    off(event, callback) {
-        if (this.listeners[event]) {
-            this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
-        }
-    }
+		// Event listeners
+		this.listeners = {
+			stateChange: [],
+			eventsChange: [],
+			eventCreated: [],
+			eventUpdated: [],
+			eventDeleted: [],
+			filtersChange: [],
+		};
+	}
 
-    notifyListeners(event, data) {
-        if (this.listeners[event]) {
-            this.listeners[event].forEach(callback => {
-                try {
-                    callback(data);
-                } catch (error) {
-                    console.error(`Error in EventViewModel ${event} listener:`, error);
-                }
-            });
-        }
-    }
+	// === STATE MANAGEMENT ===
 
-    // === DATA OPERATIONS ===
+	setState(newState) {
+		const previousState = { ...this.state };
+		this.state = { ...this.state, ...newState };
 
-    async loadEvents() {
-        try {
-            this.setState({ isLoading: true });
-            
-            const events = await this.eventModel.query({
-                ...this.state.filters,
-                page: this.state.currentPage,
-                pageSize: this.state.pageSize
-            });
-            
-            this.setState({ 
-                events,
-                isLoading: false,
-                totalCount: events.length // In a real app, you'd get this from the query
-            });
-            
-            return events;
-        } catch (error) {
-            console.error('Failed to load events:', error);
-            this.setState({ isLoading: false });
-            throw error;
-        }
-    }
+		// Notify listeners
+		this.notifyListeners("stateChange", {
+			previousState,
+			currentState: this.state,
+			changes: newState,
+		});
 
-    async loadEventTypes() {
-        try {
-            // For now, get from the database directly
-            // In a full app, you'd have an EventTypeModel
-            const db = appDb.getDb();
-            const eventTypes = await db.event_types
-                .where('user_id')
-                .equals(appDb.getCurrentUserId())
-                .toArray();
-            
-            this.setState({ eventTypes });
-            return eventTypes;
-        } catch (error) {
-            console.error('Failed to load event types:', error);
-            throw error;
-        }
-    }
+		// Specific notifications
+		if (newState.events !== undefined) {
+			this.notifyListeners("eventsChange", this.state.events);
+		}
 
-    async createEvent(eventData) {
-        try {
-            this.setState({ isCreating: true });
-            
-            const newEvent = await this.eventModel.create(eventData);
-            
-            // Reload events to reflect the change
-            await this.loadEvents();
-            
-            this.setState({ isCreating: false });
-            this.notifyListeners('eventCreated', newEvent);
-            
-            return newEvent;
-        } catch (error) {
-            console.error('Failed to create event:', error);
-            this.setState({ isCreating: false });
-            throw error;
-        }
-    }
+		if (newState.filters !== undefined) {
+			this.notifyListeners("filtersChange", this.state.filters);
+		}
+	}
 
-    async updateEvent(eventId, updateData) {
-        try {
-            this.setState({ isUpdating: true });
-            
-            const updatedEvent = await this.eventModel.update(eventId, updateData);
-            
-            // Update the event in the current list
-            const events = this.state.events.map(event => 
-                event.event_id === eventId ? updatedEvent : event
-            );
-            
-            this.setState({ 
-                events,
-                isUpdating: false,
-                selectedEvent: updatedEvent
-            });
-            
-            this.notifyListeners('eventUpdated', updatedEvent);
-            
-            return updatedEvent;
-        } catch (error) {
-            console.error('Failed to update event:', error);
-            this.setState({ isUpdating: false });
-            throw error;
-        }
-    }
+	getState() {
+		return { ...this.state };
+	}
 
-    async deleteEvent(eventId) {
-        try {
-            await this.eventModel.delete(eventId);
-            
-            // Remove from current list
-            const events = this.state.events.filter(event => event.event_id !== eventId);
-            
-            this.setState({ 
-                events,
-                selectedEvent: this.state.selectedEvent?.event_id === eventId ? null : this.state.selectedEvent
-            });
-            
-            this.notifyListeners('eventDeleted', eventId);
-            
-            return true;
-        } catch (error) {
-            console.error('Failed to delete event:', error);
-            throw error;
-        }
-    }
+	// === EVENT LISTENERS ===
 
-    async getEventById(eventId) {
-        try {
-            const event = await this.eventModel.getById(eventId);
-            return event;
-        } catch (error) {
-            console.error('Failed to get event:', error);
-            throw error;
-        }
-    }
+	on(event, callback) {
+		if (!this.listeners[event]) {
+			this.listeners[event] = [];
+		}
+		this.listeners[event].push(callback);
+	}
 
-    // === SELECTION ===
+	off(event, callback) {
+		if (this.listeners[event]) {
+			this.listeners[event] = this.listeners[event].filter(
+				(cb) => cb !== callback
+			);
+		}
+	}
 
-    selectEvent(eventId) {
-        const event = this.state.events.find(e => e.event_id === eventId);
-        this.setState({ selectedEvent: event });
-    }
+	notifyListeners(event, data) {
+		if (this.listeners[event]) {
+			this.listeners[event].forEach((callback) => {
+				try {
+					callback(data);
+				} catch (error) {
+					console.error(
+						`Error in EventViewModel ${event} listener:`,
+						error
+					);
+				}
+			});
+		}
+	}
 
-    clearSelection() {
-        this.setState({ selectedEvent: null });
-    }
+	// === DATA OPERATIONS ===
 
-    // === FILTERING & SEARCH ===
+	async loadEvents() {
+		try {
+			this.setState({ isLoading: true });
 
-    async applyFilters(newFilters) {
-        try {
-            const updatedFilters = { ...this.state.filters, ...newFilters };
-            this.setState({ 
-                filters: updatedFilters,
-                currentPage: 1 // Reset to first page when filtering
-            });
-            await this.loadEvents();
-        } catch (error) {
-            console.error('Failed to apply filters:', error);
-            throw error;
-        }
-    }
+			const events = await this.eventModel.query({
+				...this.state.filters,
+				page: this.state.currentPage,
+				pageSize: this.state.pageSize,
+			});
 
-    async clearFilters() {
-        const clearedFilters = {
-            status: null,
-            event_type_id: null,
-            due_date_from: null,
-            due_date_to: null,
-            project_id: null
-        };
-        
-        await this.applyFilters(clearedFilters);
-    }
+			this.setState({
+				events,
+				isLoading: false,
+				totalCount: events.length, // In a real app, you'd get this from the query
+			});
 
-    async search(query) {
-        try {
-            this.setState({ searchQuery: query });
-            
-            if (!query.trim()) {
-                this.setState({ searchResults: [] });
-                return [];
-            }
+			return events;
+		} catch (error) {
+			console.error("Failed to load events:", error);
+			this.setState({ isLoading: false });
+			throw error;
+		}
+	}
 
-            // Simple search implementation
-            const allEvents = await this.eventModel.query({});
-            const results = allEvents.filter(event => 
-                event.title.toLowerCase().includes(query.toLowerCase()) ||
-                event.content.toLowerCase().includes(query.toLowerCase())
-            );
+	async loadEventTypes() {
+		try {
+			// For now, get from the database directly
+			// In a full app, you'd have an EventTypeModel
+			const eventTypes = await appDb.event_types
+				.where("user_id")
+				.equals(appDb.getCurrentUserId())
+				.toArray();
 
-            this.setState({ searchResults: results });
-            return results;
-        } catch (error) {
-            console.error('Failed to search events:', error);
-            throw error;
-        }
-    }
+			this.setState({ eventTypes });
+			return eventTypes;
+		} catch (error) {
+			console.error("Failed to load event types:", error);
+			throw error;
+		}
+	}
 
-    // === QUICK CAPTURE ===
+	async createEvent(eventData) {
+		try {
+			this.setState({ isCreating: true });
 
-    setCaptureText(text) {
-        this.setState({ captureText: text });
-    }
+			const newEvent = await this.eventModel.create(eventData);
 
-    async quickCapture(text = null) {
-        try {
-            const captureText = text || this.state.captureText;
-            
-            if (!captureText.trim()) {
-                throw new Error('Cannot capture empty text');
-            }
+			// Reload events to reflect the change
+			await this.loadEvents();
 
-            this.setState({ isCaptureProcessing: true });
+			this.setState({ isCreating: false });
+			this.notifyListeners("eventCreated", newEvent);
 
-            // Parse capture text for smart recognition
-            const eventData = this.parseCaptureText(captureText);
-            
-            const newEvent = await this.createEvent(eventData);
-            
-            this.setState({ 
-                isCaptureProcessing: false,
-                captureText: '' // Clear capture input
-            });
-            
-            return newEvent;
-        } catch (error) {
-            console.error('Failed to quick capture:', error);
-            this.setState({ isCaptureProcessing: false });
-            throw error;
-        }
-    }
+			return newEvent;
+		} catch (error) {
+			console.error("Failed to create event:", error);
+			this.setState({ isCreating: false });
+			throw error;
+		}
+	}
 
-    /**
-     * Parse capture text for smart recognition
-     */
-    parseCaptureText(text) {
-        const eventData = {
-            title: text.trim(),
-            content: text.trim(),
-            tags: []
-        };
+	async updateEvent(eventId, updateData) {
+		try {
+			this.setState({ isUpdating: true });
 
-        // Extract hashtags
-        const hashtagMatches = text.match(/#\w+/g);
-        if (hashtagMatches) {
-            eventData.tags = hashtagMatches.map(tag => tag.substring(1));
-            // Remove hashtags from title/content
-            eventData.title = text.replace(/#\w+/g, '').trim();
-            eventData.content = eventData.title;
-        }
+			const updatedEvent = await this.eventModel.update(
+				eventId,
+				updateData
+			);
 
-        // Extract due dates (simple patterns)
-        const dueDatePatterns = [
-            /due\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
-            /by\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
-            /on\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i
-        ];
+			// Update the event in the current list
+			const events = this.state.events.map((event) =>
+				event.event_id === eventId ? updatedEvent : event
+			);
 
-        for (const pattern of dueDatePatterns) {
-            const match = text.match(pattern);
-            if (match) {
-                try {
-                    eventData.due_date = new Date(match[1]);
-                    // Remove date from title
-                    eventData.title = text.replace(match[0], '').trim();
-                    eventData.content = eventData.title;
-                    break;
-                } catch (error) {
-                    // Invalid date format, ignore
-                }
-            }
-        }
+			this.setState({
+				events,
+				isUpdating: false,
+				selectedEvent: updatedEvent,
+			});
 
-        return eventData;
-    }
+			this.notifyListeners("eventUpdated", updatedEvent);
 
-    // === PAGINATION ===
+			return updatedEvent;
+		} catch (error) {
+			console.error("Failed to update event:", error);
+			this.setState({ isUpdating: false });
+			throw error;
+		}
+	}
 
-    async goToPage(page) {
-        if (page < 1) return;
-        
-        this.setState({ currentPage: page });
-        await this.loadEvents();
-    }
+	async deleteEvent(eventId) {
+		try {
+			await this.eventModel.delete(eventId);
 
-    async nextPage() {
-        const maxPage = Math.ceil(this.state.totalCount / this.state.pageSize);
-        if (this.state.currentPage < maxPage) {
-            await this.goToPage(this.state.currentPage + 1);
-        }
-    }
+			// Remove from current list
+			const events = this.state.events.filter(
+				(event) => event.event_id !== eventId
+			);
 
-    async previousPage() {
-        if (this.state.currentPage > 1) {
-            await this.goToPage(this.state.currentPage - 1);
-        }
-    }
+			this.setState({
+				events,
+				selectedEvent:
+					this.state.selectedEvent?.event_id === eventId
+						? null
+						: this.state.selectedEvent,
+			});
 
-    // === INITIALIZATION ===
+			this.notifyListeners("eventDeleted", eventId);
 
-    async initialize() {
-        try {
-            await this.loadEventTypes();
-            await this.loadEvents();
-            console.log('EventViewModel initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize EventViewModel:', error);
-            throw error;
-        }
-    }
+			return true;
+		} catch (error) {
+			console.error("Failed to delete event:", error);
+			throw error;
+		}
+	}
 
-    // === TEST HELPERS ===
+	async getEventById(eventId) {
+		try {
+			const event = await this.eventModel.getById(eventId);
+			return event;
+		} catch (error) {
+			console.error("Failed to get event:", error);
+			throw error;
+		}
+	}
 
-    async createTestEvent() {
-        const testEvents = [
-            {
-                title: 'Test Task',
-                content: 'This is a test task #testing #important',
-                tags: ['testing', 'important'],
-                status: 'todo'
-            },
-            {
-                title: 'Meeting Notes',
-                content: 'Discussed project timeline and deliverables #work #meeting',
-                tags: ['work', 'meeting'],
-                status: 'done'
-            },
-            {
-                title: 'Buy Groceries',
-                content: 'Milk, eggs, bread #shopping #errands',
-                tags: ['shopping', 'errands'],
-                due_date: new Date(Date.now() + 24 * 60 * 60 * 1000) // Tomorrow
-            }
-        ];
+	// === SELECTION ===
 
-        const randomEvent = testEvents[Math.floor(Math.random() * testEvents.length)];
-        return await this.createEvent(randomEvent);
-    }
+	selectEvent(eventId) {
+		const event = this.state.events.find((e) => e.event_id === eventId);
+		this.setState({ selectedEvent: event });
+	}
+
+	clearSelection() {
+		this.setState({ selectedEvent: null });
+	}
+
+	// === FILTERING & SEARCH ===
+
+	async applyFilters(newFilters) {
+		try {
+			const updatedFilters = { ...this.state.filters, ...newFilters };
+			this.setState({
+				filters: updatedFilters,
+				currentPage: 1, // Reset to first page when filtering
+			});
+			await this.loadEvents();
+		} catch (error) {
+			console.error("Failed to apply filters:", error);
+			throw error;
+		}
+	}
+
+	async clearFilters() {
+		const clearedFilters = {
+			status: null,
+			event_type_id: null,
+			due_date_from: null,
+			due_date_to: null,
+			project_id: null,
+		};
+
+		await this.applyFilters(clearedFilters);
+	}
+
+	async search(query) {
+		try {
+			this.setState({ searchQuery: query });
+
+			if (!query.trim()) {
+				this.setState({ searchResults: [] });
+				return [];
+			}
+
+			// Simple search implementation
+			const allEvents = await this.eventModel.query({});
+			const results = allEvents.filter(
+				(event) =>
+					event.title.toLowerCase().includes(query.toLowerCase()) ||
+					event.content.toLowerCase().includes(query.toLowerCase())
+			);
+
+			this.setState({ searchResults: results });
+			return results;
+		} catch (error) {
+			console.error("Failed to search events:", error);
+			throw error;
+		}
+	}
+
+	// === QUICK CAPTURE ===
+
+	setCaptureText(text) {
+		this.setState({ captureText: text });
+	}
+
+	async quickCapture(text = null) {
+		try {
+			const captureText = text || this.state.captureText;
+
+			if (!captureText.trim()) {
+				throw new Error("Cannot capture empty text");
+			}
+
+			this.setState({ isCaptureProcessing: true });
+
+			// Parse capture text for smart recognition
+			const eventData = this.parseCaptureText(captureText);
+
+			const newEvent = await this.createEvent(eventData);
+
+			this.setState({
+				isCaptureProcessing: false,
+				captureText: "", // Clear capture input
+			});
+
+			return newEvent;
+		} catch (error) {
+			console.error("Failed to quick capture:", error);
+			this.setState({ isCaptureProcessing: false });
+			throw error;
+		}
+	}
+
+	/**
+	 * Parse capture text for smart recognition
+	 */
+	parseCaptureText(text) {
+		const eventData = {
+			title: text.trim(),
+			content: text.trim(),
+			tags: [],
+		};
+
+		// Extract hashtags
+		const hashtagMatches = text.match(/#\w+/g);
+		if (hashtagMatches) {
+			eventData.tags = hashtagMatches.map((tag) => tag.substring(1));
+			// Remove hashtags from title/content
+			eventData.title = text.replace(/#\w+/g, "").trim();
+			eventData.content = eventData.title;
+		}
+
+		// Extract due dates (simple patterns)
+		const dueDatePatterns = [
+			/due\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+			/by\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+			/on\s+(\d{1,2}\/\d{1,2}\/\d{2,4})/i,
+		];
+
+		for (const pattern of dueDatePatterns) {
+			const match = text.match(pattern);
+			if (match) {
+				try {
+					eventData.due_date = new Date(match[1]);
+					// Remove date from title
+					eventData.title = text.replace(match[0], "").trim();
+					eventData.content = eventData.title;
+					break;
+				} catch (error) {
+					// Invalid date format, ignore
+				}
+			}
+		}
+
+		return eventData;
+	}
+
+	// === PAGINATION ===
+
+	async goToPage(page) {
+		if (page < 1) return;
+
+		this.setState({ currentPage: page });
+		await this.loadEvents();
+	}
+
+	async nextPage() {
+		const maxPage = Math.ceil(this.state.totalCount / this.state.pageSize);
+		if (this.state.currentPage < maxPage) {
+			await this.goToPage(this.state.currentPage + 1);
+		}
+	}
+
+	async previousPage() {
+		if (this.state.currentPage > 1) {
+			await this.goToPage(this.state.currentPage - 1);
+		}
+	}
+
+	// === INITIALIZATION ===
+
+	async initialize() {
+		try {
+			await this.loadEventTypes();
+			await this.loadEvents();
+			console.log("EventViewModel initialized successfully");
+		} catch (error) {
+			console.error("Failed to initialize EventViewModel:", error);
+			throw error;
+		}
+	}
+
+	// === TEST HELPERS ===
+
+	async createTestEvent() {
+		const testEvents = [
+			{
+				title: "Test Task",
+				content: "This is a test task #testing #important",
+				tags: ["testing", "important"],
+				status: "todo",
+			},
+			{
+				title: "Meeting Notes",
+				content:
+					"Discussed project timeline and deliverables #work #meeting",
+				tags: ["work", "meeting"],
+				status: "done",
+			},
+			{
+				title: "Buy Groceries",
+				content: "Milk, eggs, bread #shopping #errands",
+				tags: ["shopping", "errands"],
+				due_date: new Date(Date.now() + 24 * 60 * 60 * 1000), // Tomorrow
+			},
+		];
+
+		const randomEvent =
+			testEvents[Math.floor(Math.random() * testEvents.length)];
+		return await this.createEvent(randomEvent);
+	}
 }
 
-// Export for use in the app
-window.EventViewModel = EventViewModel;
+export default EventViewModel;

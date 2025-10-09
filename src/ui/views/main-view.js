@@ -1,17 +1,25 @@
 /**
- * Main View
+ * MainView - UI Layer for the Productivity App
  *
- * Handles all UI rendering, DOM manipulation, and user interactions.
- * Binds to ViewModels and responds to state changes.
- * NO BUSINESS LOGIC - only UI concerns.
+ * This class handles all UI interactions and binds to ViewModels following MVVM pattern.
+ * It ONLY contains view logic - all business logic is in ViewModels.
  */
 
 class MainView {
 	constructor(appViewModel) {
 		this.appViewModel = appViewModel;
+		this.eventViewModel = appViewModel.getEventViewModel();
+		this.tagViewModel = appViewModel.getTagViewModel();
+		this.itemViewModel = appViewModel.getItemViewModel();
 
-		// UI element references
-		this.ui = {
+		this.elements = {};
+	}
+
+	initialize() {
+		console.log("MainView initializing...");
+
+		// Get DOM elements
+		this.elements = {
 			status: document.getElementById("status"),
 			captureInput: document.getElementById("capture-input"),
 			captureSubmit: document.getElementById("capture-submit"),
@@ -21,246 +29,189 @@ class MainView {
 			testResults: document.getElementById("test-results"),
 		};
 
-		// Child Views (future)
-		this.eventView = null;
-		this.tagView = null;
-		this.itemView = null;
+		// Bind event listeners
+		this.bindEventListeners();
+
+		// Initialize UI state
+		this.updateStatus("Ready");
+
+		console.log("MainView initialized successfully");
 	}
 
-	/**
-	 * Initialize the view - set up all UI bindings and listeners
-	 */
-	initialize() {
-		this.setupUIEventListeners();
-		this.setupViewModelListeners();
-		console.log("MainView initialized");
-	}
-
-	// === UI EVENT LISTENERS ===
-
-	setupUIEventListeners() {
+	bindEventListeners() {
 		// Quick capture functionality
-		this.ui.captureSubmit.addEventListener("click", () => {
-			this.handleQuickCapture();
-		});
+		this.elements.captureSubmit.addEventListener("click", () =>
+			this.handleQuickCapture()
+		);
 
-		this.ui.captureInput.addEventListener("keypress", (e) => {
+		this.elements.captureInput.addEventListener("keypress", (e) => {
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
 				this.handleQuickCapture();
 			}
 		});
 
-		// Test buttons
-		this.ui.testInsert.addEventListener("click", () => {
-			this.handleTestInsert();
-		});
+		// Test functionality
+		this.elements.testInsert.addEventListener("click", () =>
+			this.handleTestInsert()
+		);
 
-		this.ui.testQuery.addEventListener("click", () => {
-			this.handleTestQuery();
-		});
+		this.elements.testQuery.addEventListener("click", () =>
+			this.handleTestQuery()
+		);
 
-		this.ui.clearDb.addEventListener("click", () => {
-			this.handleClearDatabase();
-		});
-
-		// Update capture text in EventViewModel as user types
-		this.ui.captureInput.addEventListener("input", (e) => {
-			this.appViewModel
-				.getEventViewModel()
-				.setCaptureText(e.target.value);
-		});
+		this.elements.clearDb.addEventListener("click", () =>
+			this.handleClearDatabase()
+		);
 	}
 
-	// === VIEWMODEL LISTENERS ===
-
-	setupViewModelListeners() {
-		// Listen for app-wide state changes
-		this.appViewModel.on("stateChange", (data) => {
-			this.handleAppStateChange(data);
-		});
-
-		// Listen for notifications
-		this.appViewModel.on("notification", (notification) => {
-			this.showNotification(notification.message, notification.type);
-		});
-
-		// Listen for errors
-		this.appViewModel.on("error", (error) => {
-			console.error("App Error:", error);
-		});
-
-		// Listen for EventViewModel changes
-		const eventVM = this.appViewModel.getEventViewModel();
-
-		eventVM.on("stateChange", (data) => {
-			this.handleEventStateChange(data);
-		});
-
-		eventVM.on("eventsChange", (events) => {
-			this.updateStatus(`Ready! ${events.length} events in database`);
-		});
-
-		// Listen for TagViewModel changes
-		const tagVM = this.appViewModel.getTagViewModel();
-
-		tagVM.on("tagsChange", (tags) => {
-			console.log(`Tags updated: ${tags.length} total tags`);
-		});
-
-		// Listen for ItemViewModel changes
-		const itemVM = this.appViewModel.getItemViewModel();
-
-		itemVM.on("itemsChange", (items) => {
-			console.log(`Items updated: ${items.length} total items`);
-		});
-
-		itemVM.on("stockAlert", (alert) => {
-			this.showNotification(alert.message, "warning", 5000);
-		});
-	}
-
-	// === STATE CHANGE HANDLERS ===
-
-	handleAppStateChange(data) {
-		const { changes } = data;
-
-		// Update loading state
-		if (changes.isLoading !== undefined) {
-			if (changes.isLoading) {
-				this.updateStatus("Loading...");
-			}
-		}
-
-		// Handle view changes
-		if (changes.currentView !== undefined) {
-			this.handleViewChange(changes.currentView);
-		}
-
-		// Handle route changes
-		if (changes.currentRoute !== undefined) {
-			this.handleRouteChange(changes.currentRoute);
-		}
-	}
-
-	handleEventStateChange(data) {
-		const { changes } = data;
-
-		// Update capture input state
-		if (changes.isCaptureProcessing !== undefined) {
-			this.ui.captureSubmit.disabled = changes.isCaptureProcessing;
-			this.ui.captureSubmit.textContent = changes.isCaptureProcessing
-				? "Processing..."
-				: "Capture";
-		}
-
-		// Clear capture input when text is cleared
-		if (changes.captureText === "") {
-			this.ui.captureInput.value = "";
-		}
-
-		// Update loading states
-		if (changes.isLoading !== undefined) {
-			this.updateLoadingState("events", changes.isLoading);
-		}
-	}
-
-	handleViewChange(newView) {
-		console.log(`View changed to: ${newView}`);
-		// Future: Update UI to reflect view change
-		// This is where you'd show/hide different UI sections
-	}
-
-	handleRouteChange(newRoute) {
-		console.log(`Route changed to: ${newRoute}`);
-		// Future: Update navigation state, breadcrumbs, etc.
-	}
-
-	// === USER ACTION HANDLERS ===
+	// === EVENT HANDLERS ===
 
 	async handleQuickCapture() {
+		const input = this.elements.captureInput.value.trim();
+		if (!input) return;
+
 		try {
-			const text = this.ui.captureInput.value.trim();
-			if (!text) return;
+			this.updateStatus("Processing capture...");
 
-			await this.appViewModel.quickCapture(text);
+			// Use AppViewModel to handle the capture
+			const result = await this.appViewModel.quickCapture(input);
 
-			// Success is handled by the notification system now
+			this.showNotification(
+				`${result.type === "event" ? "Event" : "Item"} created: ${
+					result.title || result.name
+				}`,
+				"success"
+			);
+
+			// Clear input
+			this.elements.captureInput.value = "";
+
+			this.updateStatus("Ready");
 		} catch (error) {
 			console.error("Quick capture failed:", error);
-			// Error is handled by the AppViewModel error system
+			this.showNotification(
+				"Failed to capture: " + error.message,
+				"error"
+			);
+			this.updateStatus("Ready");
 		}
 	}
 
 	async handleTestInsert() {
 		try {
-			await this.appViewModel.createTestData();
+			this.updateStatus("Creating test data...");
+
+			// Use the test helper method on the ViewModel, which is designed for this.
+			// This ensures correct data is passed and follows the MVVM pattern.
+			const testEvent = await this.eventViewModel.createTestEvent();
+
+			// Use the test helper method on the ItemViewModel as well.
+			const testItem = await this.itemViewModel.createTestItem();
+
+			this.showNotification(
+				`Created test event: ${testEvent.title} and test item: ${testItem.name}`,
+				"success"
+			);
+
+			this.updateStatus("Ready");
 		} catch (error) {
 			console.error("Test insert failed:", error);
+			this.showNotification(
+				"Failed to create test data: " + error.message,
+				"error"
+			);
+			this.updateStatus("Ready");
 		}
 	}
 
 	async handleTestQuery() {
 		try {
-			const events = this.appViewModel.getEvents();
-			const tags = this.appViewModel.getTags();
-			const items = this.appViewModel.getItems();
+			this.updateStatus("Querying data...");
 
-			const html = this.buildQueryResultsHTML(events, tags, items);
-			this.ui.testResults.innerHTML = html;
+			// Get all data by calling the query methods on the underlying models.
+			// This is the correct way to fetch data according to the new architecture.
+			const events = await this.eventViewModel.eventModel.query();
+			const tags = await this.tagViewModel.tagModel.getAllTags();
+			const items = await this.itemViewModel.itemModel.query();
+
+			// Display results
+			const resultsHTML = this.buildQueryResultsHTML(events, tags, items);
+			this.elements.testResults.innerHTML = resultsHTML;
+
+			this.updateStatus("Ready");
 		} catch (error) {
 			console.error("Test query failed:", error);
+			this.showNotification(
+				"Failed to query data: " + error.message,
+				"error"
+			);
+			this.updateStatus("Ready");
 		}
 	}
 
 	async handleClearDatabase() {
+		if (
+			!confirm(
+				"Are you sure you want to clear all data? This cannot be undone."
+			)
+		) {
+			return;
+		}
+
 		try {
-			const cleared = await this.appViewModel.clearAllData();
-			if (cleared) {
-				this.ui.testResults.innerHTML = "";
-			}
+			this.updateStatus("Clearing database...");
+
+			// Use AppViewModel to clear everything
+			await this.appViewModel.clearAllData();
+
+			this.elements.testResults.innerHTML = "";
+			this.elements.captureInput.value = "";
+
+			this.showNotification("Database cleared successfully", "success");
+			this.updateStatus("Ready");
 		} catch (error) {
 			console.error("Clear database failed:", error);
+			this.showNotification(
+				"Failed to clear database: " + error.message,
+				"error"
+			);
+			this.updateStatus("Ready");
 		}
 	}
 
-	// === UI UPDATE METHODS ===
+	// === UI HELPERS ===
 
 	updateStatus(message) {
-		this.ui.status.textContent = message;
+		this.elements.status.textContent = message;
 		console.log("Status:", message);
 	}
 
-	updateLoadingState(section, isLoading) {
-		// Future: Update specific UI sections with loading indicators
-		console.log(`${section} loading state: ${isLoading}`);
-	}
-
 	showNotification(message, type = "info", duration = 3000) {
+		// Ensure notification styles are loaded
+		this.ensureNotificationStyles();
+
 		// Create notification element
 		const messageDiv = document.createElement("div");
 		messageDiv.textContent = message;
-		messageDiv.className = `notification notification--${type}`;
 		messageDiv.style.cssText = `
             position: fixed;
             top: 20px;
             right: 20px;
-            padding: 10px 20px;
-            border-radius: 4px;
+            padding: 12px 20px;
+            border-radius: 6px;
             color: white;
-            font-weight: bold;
+            font-weight: 500;
+            max-width: 400px;
             z-index: 1000;
-            background: ${this.getNotificationColor(type)};
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             animation: slideIn 0.3s ease-out;
+            background: ${this.getNotificationColor(type)};
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         `;
-
-		// Add animation styles if not already present
-		this.ensureNotificationStyles();
 
 		document.body.appendChild(messageDiv);
 
-		// Auto-remove after duration
+		// Auto-remove notification
 		setTimeout(() => {
 			if (document.body.contains(messageDiv)) {
 				messageDiv.style.animation = "slideOut 0.3s ease-in";
@@ -437,5 +388,4 @@ class MainView {
 	}
 }
 
-// Export for use in the app
-window.MainView = MainView;
+export default MainView;

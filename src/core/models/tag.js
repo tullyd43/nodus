@@ -1,239 +1,281 @@
 /**
  * Tag Model
- * 
+ *
  * Manages the universal tagging system that enables the flat,
  * searchable network architecture.
  */
 
+import appDb from "../database/db.js";
+
 class TagModel {
-    constructor() {
-        this.db = appDb.getDb();
-    }
+	constructor() {
+		this.db = appDb;
+	}
 
-    /**
-     * Get all tags for current user
-     */
-    async getAllTags() {
-        try {
-            return await this.db.tags
-                .where('user_id')
-                .equals(appDb.getCurrentUserId())
-                .sortBy('tag_name');
-        } catch (error) {
-            console.error('Failed to get all tags:', error);
-            return [];
-        }
-    }
+	/**
+	 * Finds a tag by name or creates it if it doesn't exist.
+	 * This is a core part of the universal tagging system.
+	 * @param {string} tagName - The name of the tag.
+	 * @returns {Promise<object>} The tag object.
+	 */
+	async getOrCreate(tagName) {
+		try {
+			const cleanTagName = tagName.toLowerCase().trim().replace(/^#/, "");
+			let tag = await this.db.tags
+				.where("[user_id+tag_name]")
+				.equals([appDb.getCurrentUserId(), cleanTagName])
+				.first();
 
-    /**
-     * Search tags by name
-     */
-    async searchTags(query) {
-        try {
-            const searchTerm = query.toLowerCase().trim();
-            
-            return await this.db.tags
-                .where('user_id')
-                .equals(appDb.getCurrentUserId())
-                .and(tag => tag.tag_name.toLowerCase().includes(searchTerm))
-                .sortBy('tag_name');
-        } catch (error) {
-            console.error('Failed to search tags:', error);
-            return [];
-        }
-    }
+			if (!tag) {
+				const tagId = await this.db.tags.add({
+					user_id: appDb.getCurrentUserId(),
+					tag_name: cleanTagName,
+				});
+				tag = await this.db.tags.get(tagId);
+			}
+			return tag;
+		} catch (error) {
+			console.error(`Failed to get or create tag "${tagName}":`, error);
+			throw error;
+		}
+	}
 
-    /**
-     * Get all objects (events + items) tagged with a specific tag
-     * This implements the cross-context tag feature
-     */
-    async getObjectsWithTag(tagId) {
-        try {
-            const assignments = await this.db.tag_assignments
-                .where('tag_id')
-                .equals(tagId)
-                .toArray();
+	/**
+	 * Get all tags for current user
+	 */
+	async getAllTags() {
+		try {
+			return await this.db.tags
+				.where("user_id")
+				.equals(appDb.getCurrentUserId())
+				.sortBy("tag_name");
+		} catch (error) {
+			console.error("Failed to get all tags:", error);
+			return [];
+		}
+	}
 
-            const results = {
-                events: [],
-                items: [],
-                total: assignments.length
-            };
+	/**
+	 * Search tags by name
+	 */
+	async searchTags(query) {
+		try {
+			const searchTerm = query.toLowerCase().trim();
 
-            // Group by type and fetch the actual objects
-            for (const assignment of assignments) {
-                if (assignment.taggable_type === 'event') {
-                    const event = await this.db.events.get(assignment.taggable_id);
-                    if (event) {
-                        // Add basic event type info
-                        event.event_type = await this.db.event_types.get(event.event_type_id);
-                        results.events.push(event);
-                    }
-                } else if (assignment.taggable_type === 'item') {
-                    const item = await this.db.items.get(assignment.taggable_id);
-                    if (item) {
-                        // Add basic item type info
-                        item.item_type = await this.db.item_types.get(item.item_type_id);
-                        results.items.push(item);
-                    }
-                }
-            }
+			return await this.db.tags
+				.where("user_id")
+				.equals(appDb.getCurrentUserId())
+				.and((tag) => tag.tag_name.toLowerCase().includes(searchTerm))
+				.sortBy("tag_name");
+		} catch (error) {
+			console.error("Failed to search tags:", error);
+			return [];
+		}
+	}
 
-            return results;
-        } catch (error) {
-            console.error('Failed to get objects with tag:', error);
-            return { events: [], items: [], total: 0 };
-        }
-    }
+	/**
+	 * Get all objects (events + items) tagged with a specific tag
+	 * This implements the cross-context tag feature
+	 */
+	async getObjectsWithTag(tagId) {
+		try {
+			const assignments = await this.db.tag_assignments
+				.where("tag_id")
+				.equals(tagId)
+				.toArray();
 
-    /**
-     * Get tag usage statistics
-     */
-    async getTagStats(tagId) {
-        try {
-            const assignments = await this.db.tag_assignments
-                .where('tag_id')
-                .equals(tagId)
-                .toArray();
+			const results = {
+				events: [],
+				items: [],
+				total: assignments.length,
+			};
 
-            const stats = {
-                total_usage: assignments.length,
-                events_tagged: 0,
-                items_tagged: 0
-            };
+			// Group by type and fetch the actual objects
+			for (const assignment of assignments) {
+				if (assignment.taggable_type === "event") {
+					const event = await this.db.events.get(
+						assignment.taggable_id
+					);
+					if (event) {
+						// Add basic event type info
+						event.event_type = await this.db.event_types.get(
+							event.event_type_id
+						);
+						results.events.push(event);
+					}
+				} else if (assignment.taggable_type === "item") {
+					const item = await this.db.items.get(
+						assignment.taggable_id
+					);
+					if (item) {
+						// Add basic item type info
+						item.item_type = await this.db.item_types.get(
+							item.item_type_id
+						);
+						results.items.push(item);
+					}
+				}
+			}
 
-            for (const assignment of assignments) {
-                if (assignment.taggable_type === 'event') {
-                    stats.events_tagged++;
-                } else if (assignment.taggable_type === 'item') {
-                    stats.items_tagged++;
-                }
-            }
+			return results;
+		} catch (error) {
+			console.error("Failed to get objects with tag:", error);
+			return { events: [], items: [], total: 0 };
+		}
+	}
 
-            return stats;
-        } catch (error) {
-            console.error('Failed to get tag stats:', error);
-            return { total_usage: 0, events_tagged: 0, items_tagged: 0 };
-        }
-    }
+	/**
+	 * Get tag usage statistics
+	 */
+	async getTagStats(tagId) {
+		try {
+			const assignments = await this.db.tag_assignments
+				.where("tag_id")
+				.equals(tagId)
+				.toArray();
 
-    /**
-     * Get popular tags (most used)
-     */
-    async getPopularTags(limit = 10) {
-        try {
-            const userTags = await this.db.tags
-                .where('user_id')
-                .equals(appDb.getCurrentUserId())
-                .toArray();
+			const stats = {
+				total_usage: assignments.length,
+				events_tagged: 0,
+				items_tagged: 0,
+			};
 
-            // Get usage count for each tag
-            const tagStats = [];
-            for (const tag of userTags) {
-                const stats = await this.getTagStats(tag.tag_id);
-                tagStats.push({
-                    ...tag,
-                    usage_count: stats.total_usage
-                });
-            }
+			for (const assignment of assignments) {
+				if (assignment.taggable_type === "event") {
+					stats.events_tagged++;
+				} else if (assignment.taggable_type === "item") {
+					stats.items_tagged++;
+				}
+			}
 
-            // Sort by usage and return top results
-            return tagStats
-                .sort((a, b) => b.usage_count - a.usage_count)
-                .slice(0, limit);
-        } catch (error) {
-            console.error('Failed to get popular tags:', error);
-            return [];
-        }
-    }
+			return stats;
+		} catch (error) {
+			console.error("Failed to get tag stats:", error);
+			return { total_usage: 0, events_tagged: 0, items_tagged: 0 };
+		}
+	}
 
-    /**
-     * Delete a tag and all its assignments
-     */
-    async deleteTag(tagId) {
-        try {
-            // First remove all assignments
-            await this.db.tag_assignments
-                .where('tag_id')
-                .equals(tagId)
-                .delete();
+	/**
+	 * Get popular tags (most used)
+	 */
+	async getPopularTags(limit = 10) {
+		try {
+			const userTags = await this.db.tags
+				.where("user_id")
+				.equals(appDb.getCurrentUserId())
+				.toArray();
 
-            // Then delete the tag itself
-            await this.db.tags.delete(tagId);
-            
-            return true;
-        } catch (error) {
-            console.error('Failed to delete tag:', error);
-            throw error;
-        }
-    }
+			// Get usage count for each tag
+			const tagStats = [];
+			for (const tag of userTags) {
+				const stats = await this.getTagStats(tag.tag_id);
+				tagStats.push({
+					...tag,
+					usage_count: stats.total_usage,
+				});
+			}
 
-    /**
-     * Rename a tag
-     */
-    async renameTag(tagId, newName) {
-        try {
-            const cleanName = newName.toLowerCase().trim().replace(/^#/, '');
-            
-            // Check if new name already exists
-            const existing = await this.db.tags
-                .where('[user_id+tag_name]')
-                .equals([appDb.getCurrentUserId(), cleanName])
-                .first();
+			// Sort by usage and return top results
+			return tagStats
+				.sort((a, b) => b.usage_count - a.usage_count)
+				.slice(0, limit);
+		} catch (error) {
+			console.error("Failed to get popular tags:", error);
+			return [];
+		}
+	}
 
-            if (existing && existing.tag_id !== tagId) {
-                throw new Error('A tag with this name already exists');
-            }
+	/**
+	 * Delete a tag and all its assignments
+	 */
+	async deleteTag(tagId) {
+		try {
+			// First remove all assignments
+			await this.db.tag_assignments
+				.where("tag_id")
+				.equals(tagId)
+				.delete();
 
-            await this.db.tags.update(tagId, { tag_name: cleanName });
-            return await this.db.tags.get(tagId);
-        } catch (error) {
-            console.error('Failed to rename tag:', error);
-            throw error;
-        }
-    }
+			// Then delete the tag itself
+			await this.db.tags.delete(tagId);
 
-    /**
-     * Merge two tags (move all assignments from source to target, delete source)
-     */
-    async mergeTags(sourceTagId, targetTagId) {
-        try {
-            // Get all assignments for source tag
-            const sourceAssignments = await this.db.tag_assignments
-                .where('tag_id')
-                .equals(sourceTagId)
-                .toArray();
+			return true;
+		} catch (error) {
+			console.error("Failed to delete tag:", error);
+			throw error;
+		}
+	}
 
-            // Move assignments to target tag
-            for (const assignment of sourceAssignments) {
-                // Check if target assignment already exists
-                const existingTarget = await this.db.tag_assignments
-                    .where('[tag_id+taggable_id+taggable_type]')
-                    .equals([targetTagId, assignment.taggable_id, assignment.taggable_type])
-                    .first();
+	/**
+	 * Rename a tag
+	 */
+	async renameTag(tagId, newName) {
+		try {
+			const cleanName = newName.toLowerCase().trim().replace(/^#/, "");
 
-                if (!existingTarget) {
-                    // Create new assignment for target tag
-                    await this.db.tag_assignments.add({
-                        tag_id: targetTagId,
-                        taggable_id: assignment.taggable_id,
-                        taggable_type: assignment.taggable_type
-                    });
-                }
+			// Check if new name already exists
+			const existing = await this.db.tags
+				.where("[user_id+tag_name]")
+				.equals([appDb.getCurrentUserId(), cleanName])
+				.first();
 
-                // Delete source assignment
-                await this.db.tag_assignments.delete(assignment.assignment_id);
-            }
+			if (existing && existing.tag_id !== tagId) {
+				throw new Error("A tag with this name already exists");
+			}
 
-            // Delete source tag
-            await this.db.tags.delete(sourceTagId);
-            
-            return true;
-        } catch (error) {
-            console.error('Failed to merge tags:', error);
-            throw error;
-        }
-    }
+			await this.db.tags.update(tagId, { tag_name: cleanName });
+			return await this.db.tags.get(tagId);
+		} catch (error) {
+			console.error("Failed to rename tag:", error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Merge two tags (move all assignments from source to target, delete source)
+	 */
+	async mergeTags(sourceTagId, targetTagId) {
+		try {
+			// Get all assignments for source tag
+			const sourceAssignments = await this.db.tag_assignments
+				.where("tag_id")
+				.equals(sourceTagId)
+				.toArray();
+
+			// Move assignments to target tag
+			for (const assignment of sourceAssignments) {
+				// Check if target assignment already exists
+				const existingTarget = await this.db.tag_assignments
+					.where("[tag_id+taggable_id+taggable_type]")
+					.equals([
+						targetTagId,
+						assignment.taggable_id,
+						assignment.taggable_type,
+					])
+					.first();
+
+				if (!existingTarget) {
+					// Create new assignment for target tag
+					await this.db.tag_assignments.add({
+						tag_id: targetTagId,
+						taggable_id: assignment.taggable_id,
+						taggable_type: assignment.taggable_type,
+					});
+				}
+
+				// Delete source assignment
+				await this.db.tag_assignments.delete(assignment.assignment_id);
+			}
+
+			// Delete source tag
+			await this.db.tags.delete(sourceTagId);
+
+			return true;
+		} catch (error) {
+			console.error("Failed to merge tags:", error);
+			throw error;
+		}
+	}
 }
 
-window.TagModel = TagModel;
+export default TagModel;

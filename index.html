@@ -5,48 +5,71 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Productivity App</title>
+    <!-- Prevent the 404 error for favicon.ico by providing a blank one.
+         You can replace the href with a path to your actual icon later. -->
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
     <link rel="stylesheet" href="src/ui/assets/styles/main.css">
 </head>
 
 <body>
     <div id="app">
-        <header>
-            <h1>Productivity App</h1>
-            <div id="status">Initializing...</div>
-        </header>
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>Nodus</h1>
+            </div>
+            <nav class="main-nav">
+                <a href="#" class="nav-item active" data-view="events">Events</a>
+                <a href="#" class="nav-item" data-view="vault">Vault</a>
+                <a href="#" class="nav-item" data-view="templates">Templates</a>
+            </nav>
+            <div class="sidebar-footer">
+                <div id="status">Initializing...</div>
+            </div>
+        </div>
 
-        <main>
-            <section id="quick-capture">
-                <h2>Quick Capture</h2>
-                <textarea id="capture-input" placeholder="What's on your mind?"></textarea>
-                <button id="capture-submit">Capture</button>
-            </section>
+        <div class="main-content">
+            <header class="main-header">
+                <div id="quick-capture">
+                    <textarea id="capture-input"
+                        placeholder="Quick Capture: Call John tomorrow 2pm #work..."></textarea>
+                    <button id="capture-submit">Capture</button>
+                </div>
+            </header>
 
-            <section id="data-test">
-                <h2>Database Test</h2>
-                <button id="test-insert">Add Test Event</button>
-                <button id="test-query">Query Events</button>
-                <button id="clear-db">Clear Database</button>
-                <div id="test-results"></div>
-            </section>
-        </main>
+            <main id="view-container">
+                <!-- View content will be dynamically inserted here -->
+                <div id="events-view" class="view active">
+                    <h2>Events Workspace</h2>
+                    <!-- Placeholder for event lists, filters, etc. -->
+                    <div class="test-controls">
+                        <button id="test-insert">Add Test Data</button>
+                        <button id="test-query">Query All Data</button>
+                        <button id="clear-db">Clear Database</button>
+                    </div>
+                    <div id="test-results"></div>
+                </div>
+
+                <div id="vault-view" class="view" style="display: none;">
+                    <h2>Vault</h2>
+                    <p>This is where Collections, Tags, and the Relationship Explorer will live.</p>
+                </div>
+
+                <div id="templates-view" class="view" style="display: none;">
+                    <h2>Templates</h2>
+                    <p>This is where the Event Type Builder, Field Library, and Routine Designer will live.</p>
+                    <p><strong>This is the perfect place to start building the UI for the Universal Field
+                            System.</strong></p>
+                </div>
+            </main>
+        </div>
     </div>
 
-    <!-- Load Dexie from CDN for now -->
-    <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
-
-    <!-- Our modules -->
-    <script src="src/core/database/schema.js"></script>
-    <script src="src/core/database/db.js"></script>
-    <script src="src/core/models/event.js"></script>
-    <script src="src/core/models/item.js"></script>
-    <script src="src/core/models/tag.js"></script>
-    <script src="src/core/viewmodels/event-vm.js"></script>
-    <script src="src/core/viewmodels/tag-vm.js"></script>
-    <script src="src/core/viewmodels/item-vm.js"></script>
-    <script src="src/core/viewmodels/app-vm.js"></script>
-    <script src="src/ui/views/main-view.js"></script>
-    <script src="src/core/app.js"></script>
+    <!-- 
+      Load the main application script as a module.
+      It will handle importing all other necessary dependencies.
+      The Dexie library will be imported directly in db.js.
+    -->
+    <script type="module" src="src/core/app.js"></script>
 </body>
 
 </html>

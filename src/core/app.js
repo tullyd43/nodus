@@ -5,6 +5,9 @@
  * All UI logic has been moved to MainView following proper MVVM separation.
  */
 
+import AppViewModel from "./viewmodels/app-vm.js";
+import MainView from "../ui/views/main-view.js";
+
 class App {
 	constructor() {
 		this.appViewModel = null;

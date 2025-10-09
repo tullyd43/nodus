@@ -1,20 +1,25 @@
 {
-  "name": "productivity-app",
-  "version": "1.0.0",
-  "description": "Offline-first productivity application with vanilla JS and MVVM architecture",
-  "main": "index.html",
-  "scripts": {
-    "start": "npx serve .",
-    "dev": "npx serve . --live",
-    "test": "echo \"No tests yet\" && exit 0"
-  },
-  "dependencies": {
-    "dexie": "^3.2.4"
-  },
-  "devDependencies": {
-    "serve": "^14.2.1"
-  },
-  "keywords": ["productivity", "offline-first", "indexeddb", "vanilla-js"],
-  "author": "",
-  "license": "MIT"
+	"name": "productivity-app",
+	"version": "1.0.0",
+	"description": "Offline-first productivity application with vanilla JS and MVVM architecture",
+	"main": "index.html",
+	"scripts": {
+		"start": "npx serve .",
+		"dev": "npx serve . --live",
+		"test": "echo \"No tests yet\" && exit 0"
+	},
+	"dependencies": {
+		"dexie": "^3.2.4"
+	},
+	"devDependencies": {
+		"serve": "^14.2.1"
+	},
+	"keywords": [
+		"productivity",
+		"offline-first",
+		"indexeddb",
+		"vanilla-js"
+	],
+	"author": "",
+	"license": "MIT"
 }
