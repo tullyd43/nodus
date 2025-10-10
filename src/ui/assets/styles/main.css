@@ -1,250 +1,171 @@
-/* Basic styling for the productivity app test interface */
-
+/* ==========================================================================
+   Global Styles & Resets
+   ========================================================================== */
 * {
-    box-sizing: border-box;
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
 }
 
+html,
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    margin: 0;
-    padding: 20px;
-    background-color: #f5f5f5;
-    color: #333;
-    line-height: 1.6;
+	height: 100vh;
+	width: 100vw;
+	overflow: hidden;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+		sans-serif;
+	background-color: var(--wa-color-neutral-100);
+	color: var(--wa-color-neutral-900);
+	line-height: 1.6;
 }
 
+/* ==========================================================================
+   Main Application Layout
+   ========================================================================== */
 #app {
-    max-width: 1200px;
-    margin: 0 auto;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    overflow: hidden;
+	display: grid;
+	grid-template-areas:
+		"sidebar header"
+		"sidebar main";
+	grid-template-rows: 60px 1fr; /* Header height, main content takes the rest */
+	grid-template-columns: 300px 1fr; /* Sidebar width, main content takes the rest */
+	height: 100%;
 }
 
-header {
-    background: #2196F3;
-    color: white;
-    padding: 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+.header {
+	grid-area: header;
+	background-color: var(--wa-color-neutral-200);
+	border-bottom: 1px solid var(--wa-color-neutral-200);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0 var(--wa-spacing-medium);
 }
 
-header h1 {
-    margin: 0;
-    font-size: 24px;
-    font-weight: 600;
+.sidebar {
+	grid-area: sidebar;
+	min-width: 260px;
+	background-color: var(--wa-color-neutral-50);
+	border-right: 1px solid var(--wa-color-neutral-200);
+	display: flex;
+	flex-direction: column;
 }
 
-#status {
-    font-size: 14px;
-    opacity: 0.9;
-    font-weight: 500;
+.main-content {
+	grid-area: main;
+	display: flex;
+	flex-direction: column;
+	background-color: var(--wa-color-neutral-0);
 }
 
-main {
-    padding: 30px;
+/* ==========================================================================
+   Sidebar Components
+   ========================================================================== */
+.main-nav {
+	padding: var(--wa-spacing-small) var(--wa-spacing-medium);
+	border-bottom: 1px solid var(--wa-color-neutral-200);
+	flex-shrink: 0;
 }
 
-section {
-    margin-bottom: 40px;
-    padding: 20px;
-    border: 1px solid #e0e0e0;
-    border-radius: 6px;
-    background: #fafafa;
+.tabs {
+	display: flex;
+	list-style: none;
+	border: 1px solid var(--wa-color-neutral-300);
+	border-radius: var(--wa-radius-medium);
+	overflow: hidden;
 }
 
-section h2 {
-    margin: 0 0 20px 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #1976D2;
+.tab-item {
+	flex: 1;
+	text-align: center;
+	padding: var(--wa-spacing-x-small) var(--wa-spacing-small);
+	cursor: pointer;
+	background-color: var(--wa-color-neutral-100);
+	color: var(--wa-color-neutral-600);
+	font-size: var(--wa-font-size-small);
+	font-weight: var(--wa-font-weight-semibold);
+	transition: background-color 0.2s ease;
 }
 
-/* Quick Capture Section */
-#quick-capture textarea {
-    width: 100%;
-    min-height: 80px;
-    padding: 12px;
-    border: 2px solid #e0e0e0;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 14px;
-    resize: vertical;
-    transition: border-color 0.2s;
+.tab-item:not(:last-child) {
+	border-right: 1px solid var(--wa-color-neutral-300);
 }
 
-#quick-capture textarea:focus {
-    outline: none;
-    border-color: #2196F3;
+.tab-item.active,
+.tab-item:hover {
+	background-color: var(--wa-color-primary-100);
+	color: var(--wa-color-primary-700);
 }
 
-#quick-capture textarea::placeholder {
-    color: #999;
-    font-style: italic;
+.collapsible-section {
+	padding: var(--wa-spacing-medium);
+	border-bottom: 1px solid var(--wa-color-neutral-200);
+	flex-shrink: 0;
 }
 
-/* Buttons */
-button {
-    background: #2196F3;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 4px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    margin: 10px 10px 0 0;
+.collapsible-trigger {
+	font-size: var(--wa-font-size-medium);
+	font-weight: var(--wa-font-weight-semibold);
+	display: flex;
+	align-items: center;
+	gap: var(--wa-spacing-x-small);
+	cursor: pointer;
+	user-select: none;
 }
 
-button:hover:not(:disabled) {
-    background: #1976D2;
+.collapsible-trigger .chevron {
+	margin-left: auto;
+	transition: transform 0.2s ease-in-out;
 }
 
-button:disabled {
-    background: #ccc;
-    cursor: not-allowed;
+.collapsible-section.is-open .collapsible-trigger .chevron {
+	transform: rotate(180deg);
 }
 
-#capture-submit {
-    background: #4CAF50;
-    margin-top: 10px;
-    width: 100%;
+.collapsible-content {
+	padding-top: var(--wa-spacing-small);
 }
 
-#capture-submit:hover:not(:disabled) {
-    background: #45a049;
+.collapsible-section,
+.sidebar-content {
+	background-color: var(--wa-color-neutral-0);
+	border-bottom: 1px solid var(--wa-color-neutral-200);
 }
 
-/* Test section buttons */
-#test-insert {
-    background: #FF9800;
+.pinned-items {
+	list-style: none;
+	font-size: var(--wa-font-size-small);
 }
 
-#test-insert:hover:not(:disabled) {
-    background: #F57C00;
+.sidebar-content {
+	flex: 1;
+	padding: var(--wa-spacing-medium);
 }
 
-#test-query {
-    background: #9C27B0;
+.quick-capture-container {
+	border-top: 1px solid var(--wa-color-neutral-200);
+	background-color: var(--wa-color-neutral-50);
+	flex-shrink: 0;
+	padding: var(--wa-spacing-medium);
 }
 
-#test-query:hover:not(:disabled) {
-    background: #7B1FA2;
+.quick-actions {
+	display: flex;
+	gap: var(--wa-spacing-x-small);
+	margin-top: var(--wa-spacing-x-small);
 }
 
-#clear-db {
-    background: #f44336;
+.sidebar-footer {
+	display: flex;
+	justify-content: space-between;
+	padding: var(--wa-spacing-small) var(--wa-spacing-medium);
+	border-top: 1px solid var(--wa-color-neutral-200);
 }
 
-#clear-db:hover:not(:disabled) {
-    background: #d32f2f;
+#main-search {
+	width: 100%;
+	max-width: 600px;
+	padding: var(--wa-spacing-small) var(--wa-spacing-medium);
+	border: 1px solid var(--wa-color-neutral-300);
+	border-radius: var(--wa-radius-medium);
 }
-
-/* Test Results */
-#test-results {
-    margin-top: 20px;
-    padding: 20px;
-    background: white;
-    border-radius: 4px;
-    border: 1px solid #e0e0e0;
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-#test-results h3, #test-results h4 {
-    margin: 0 0 15px 0;
-    color: #1976D2;
-}
-
-#test-results ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-#test-results li {
-    padding: 15px;
-    margin-bottom: 10px;
-    background: #f9f9f9;
-    border-radius: 4px;
-    border-left: 4px solid #2196F3;
-}
-
-#test-results li strong {
-    color: #1976D2;
-    font-size: 16px;
-}
-
-#test-results li small {
-    color: #666;
-    font-size: 12px;
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    body {
-        padding: 10px;
-    }
-
-    header {
-        flex-direction: column;
-        text-align: center;
-        gap: 10px;
-    }
-
-    main {
-        padding: 20px;
-    }
-
-    section {
-        padding: 15px;
-        margin-bottom: 20px;
-    }
-
-    button {
-        width: 100%;
-        margin: 5px 0;
-    }
-
-    #capture-submit {
-        margin-top: 10px;
-    }
-}
-
-/* Loading states */
-.loading {
-    opacity: 0.6;
-    pointer-events: none;
-}
-
-/* Success/error styling */
-.success {
-    border-left-color: #4CAF50 !important;
-    background-color: #E8F5E8 !important;
-}
-
-.error {
-    border-left-color: #f44336 !important;
-    background-color: #FFEBEE !important;
-}
-
-/* Utility classes */
-.hidden {
-    display: none;
-}
-
-.text-center {
-    text-align: center;
-}
-
-.text-muted {
-    color: #666;
-}
-
-.mt-1 { margin-top: 10px; }
-.mt-2 { margin-top: 20px; }
-.mb-1 { margin-bottom: 10px; }
-.mb-2 { margin-bottom: 20px; }

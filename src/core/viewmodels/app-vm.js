@@ -13,11 +13,17 @@ import ItemViewModel from "./item-vm.js";
 import TagViewModel from "./tag-vm.js";
 
 class AppViewModel {
-	constructor() {
+	constructor(
+		eventViewModel,
+		tagViewModel,
+		itemViewModel,
+		collectionViewModel
+	) {
 		// Child ViewModels
-		this.eventViewModel = new EventViewModel();
-		this.tagViewModel = new TagViewModel();
-		this.itemViewModel = new ItemViewModel();
+		this.eventViewModel = eventViewModel || new EventViewModel();
+		this.tagViewModel = tagViewModel || new TagViewModel();
+		this.itemViewModel = itemViewModel || new ItemViewModel();
+		this.collectionViewModel = collectionViewModel; // Can be null if not provided
 
 		// Global app state
 		this.state = {
@@ -420,6 +426,10 @@ class AppViewModel {
 
 	getItemViewModel() {
 		return this.itemViewModel;
+	}
+
+	getCollectionViewModel() {
+		return this.collectionViewModel;
 	}
 
 	// Convenience getters for common operations

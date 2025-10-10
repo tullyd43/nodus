@@ -11,28 +11,36 @@
 
     <header></header>
 
-    <aside>
-        
-            <div>
-                <nav>
-                    <ul>
-                        <li><a class="active" href="index.html">Drive</a></li>
-                        <li><a href="about.html">Config</a></li> <!-- config for general system, raw data tables and templates, and user preferences. account info should go somewhere else. -->
-                        <li>
-                            <a href="services.html">plus icon</a>
-                            <ul class="dropdown">
-                                <li><a href="about.html">About</a></li>
-                                <li><a href="about.html">About</a></li>
-                                <li><a href="about.html">About</a></li>
-                            </ul>
-                        </li>
-        
-                        <li><a href="store.html">Store</a></li>
-                        <li><a href="contact.html">Contact</a></li>
-                    </ul>
-                </nav>
-            </div>
-    </aside>
+<aside class="sidebar">
+    <nav class="main-nav">
+        <ul class="tabs">
+            <li>Files & Data</li>
+            <li>Views</li>
+            <li>Config</li>
+        </ul>
+    </nav>
+
+    <!-- Workspace stays in same container -->
+    <div class="workspace">
+        <h3>🔧 Workspace (3) ▼</h3>
+        <ul class="pinned-items">
+            <li>📌 project-notes.md</li>
+            <li>📌 Health collection</li>
+            <li>📝 New draft (pending)</li>
+        </ul>
+        <ul class="working-items">
+            <li>Meeting Notes.md</li>
+            <li>Latest KPI.md</li>
+        </ul>
+        <ul class="pending-review">
+            <li>📝 New draft"</li>
+            <li>📝 New draft"</li>
+        </ul>
+    </div>
+
+    <div class="files-tree">...</div>
+    <div class="quick-capture">...</div>
+</aside>
 
     <main>asdghsdfh</main>
 

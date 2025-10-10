@@ -1,74 +1,93 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="wa-theme-default wa-palette-default wa-brand-blue">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Productivity App</title>
-    <!-- Prevent the 404 error for favicon.ico by providing a blank one.
-         You can replace the href with a path to your actual icon later. -->
     <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+    <!-- WebAwesome Theme -->
+    <link rel="stylesheet" href="https://early.webawesome.com/webawesome@3.0.0-beta.6/dist/styles/themes/default.css" />
     <link rel="stylesheet" href="src/ui/assets/styles/main.css">
+    <!-- WebAwesome Components -->
+    <script>
+        window.WebAwesome = {
+            // Use a public icon library to avoid Font Awesome 403 errors
+            icons: { default: 'bootstrap' }
+        };
+    </script>
+    <script type="module" src="https://early.webawesome.com/webawesome@3.0.0-beta.6/dist/webawesome.loader.js"
+        data-base-path="https://early.webawesome.com/webawesome@3.0.0-beta.6/"></script>
+
 </head>
 
-<body>
+<body class="wa-theme-light">
     <div id="app">
         <div class="sidebar">
-            <div class="sidebar-header">
-                <h1>Nodus</h1>
-            </div>
             <nav class="main-nav">
-                <a href="#" class="nav-item active" data-view="events">Events</a>
-                <a href="#" class="nav-item" data-view="vault">Vault</a>
-                <a href="#" class="nav-item" data-view="templates">Templates</a>
+                <ul class="tabs">
+                    <li class="tab-item active" data-tab="files">Files & Data</li>
+                    <li class="tab-item" data-tab="views">Views</li>
+                    <li class="tab-item" data-tab="config">Config</li>
+                </ul>
             </nav>
+
+            <div class="collapsible-section workspace">
+                <h3 class="collapsible-trigger"><wa-icon name="pin"></wa-icon> Workspace (3) <wa-icon
+                        name="chevron-down" class="chevron"></wa-icon></h3>
+                <div class="collapsible-content">
+                    <ul class="pinned-items">
+                        <li><wa-icon name="pin-fill"></wa-icon> project-notes.md</li>
+                        <li><wa-icon name="pin-fill"></wa-icon> Health collection</li>
+                        <li><wa-icon name="pencil-square"></wa-icon> New draft (pending)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="collapsible-section review-area">
+                <h3 class="collapsible-trigger"><wa-icon name="inbox"></wa-icon> Review (1) <wa-icon name="chevron-down"
+                        class="chevron"></wa-icon></h3>
+                <div class="collapsible-content" style="display: none;"></div>
+            </div>
+
+            <div class="sidebar-content" id="file-tree">
+                <!-- File tree will be dynamically rendered here -->
+            </div>
+
+            <div class="quick-capture-container" id="quick-capture">
+                <textarea id="capture-input" placeholder="Quick Capture..." rows="2"></textarea>
+                <div class="quick-actions">
+                    <wa-icon-button name="hash" label="Add Tag"></wa-icon-button>
+                    <wa-icon-button name="at" label="Set Due Date"></wa-icon-button>
+                    <wa-icon-button name="arrow-up-right-square" label="Expand"></wa-icon-button>
+                </div>
+            </div>
+
             <div class="sidebar-footer">
-                <div id="status">Initializing...</div>
+                <div id="status-container">
+                    <wa-spinner style="font-size: 16px;"></wa-spinner>
+                    <span id="status">Initializing...</span>
+                </div>
+                <wa-icon-button name="lightbulb" label="Toggle Theme" id="theme-toggle"></wa-icon-button>
             </div>
         </div>
 
+        <header class="header">
+            <input type="search" id="main-search" placeholder="...Search Nodus">
+        </header>
+
         <div class="main-content">
-            <header class="main-header">
-                <div id="quick-capture">
-                    <textarea id="capture-input"
-                        placeholder="Quick Capture: Call John tomorrow 2pm #work..."></textarea>
-                    <button id="capture-submit">Capture</button>
+            <main id="main-area">
+                <!-- Default view: Split Editor/Preview -->
+                <div id="editor-pane" class="pane">
+                    <p>Editor Pane</p>
                 </div>
-            </header>
-
-            <main id="view-container">
-                <!-- View content will be dynamically inserted here -->
-                <div id="events-view" class="view active">
-                    <h2>Events Workspace</h2>
-                    <!-- Placeholder for event lists, filters, etc. -->
-                    <div class="test-controls">
-                        <button id="test-insert">Add Test Data</button>
-                        <button id="test-query">Query All Data</button>
-                        <button id="clear-db">Clear Database</button>
-                    </div>
-                    <div id="test-results"></div>
-                </div>
-
-                <div id="vault-view" class="view" style="display: none;">
-                    <h2>Vault</h2>
-                    <p>This is where Collections, Tags, and the Relationship Explorer will live.</p>
-                </div>
-
-                <div id="templates-view" class="view" style="display: none;">
-                    <h2>Templates</h2>
-                    <p>This is where the Event Type Builder, Field Library, and Routine Designer will live.</p>
-                    <p><strong>This is the perfect place to start building the UI for the Universal Field
-                            System.</strong></p>
+                <div id="preview-pane" class="pane">
+                    <p>Preview Pane</p>
                 </div>
             </main>
         </div>
     </div>
-
-    <!-- 
-      Load the main application script as a module.
-      It will handle importing all other necessary dependencies.
-      The Dexie library will be imported directly in db.js.
-    -->
     <script type="module" src="src/core/app.js"></script>
 </body>
 

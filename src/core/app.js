@@ -7,6 +7,7 @@
 
 import AppViewModel from "./viewmodels/app-vm.js";
 import MainView from "../ui/views/main-view.js";
+import CollectionViewModel from "./viewmodels/collection-vm.js"; // Import the new VM
 
 class App {
 	constructor() {
@@ -19,7 +20,16 @@ class App {
 			console.log("Initializing app...");
 
 			// Create the main AppViewModel (which coordinates all child ViewModels)
-			this.appViewModel = new AppViewModel();
+			// We can instantiate all ViewModels here and pass them to the AppViewModel
+			const eventViewModel = new AppViewModel().getEventViewModel(); // Keep existing logic for now
+			const tagViewModel = new AppViewModel().getTagViewModel();
+			const itemViewModel = new AppViewModel().getItemViewModel();
+			this.appViewModel = new AppViewModel(
+				eventViewModel,
+				tagViewModel,
+				itemViewModel,
+				new CollectionViewModel()
+			);
 
 			// Initialize the app (database + all ViewModels)
 			await this.appViewModel.initialize();

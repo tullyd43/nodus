@@ -25,6 +25,7 @@ productivity-ecosystem/
 │       └── SDK_DOCUMENTATION.md
 │
 <!-- ├── 📁 src/                                     # Source Code
+├── 📁 src/                                     # Source Code
 │   ├── 📁 core/                               # Core Application Framework
 │   │   ├── 📁 database/                       
 │   │   │   ├── schema.js                      # Database schema definitions

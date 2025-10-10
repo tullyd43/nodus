@@ -11,6 +11,7 @@ class MainView {
 		this.eventViewModel = appViewModel.getEventViewModel();
 		this.tagViewModel = appViewModel.getTagViewModel();
 		this.itemViewModel = appViewModel.getItemViewModel();
+		this.collectionViewModel = appViewModel.getCollectionViewModel(); // Assume getter exists
 
 		this.elements = {};
 	}
@@ -20,17 +21,27 @@ class MainView {
 
 		// Get DOM elements
 		this.elements = {
+			app: document.getElementById("app"),
 			status: document.getElementById("status"),
 			captureInput: document.getElementById("capture-input"),
-			captureSubmit: document.getElementById("capture-submit"),
-			testInsert: document.getElementById("test-insert"),
-			testQuery: document.getElementById("test-query"),
-			clearDb: document.getElementById("clear-db"),
-			testResults: document.getElementById("test-results"),
+			// New tab elements
+			collapsibleTriggers: document.querySelectorAll(
+				".collapsible-trigger"
+			),
+			themeToggle: document.getElementById("theme-toggle"),
+			tabNav: document.querySelector(".tabs"),
+			sidebarTabs: document.querySelectorAll(".sidebar-tab-content"),
+			// Main content areas
+			fileTree: document.getElementById("file-tree"),
+			editorPane: document.getElementById("editor-pane"),
+			previewPane: document.getElementById("preview-pane"),
 		};
 
 		// Bind event listeners
 		this.bindEventListeners();
+
+		// Initial render
+		this.renderVirtualFolders();
 
 		// Initialize UI state
 		this.updateStatus("Ready");
@@ -39,11 +50,7 @@ class MainView {
 	}
 
 	bindEventListeners() {
-		// Quick capture functionality
-		this.elements.captureSubmit.addEventListener("click", () =>
-			this.handleQuickCapture()
-		);
-
+		// New Quick capture functionality
 		this.elements.captureInput.addEventListener("keypress", (e) => {
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
@@ -51,18 +58,72 @@ class MainView {
 			}
 		});
 
-		// Test functionality
-		this.elements.testInsert.addEventListener("click", () =>
-			this.handleTestInsert()
-		);
+		// Tab navigation
+		this.elements.tabNav.addEventListener("click", (e) => {
+			if (e.target.classList.contains("tab-item")) {
+				this.handleTabSwitch(e.target.dataset.tab);
+			}
+		});
 
-		this.elements.testQuery.addEventListener("click", () =>
-			this.handleTestQuery()
-		);
+		this.elements.themeToggle.addEventListener("click", () => {
+			this.handleThemeToggle();
+		});
 
-		this.elements.clearDb.addEventListener("click", () =>
-			this.handleClearDatabase()
-		);
+		this.elements.collapsibleTriggers.forEach((trigger) => {
+			trigger.addEventListener("click", () => {
+				this.handleCollapsibleToggle(trigger);
+			});
+		});
+
+		this.elements.fileTree.addEventListener("click", (e) => {
+			const folder = e.target.closest(".virtual-folder");
+			if (!folder) return;
+			console.log(
+				"Clicked on virtual folder:",
+				folder.dataset.folderName
+			);
+		});
+	}
+
+	handleTabSwitch(tabId) {
+		// Logic to switch tabs
+		console.log(`Switching to tab: ${tabId}`);
+		// This is where you'll add logic to show/hide the correct
+		// sidebar content and potentially update the main area.
+	}
+
+	handleCollapsibleToggle(trigger) {
+		const section = trigger.closest(".collapsible-section");
+		if (!section) return;
+
+		const content = section.querySelector(".collapsible-content");
+		const isOpen = section.classList.toggle("is-open");
+
+		if (isOpen) {
+			// You can add animations here if you like
+			content.style.display = "block";
+		} else {
+			content.style.display = "none";
+		}
+	}
+
+	handleThemeToggle() {
+		const body = document.body;
+		const themeLink = document.getElementById("theme-link");
+		const darkThemeUrl =
+			"https://early.webawesome.com/webawesome@3.0.0-beta.6/dist/styles/themes/dark.css";
+		const lightThemeUrl =
+			"https://early.webawesome.com/webawesome@3.0.0-beta.6/dist/styles/themes/light.css";
+
+		if (body.classList.contains("wa-theme-dark")) {
+			body.classList.remove("wa-theme-dark");
+			body.classList.add("wa-theme-light");
+			themeLink.href = lightThemeUrl;
+		} else {
+			body.classList.remove("wa-theme-light");
+			body.classList.add("wa-theme-dark");
+			themeLink.href = darkThemeUrl;
+		}
 	}
 
 	// === EVENT HANDLERS ===
@@ -77,12 +138,8 @@ class MainView {
 			// Use AppViewModel to handle the capture
 			const result = await this.appViewModel.quickCapture(input);
 
-			this.showNotification(
-				`${result.type === "event" ? "Event" : "Item"} created: ${
-					result.title || result.name
-				}`,
-				"success"
-			);
+			// The AppViewModel now handles notifications, so we just need to show success.
+			console.log("Quick capture successful:", result);
 
 			// Clear input
 			this.elements.captureInput.value = "";
@@ -98,86 +155,27 @@ class MainView {
 		}
 	}
 
-	async handleTestInsert() {
-		try {
-			this.updateStatus("Creating test data...");
+	// === UI RENDERING ===
 
-			// Use the test helper method on the ViewModel, which is designed for this.
-			// This ensures correct data is passed and follows the MVVM pattern.
-			const testEvent = await this.eventViewModel.createTestEvent();
-
-			// Use the test helper method on the ItemViewModel as well.
-			const testItem = await this.itemViewModel.createTestItem();
-
-			this.showNotification(
-				`Created test event: ${testEvent.title} and test item: ${testItem.name}`,
-				"success"
-			);
-
-			this.updateStatus("Ready");
-		} catch (error) {
-			console.error("Test insert failed:", error);
-			this.showNotification(
-				"Failed to create test data: " + error.message,
-				"error"
-			);
-			this.updateStatus("Ready");
-		}
-	}
-
-	async handleTestQuery() {
-		try {
-			this.updateStatus("Querying data...");
-
-			// Get all data by calling the query methods on the underlying models.
-			// This is the correct way to fetch data according to the new architecture.
-			const events = await this.eventViewModel.eventModel.query();
-			const tags = await this.tagViewModel.tagModel.getAllTags();
-			const items = await this.itemViewModel.itemModel.query();
-
-			// Display results
-			const resultsHTML = this.buildQueryResultsHTML(events, tags, items);
-			this.elements.testResults.innerHTML = resultsHTML;
-
-			this.updateStatus("Ready");
-		} catch (error) {
-			console.error("Test query failed:", error);
-			this.showNotification(
-				"Failed to query data: " + error.message,
-				"error"
-			);
-			this.updateStatus("Ready");
-		}
-	}
-
-	async handleClearDatabase() {
-		if (
-			!confirm(
-				"Are you sure you want to clear all data? This cannot be undone."
-			)
-		) {
+	async renderVirtualFolders() {
+		const collections = await this.collectionViewModel.getCollections();
+		if (!collections || collections.length === 0) {
+			this.elements.fileTree.innerHTML = "<p>No virtual folders yet.</p>";
 			return;
 		}
 
-		try {
-			this.updateStatus("Clearing database...");
+		const foldersHtml = collections
+			.map(
+				(collection) => `
+            <div class="virtual-folder" data-folder-id="${collection.id}" data-folder-name="${collection.name}">
+                <span class="icon">${collection.icon}</span>
+                <span class="name">${collection.name}</span>
+            </div>
+        `
+			)
+			.join("");
 
-			// Use AppViewModel to clear everything
-			await this.appViewModel.clearAllData();
-
-			this.elements.testResults.innerHTML = "";
-			this.elements.captureInput.value = "";
-
-			this.showNotification("Database cleared successfully", "success");
-			this.updateStatus("Ready");
-		} catch (error) {
-			console.error("Clear database failed:", error);
-			this.showNotification(
-				"Failed to clear database: " + error.message,
-				"error"
-			);
-			this.updateStatus("Ready");
-		}
+		this.elements.fileTree.innerHTML = foldersHtml;
 	}
 
 	// === UI HELPERS ===
@@ -252,122 +250,6 @@ class MainView {
             `;
 			document.head.appendChild(style);
 		}
-	}
-
-	// === HTML BUILDERS ===
-
-	buildQueryResultsHTML(events, tags, items) {
-		let html = "<h3>Query Results:</h3>";
-
-		if (events.length === 0 && items.length === 0) {
-			html += "<p>No data found. Try creating some first!</p>";
-		} else {
-			// Show Events
-			if (events.length > 0) {
-				html += this.buildEventsHTML(events);
-			}
-
-			// Show Items
-			if (items.length > 0) {
-				html += this.buildItemsHTML(items);
-			}
-		}
-
-		// Show tag statistics
-		if (tags.length > 0) {
-			html += this.buildTagsHTML(tags);
-		}
-
-		// Show MVVM structure info
-		html += this.buildMVVMInfoHTML(
-			events.length,
-			tags.length,
-			items.length
-		);
-
-		return html;
-	}
-
-	buildEventsHTML(events) {
-		let html = "<h4>Events:</h4><ul>";
-		for (const event of events) {
-			const tagsList = event.tags
-				? event.tags.map((t) => `#${t.tag_name}`).join(" ")
-				: "";
-			const eventType = event.event_type
-				? event.event_type.name
-				: "Unknown";
-			const dueDate = event.due_date
-				? new Date(event.due_date).toLocaleDateString()
-				: "No due date";
-
-			html += `
-                <li>
-                    <strong>${this.escapeHtml(
-						event.title
-					)}</strong> (${this.escapeHtml(eventType)})<br>
-                    Status: ${this.escapeHtml(event.status)}<br>
-                    Due: ${dueDate}<br>
-                    Tags: ${this.escapeHtml(tagsList) || "None"}<br>
-                    <small>Created: ${new Date(
-						event.created_at
-					).toLocaleString()}</small>
-                </li>
-            `;
-		}
-		html += "</ul>";
-		return html;
-	}
-
-	buildItemsHTML(items) {
-		let html = "<h4>Items:</h4><ul>";
-		for (const item of items) {
-			const tagsList = item.tags
-				? item.tags.map((t) => `#${t.tag_name}`).join(" ")
-				: "";
-			const itemType = item.item_type ? item.item_type.name : "Unknown";
-
-			html += `
-                <li>
-                    <strong>${this.escapeHtml(
-						item.name
-					)}</strong> (${this.escapeHtml(itemType)})<br>
-                    Stock: ${item.stock_quantity || 0}<br>
-                    Description: ${
-						this.escapeHtml(item.description) || "None"
-					}<br>
-                    Tags: ${this.escapeHtml(tagsList) || "None"}<br>
-                    <small>Created: ${new Date(
-						item.created_at
-					).toLocaleString()}</small>
-                </li>
-            `;
-		}
-		html += "</ul>";
-		return html;
-	}
-
-	buildTagsHTML(tags) {
-		let html = "<h4>Tags:</h4><ul>";
-		tags.forEach((tag) => {
-			html += `<li>#${this.escapeHtml(tag.tag_name)}</li>`;
-		});
-		html += "</ul>";
-		return html;
-	}
-
-	buildMVVMInfoHTML(eventCount, tagCount, itemCount) {
-		let html = "<h4>MVVM Structure:</h4>";
-		html += "<ul>";
-		html += `<li><strong>AppViewModel:</strong> Coordinating ${
-			this.appViewModel.getState().currentRoute
-		} route</li>`;
-		html += `<li><strong>EventViewModel:</strong> Managing ${eventCount} events</li>`;
-		html += `<li><strong>TagViewModel:</strong> Managing ${tagCount} tags</li>`;
-		html += `<li><strong>ItemViewModel:</strong> Managing ${itemCount} items</li>`;
-		html += `<li><strong>MainView:</strong> Handling all UI interactions</li>`;
-		html += "</ul>";
-		return html;
 	}
 
 	// === UTILITIES ===
