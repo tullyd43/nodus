@@ -2621,6 +2621,13 @@ p {
 }
 ```
 
+### Iconography
+
+- **Icon Set**: The project uses [Tabler Icons](https://tabler-icons.io/), a free and open source icon library. The icons are stored in `public/assets/icons`.
+- **Adding New Icons**: To add a new icon, download the SVG file from the Tabler Icons website and place it in the `public/assets/icons` directory. Optimize the SVG using a tool like [SVGOMG](https://jakearchibald.github.io/svgomg/).
+- **Usage in HTML**: Icons can be embedded directly into HTML using an `<img>` tag or as a background image in CSS.
+- **Usage in JavaScript**: In JavaScript, icons can be dynamically created and added to the DOM. A helper function can be created to streamline this process.
+
 ---
 
 ## Testing Strategy

@@ -32,7 +32,7 @@ class MainView {
 			tabNav: document.querySelector(".tabs"),
 			sidebarTabs: document.querySelectorAll(".sidebar-tab-content"),
 			// Main content areas
-			fileTree: document.getElementById("file-tree"),
+			fileTree: document.querySelector(".files-tree"),
 			editorPane: document.getElementById("editor-pane"),
 			previewPane: document.getElementById("preview-pane"),
 		};

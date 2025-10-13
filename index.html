@@ -16,61 +16,65 @@
             icons: { default: 'bootstrap' }
         };
     </script>
-    <script type="module" src="https://early.webawesome.com/webawesome@3.0.0-beta.6/dist/webawesome.loader.js"
-        data-base-path="https://early.webawesome.com/webawesome@3.0.0-beta.6/"></script>
+    <!-- <script type="module" src="https://cdn.jsdelivr.net/npm/@webawesome/icons@latest/dist/webawesome.js"></script> -->
 
 </head>
 
 <body class="wa-theme-light">
     <div id="app">
-        <div class="sidebar">
-            <nav class="main-nav">
-                <ul class="tabs">
-                    <li class="tab-item active" data-tab="files">Files & Data</li>
-                    <li class="tab-item" data-tab="views">Views</li>
-                    <li class="tab-item" data-tab="config">Config</li>
-                </ul>
-            </nav>
+        <aside class="sidebar">
 
-            <div class="collapsible-section workspace">
-                <h3 class="collapsible-trigger"><wa-icon name="pin"></wa-icon> Workspace (3) <wa-icon
-                        name="chevron-down" class="chevron"></wa-icon></h3>
-                <div class="collapsible-content">
-                    <ul class="pinned-items">
-                        <li><wa-icon name="pin-fill"></wa-icon> project-notes.md</li>
-                        <li><wa-icon name="pin-fill"></wa-icon> Health collection</li>
-                        <li><wa-icon name="pencil-square"></wa-icon> New draft (pending)</li>
+            <div class="work-block">
+
+                <nav class="main-nav">
+                    <ul class="tabs">
+                        <li class="tab-item active" data-tab="files">Files & Data</li>
+                        <li class="tab-item" data-tab="views">Views</li>
+                        <li class="tab-item" data-tab="config">Config</li>
+                        <li class="tab-item" data-tab="bookmarks">Bookmarks</li>
                     </ul>
+                </nav>
+
+                <div class="workspace">
+                    <div class="collapsible-section is-open">
+                        <h3 class="collapsible-trigger">🔧 Workspace (3) <span class="chevron">▼</span></h3>
+                        <div class="collapsible-content">
+                            <ul class="working-area">
+                                <li>📌 project-notes.md</li>
+                                <li>📌 Health collection</li>
+                                <li>📝 New draft (pending)</li>
+                                <li>Meeting Notes.md</li>
+                                <li>Latest KPI.md</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="collapsible-section">
+                        <h3 class="collapsible-trigger">Review (2) <span class="chevron">▼</span></h3>
+                        <div class="collapsible-content" style="display: none;">
+                            <ul class="review-list">
+                                <li>📝 New draft"</li>
+                                <li>📝 New draft"</li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
+
             </div>
 
-            <div class="collapsible-section review-area">
-                <h3 class="collapsible-trigger"><wa-icon name="inbox"></wa-icon> Review (1) <wa-icon name="chevron-down"
-                        class="chevron"></wa-icon></h3>
-                <div class="collapsible-content" style="display: none;"></div>
-            </div>
 
-            <div class="sidebar-content" id="file-tree">
-                <!-- File tree will be dynamically rendered here -->
-            </div>
+            <div class="files-tree">...</div>
 
             <div class="quick-capture-container" id="quick-capture">
                 <textarea id="capture-input" placeholder="Quick Capture..." rows="2"></textarea>
-                <div class="quick-actions">
-                    <wa-icon-button name="hash" label="Add Tag"></wa-icon-button>
-                    <wa-icon-button name="at" label="Set Due Date"></wa-icon-button>
-                    <wa-icon-button name="arrow-up-right-square" label="Expand"></wa-icon-button>
-                </div>
             </div>
 
             <div class="sidebar-footer">
                 <div id="status-container">
-                    <wa-spinner style="font-size: 16px;"></wa-spinner>
                     <span id="status">Initializing...</span>
                 </div>
-                <wa-icon-button name="lightbulb" label="Toggle Theme" id="theme-toggle"></wa-icon-button>
+                <button id="theme-toggle">💡</button>
             </div>
-        </div>
+        </aside>
 
         <header class="header">
             <input type="search" id="main-search" placeholder="...Search Nodus">

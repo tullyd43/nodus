@@ -49,6 +49,7 @@ body {
 	border-right: 1px solid var(--wa-color-neutral-200);
 	display: flex;
 	flex-direction: column;
+	padding: 12px;
 }
 
 .main-content {
@@ -62,9 +63,12 @@ body {
    Sidebar Components
    ========================================================================== */
 .main-nav {
-	padding: var(--wa-spacing-small) var(--wa-spacing-medium);
-	border-bottom: 1px solid var(--wa-color-neutral-200);
+	padding: var(--wa-spacing-medium);
+}
+
+.work-block {
 	flex-shrink: 0;
+	border-bottom: 1px solid var(--wa-color-neutral-200);
 }
 
 .tabs {
@@ -97,20 +101,16 @@ body {
 	color: var(--wa-color-primary-700);
 }
 
-.collapsible-section {
+.workspace {
 	padding: var(--wa-spacing-medium);
-	border-bottom: 1px solid var(--wa-color-neutral-200);
-	flex-shrink: 0;
+	background-color: var(--wa-color-neutral-100);
 }
 
-.collapsible-trigger {
+.workspace h3 {
 	font-size: var(--wa-font-size-medium);
 	font-weight: var(--wa-font-weight-semibold);
-	display: flex;
-	align-items: center;
-	gap: var(--wa-spacing-x-small);
 	cursor: pointer;
-	user-select: none;
+	margin-bottom: var(--wa-spacing-x-small);
 }
 
 .collapsible-trigger .chevron {
@@ -122,19 +122,21 @@ body {
 	transform: rotate(180deg);
 }
 
-.collapsible-content {
-	padding-top: var(--wa-spacing-small);
-}
-
-.collapsible-section,
-.sidebar-content {
-	background-color: var(--wa-color-neutral-0);
-	border-bottom: 1px solid var(--wa-color-neutral-200);
-}
-
-.pinned-items {
+.workspace ul {
 	list-style: none;
 	font-size: var(--wa-font-size-small);
+	margin-bottom: var(--wa-spacing-medium);
+}
+
+.files-tree {
+	flex: 1;
+	padding: var(--wa-spacing-medium);
+	border: 1px solid black;
+	border-radius: var(--wa-radius-medium);
+	background-color: var(--wa-color-neutral-0);
+	height: 500px;
+	width: 100%;
+	overflow-y: scroll;
 }
 
 .sidebar-content {

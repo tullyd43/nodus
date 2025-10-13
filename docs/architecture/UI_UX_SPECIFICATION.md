@@ -207,6 +207,13 @@
 - Full account regeneration from files possible
 - User can view/modify at any level
 
+### Iconography
+
+- **Icon Set**: The application will use [Tabler Icons](https://tabler-icons.io/) for all interface icons.
+- **Usage**: Icons should be used to enhance usability and provide visual cues, not as mere decoration.
+- **Consistency**: Use icons consistently throughout the application. For example, if a "plus" icon is used to add an item, it should be used for all "add" actions.
+- **Size and Style**: Icons should be used at a consistent size and style (e.g., stroke width) to maintain visual harmony.
+
 ## Implementation Notes
 
 ### Quick Capture

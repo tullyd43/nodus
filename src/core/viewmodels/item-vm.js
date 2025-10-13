@@ -462,6 +462,19 @@ class ItemViewModel {
 		return grouped;
 	}
 
+	getOutOfStockItems() {
+		try {
+			const outOfStockItems = this.state.items.filter(
+				(item) => item.stock_quantity === 0
+			);
+			this.setState({ outOfStockItems });
+			return outOfStockItems;
+		} catch (error) {
+			console.error("Failed to get out of stock items:", error);
+			throw error;
+		}
+	}
+
 	// === PAGINATION ===
 
 	async goToPage(page) {
