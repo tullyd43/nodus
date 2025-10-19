@@ -57,6 +57,7 @@ class TagModel {
 
 	/**
 	 * Search tags by name
+	 * @param query
 	 */
 	async searchTags(query) {
 		try {
@@ -76,6 +77,7 @@ class TagModel {
 	/**
 	 * Get all objects (events + items) tagged with a specific tag
 	 * This implements the cross-context tag feature
+	 * @param tagId
 	 */
 	async getObjectsWithTag(tagId) {
 		try {
@@ -126,6 +128,7 @@ class TagModel {
 
 	/**
 	 * Get tag usage statistics
+	 * @param tagId
 	 */
 	async getTagStats(tagId) {
 		try {
@@ -157,6 +160,7 @@ class TagModel {
 
 	/**
 	 * Get popular tags (most used)
+	 * @param limit
 	 */
 	async getPopularTags(limit = 10) {
 		try {
@@ -187,6 +191,7 @@ class TagModel {
 
 	/**
 	 * Delete a tag and all its assignments
+	 * @param tagId
 	 */
 	async deleteTag(tagId) {
 		try {
@@ -208,6 +213,8 @@ class TagModel {
 
 	/**
 	 * Rename a tag
+	 * @param tagId
+	 * @param newName
 	 */
 	async renameTag(tagId, newName) {
 		try {
@@ -233,6 +240,8 @@ class TagModel {
 
 	/**
 	 * Merge two tags (move all assignments from source to target, delete source)
+	 * @param sourceTagId
+	 * @param targetTagId
 	 */
 	async mergeTags(sourceTagId, targetTagId) {
 		try {

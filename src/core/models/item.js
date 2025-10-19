@@ -16,6 +16,7 @@ class ItemModel {
 
 	/**
 	 * Create a new item
+	 * @param itemData
 	 */
 	async create(itemData) {
 		try {
@@ -50,6 +51,7 @@ class ItemModel {
 
 	/**
 	 * Get item by ID with related data
+	 * @param itemId
 	 */
 	async getById(itemId) {
 		try {
@@ -69,6 +71,8 @@ class ItemModel {
 
 	/**
 	 * Update an item
+	 * @param itemId
+	 * @param updateData
 	 */
 	async update(itemId, updateData) {
 		try {
@@ -82,6 +86,7 @@ class ItemModel {
 
 	/**
 	 * Delete an item
+	 * @param itemId
 	 */
 	async delete(itemId) {
 		try {
@@ -99,6 +104,7 @@ class ItemModel {
 
 	/**
 	 * Query items with filters
+	 * @param filters
 	 */
 	async query(filters = {}) {
 		try {
@@ -140,6 +146,8 @@ class ItemModel {
 
 	/**
 	 * Assign tags to an item (reuses tag logic from EventModel)
+	 * @param itemId
+	 * @param tagNames
 	 */
 	async assignTags(itemId, tagNames) {
 		try {
@@ -167,6 +175,7 @@ class ItemModel {
 
 	/**
 	 * Get tags for an item
+	 * @param itemId
 	 */
 	async getItemTags(itemId) {
 		try {
@@ -190,6 +199,7 @@ class ItemModel {
 
 	/**
 	 * Get tag count for an item
+	 * @param itemId
 	 */
 	async getItemTagCount(itemId) {
 		try {
@@ -204,6 +214,7 @@ class ItemModel {
 
 	/**
 	 * Remove all tags from an item
+	 * @param itemId
 	 */
 	async removeAllTags(itemId) {
 		try {

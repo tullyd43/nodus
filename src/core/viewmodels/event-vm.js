@@ -346,6 +346,7 @@ class EventViewModel {
 
 	/**
 	 * Parse capture text for smart recognition
+	 * @param text
 	 */
 	parseCaptureText(text) {
 		const eventData = {

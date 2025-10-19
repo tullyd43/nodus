@@ -20,6 +20,7 @@ class EventModel {
 
 	/**
 	 * Create a new event
+	 * @param eventData
 	 */
 	async create(eventData) {
 		try {
@@ -59,6 +60,7 @@ class EventModel {
 
 	/**
 	 * Get event by ID with related data
+	 * @param eventId
 	 */
 	async getById(eventId) {
 		try {
@@ -82,6 +84,8 @@ class EventModel {
 
 	/**
 	 * Update an event
+	 * @param eventId
+	 * @param updateData
 	 */
 	async update(eventId, updateData) {
 		try {
@@ -95,6 +99,7 @@ class EventModel {
 
 	/**
 	 * Delete an event
+	 * @param eventId
 	 */
 	async delete(eventId) {
 		try {
@@ -113,6 +118,7 @@ class EventModel {
 
 	/**
 	 * Query events with filters
+	 * @param filters
 	 */
 	async query(filters = {}) {
 		// This refactored query method leverages compound indexes for performance,
@@ -185,6 +191,8 @@ class EventModel {
 
 	/**
 	 * Assign tags to an event
+	 * @param eventId
+	 * @param tagNames
 	 */
 	async assignTags(eventId, tagNames) {
 		try {
@@ -213,6 +221,7 @@ class EventModel {
 
 	/**
 	 * Get tags for an event
+	 * @param eventId
 	 */
 	async getEventTags(eventId) {
 		try {
@@ -236,6 +245,7 @@ class EventModel {
 
 	/**
 	 * Get tag count for an event (for performance)
+	 * @param eventId
 	 */
 	async getEventTagCount(eventId) {
 		try {
@@ -250,6 +260,7 @@ class EventModel {
 
 	/**
 	 * Get links for an event (bi-directional)
+	 * @param eventId
 	 */
 	async getEventLinks(eventId) {
 		try {
@@ -274,6 +285,7 @@ class EventModel {
 
 	/**
 	 * Remove all tags from an event
+	 * @param eventId
 	 */
 	async removeAllTags(eventId) {
 		try {
@@ -288,6 +300,7 @@ class EventModel {
 
 	/**
 	 * Remove all links from an event
+	 * @param eventId
 	 */
 	async removeAllLinks(eventId) {
 		try {
