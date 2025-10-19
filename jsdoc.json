@@ -1,16 +1,19 @@
 {
+	"sourceType": "module",
 	"source": {
-		"include": ["./src/"],
-		"includePattern": "\\.(js|jsx)$",
-		"excludePattern": "node_modules/"
+		"include": ["src"],
+		"includePattern": ".+\\.js$",
+		"excludePattern": "(node_modules|dist|tests)"
 	},
 	"opts": {
-		"destination": "./docs/development/",
-		"recurse": true
+		"destination": "./docs/jsdocs",
+		"recurse": true,
+		"readme": "./README.md",
+		"verbose": true
 	},
 	"plugins": ["plugins/markdown"],
-	"templates": {
-		"cleverLinks": false,
-		"monospaceLinks": false
+	"markdown": {
+		"hardwrap": false,
+		"idInHeadings": true
 	}
 }

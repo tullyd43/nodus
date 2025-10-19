@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: ui/views/main-view.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: ui/views/main-view.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * MainView - UI Layer for the Productivity App
+ *
+ * This class handles all UI interactions and binds to ViewModels following MVVM pattern.
+ * It ONLY contains view logic - all business logic is in ViewModels.
+ */
+
+class MainView {
+	constructor(appViewModel) {
+		this.appViewModel = appViewModel;
+		this.eventViewModel = appViewModel.getEventViewModel();
+		this.tagViewModel = appViewModel.getTagViewModel();
+		this.itemViewModel = appViewModel.getItemViewModel();
+		this.collectionViewModel = appViewModel.getCollectionViewModel(); // Assume getter exists
+
+		this.elements = {};
+	}
+
+	initialize() {
+		console.log("MainView initializing...");
+
+		// Get DOM elements
+		this.elements = {
+			app: document.getElementById("app"),
+			status: document.getElementById("status"),
+			captureInput: document.getElementById("capture-input"),
+			// New tab elements
+			collapsibleTriggers: document.querySelectorAll(
+				".collapsible-trigger"
+			),
+			themeToggle: document.getElementById("theme-toggle"),
+			tabNav: document.querySelector(".tabs"),
+			sidebarTabs: document.querySelectorAll(".sidebar-tab-content"),
+			// Main content areas
+			fileTree: document.querySelector(".files-tree"),
+			editorPane: document.getElementById("editor-pane"),
+			previewPane: document.getElementById("preview-pane"),
+		};
+
+		// Bind event listeners
+		this.bindEventListeners();
+
+		// Initial render
+		this.renderVirtualFolders();
+
+		// Initialize UI state
+		this.updateStatus("Ready");
+
+		console.log("MainView initialized successfully");
+	}
+
+	bindEventListeners() {
+		// New Quick capture functionality
+		this.elements.captureInput.addEventListener("keypress", (e) => {
+			if (e.key === "Enter" &amp;&amp; !e.shiftKey) {
+				e.preventDefault();
+				this.handleQuickCapture();
+			}
+		});
+
+		// Tab navigation
+		this.elements.tabNav.addEventListener("click", (e) => {
+			if (e.target.classList.contains("tab-item")) {
+				this.handleTabSwitch(e.target.dataset.tab);
+			}
+		});
+
+		this.elements.themeToggle.addEventListener("click", () => {
+			this.handleThemeToggle();
+		});
+
+		this.elements.collapsibleTriggers.forEach((trigger) => {
+			trigger.addEventListener("click", () => {
+				this.handleCollapsibleToggle(trigger);
+			});
+		});
+
+		this.elements.fileTree.addEventListener("click", (e) => {
+			const folder = e.target.closest(".virtual-folder");
+			if (!folder) return;
+			console.log(
+				"Clicked on virtual folder:",
+				folder.dataset.folderName
+			);
+		});
+	}
+
+	handleTabSwitch(tabId) {
+		// Logic to switch tabs
+		console.log(`Switching to tab: ${tabId}`);
+		// This is where you'll add logic to show/hide the correct
+		// sidebar content and potentially update the main area.
+	}
+
+	handleCollapsibleToggle(trigger) {
+		const section = trigger.closest(".collapsible-section");
+		if (!section) return;
+
+		const content = section.querySelector(".collapsible-content");
+		const isOpen = section.classList.toggle("is-open");
+
+		if (isOpen) {
+			// You can add animations here if you like
+			content.style.display = "block";
+		} else {
+			content.style.display = "none";
+		}
+	}
+
+	handleThemeToggle() {
+		const body = document.body;
+		const themeLink = document.getElementById("theme-link");
+		const darkThemeUrl =
+			"https://early.webawesome.com/webawesome@3.0.0-beta.6/dist/styles/themes/dark.css";
+		const lightThemeUrl =
+			"https://early.webawesome.com/webawesome@3.0.0-beta.6/dist/styles/themes/light.css";
+
+		if (body.classList.contains("wa-theme-dark")) {
+			body.classList.remove("wa-theme-dark");
+			body.classList.add("wa-theme-light");
+			themeLink.href = lightThemeUrl;
+		} else {
+			body.classList.remove("wa-theme-light");
+			body.classList.add("wa-theme-dark");
+			themeLink.href = darkThemeUrl;
+		}
+	}
+
+	// === EVENT HANDLERS ===
+
+	async handleQuickCapture() {
+		const input = this.elements.captureInput.value.trim();
+		if (!input) return;
+
+		try {
+			this.updateStatus("Processing capture...");
+
+			// Use AppViewModel to handle the capture
+			const result = await this.appViewModel.quickCapture(input);
+
+			// The AppViewModel now handles notifications, so we just need to show success.
+			console.log("Quick capture successful:", result);
+
+			// Clear input
+			this.elements.captureInput.value = "";
+
+			this.updateStatus("Ready");
+		} catch (error) {
+			console.error("Quick capture failed:", error);
+			this.showNotification(
+				"Failed to capture: " + error.message,
+				"error"
+			);
+			this.updateStatus("Ready");
+		}
+	}
+
+	// === UI RENDERING ===
+
+	async renderVirtualFolders() {
+		const collections = await this.collectionViewModel.getCollections();
+		if (!collections || collections.length === 0) {
+			this.elements.fileTree.innerHTML = "&lt;p>No virtual folders yet.&lt;/p>";
+			return;
+		}
+
+		const foldersHtml = collections
+			.map(
+				(collection) => `
+            &lt;div class="virtual-folder" data-folder-id="${collection.id}" data-folder-name="${collection.name}">
+                &lt;span class="icon">${collection.icon}&lt;/span>
+                &lt;span class="name">${collection.name}&lt;/span>
+            &lt;/div>
+        `
+			)
+			.join("");
+
+		this.elements.fileTree.innerHTML = foldersHtml;
+	}
+
+	// === UI HELPERS ===
+
+	updateStatus(message) {
+		this.elements.status.textContent = message;
+		console.log("Status:", message);
+	}
+
+	showNotification(message, type = "info", duration = 3000) {
+		// Ensure notification styles are loaded
+		this.ensureNotificationStyles();
+
+		// Create notification element
+		const messageDiv = document.createElement("div");
+		messageDiv.textContent = message;
+		messageDiv.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: white;
+            font-weight: 500;
+            max-width: 400px;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+            background: ${this.getNotificationColor(type)};
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        `;
+
+		document.body.appendChild(messageDiv);
+
+		// Auto-remove notification
+		setTimeout(() => {
+			if (document.body.contains(messageDiv)) {
+				messageDiv.style.animation = "slideOut 0.3s ease-in";
+				setTimeout(() => {
+					if (document.body.contains(messageDiv)) {
+						document.body.removeChild(messageDiv);
+					}
+				}, 300);
+			}
+		}, duration);
+
+		console.log(`${type.toUpperCase()}: ${message}`);
+	}
+
+	getNotificationColor(type) {
+		const colors = {
+			success: "#4CAF50",
+			error: "#f44336",
+			warning: "#ff9800",
+			info: "#2196F3",
+		};
+		return colors[type] || colors.info;
+	}
+
+	ensureNotificationStyles() {
+		if (!document.getElementById("notification-styles")) {
+			const style = document.createElement("style");
+			style.id = "notification-styles";
+			style.textContent = `
+                @keyframes slideIn {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+                @keyframes slideOut {
+                    from { transform: translateX(0); opacity: 1; }
+                    to { transform: translateX(100%); opacity: 0; }
+                }
+            `;
+			document.head.appendChild(style);
+		}
+	}
+
+	// === UTILITIES ===
+
+	escapeHtml(text) {
+		if (!text) return "";
+		const div = document.createElement("div");
+		div.textContent = text;
+		return div.innerHTML;
+	}
+
+	// === CLEANUP ===
+
+	destroy() {
+		// Remove event listeners to prevent memory leaks
+		// This would be called when the view is destroyed
+		console.log("MainView destroyed");
+	}
+}
+
+export default MainView;
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="MainView.html">MainView</a></li></ul><h3>Global</h3><ul><li><a href="global.html#DB_SCHEMA">DB_SCHEMA</a></li><li><a href="global.html#generateSchemaDefinition">generateSchemaDefinition</a></li><li><a href="global.html#schema">schema</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Sun Oct 19 2025 13:47:38 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 This file is auto-generated to provide context to AI assistants. Do not edit it manually, as your changes will be overwritten.
 
-Last updated: 2025-10-19T03:43:34.385Z
+Last updated: 2025-10-19T16:44:22.319Z
 
 ---
 
@@ -15,8 +15,6 @@ Last updated: 2025-10-19T03:43:34.385Z
 
 .
 ├── [GEMINI.md](d:\Development Files\repositories\nodus\GEMINI.md)
-|__ [GEMINI.md](d:\Development Files\repositories\nodus\GEMINI_VSCode_Instructions.md)
-|
 ├── docs
 │   └── development
 │       └── [GEMINI.md](d:\Development Files\repositories\nodus\docs\development\GEMINI.md)
@@ -641,16 +639,29 @@ MIT License - see [LICENSE](LICENSE) file for details.
 		}
 	},
 	"dependencies": {
+		"date-fns": "^2.30.0",
 		"dexie": "^3.2.4",
-		"date-fns": "^2.30.0"
+		"orderedmap": "^2.1.1",
+		"prosemirror-commands": "^1.7.1",
+		"prosemirror-history": "^1.4.1",
+		"prosemirror-keymap": "^1.2.3",
+		"prosemirror-markdown": "^1.13.2",
+		"prosemirror-model": "^1.25.3",
+		"prosemirror-schema-basic": "^1.2.4",
+		"prosemirror-schema-list": "^1.5.1",
+		"prosemirror-state": "^1.4.3",
+		"prosemirror-view": "^1.41.3"
 	},
 	"devDependencies": {
-		"serve": "^14.2.1",
-		"eslint": "^8.45.0",
-		"jest": "^29.6.1",
+		"@babel/core": "^7.28.4",
+		"@babel/preset-env": "^7.28.3",
 		"@types/jest": "^29.5.3",
+		"babel-jest": "^30.2.0",
+		"eslint": "^8.45.0",
+		"husky": "^8.0.3",
+		"jest": "^29.6.1",
 		"live-server": "^1.2.2",
-		"husky": "^8.0.3"
+		"serve": "^14.2.1"
 	}
 }
 
