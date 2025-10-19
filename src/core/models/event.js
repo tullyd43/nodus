@@ -9,10 +9,12 @@
 
 import appDb from "../database/db.js";
 import TagModel from "./tag.js";
+import FieldDefinitionModel from "./field-definition.js";
 
 class EventModel {
 	constructor() {
 		this.tagModel = new TagModel();
+		this.fieldDefModel = new FieldDefinitionModel();
 		this.db = appDb;
 	}
 
@@ -69,7 +71,7 @@ class EventModel {
 			);
 			event.tags = await this.getEventTags(eventId);
 			event.links = await this.getEventLinks(eventId);
-			event.custom_fields = await this.getEventCustomFields(eventId);
+			event.custom_fields = await this.fieldDefModel.getFieldsForEntity('event', eventId);
 
 			return event;
 		} catch (error) {
@@ -267,21 +269,6 @@ class EventModel {
 		} catch (error) {
 			console.error("Failed to get event links:", error);
 			return { outgoing: [], incoming: [] };
-		}
-	}
-
-	/**
-	 * Get custom fields for an event
-	 */
-	async getEventCustomFields(eventId) {
-		try {
-			return await this.db.custom_field_values
-				.where("[object_type+object_id]")
-				.equals(["event", eventId])
-				.toArray();
-		} catch (error) {
-			console.error("Failed to get event custom fields:", error);
-			return [];
 		}
 	}
 

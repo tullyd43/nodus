@@ -2,12 +2,39 @@
 
 This file is auto-generated to provide context to AI assistants. Do not edit it manually, as your changes will be overwritten.
 
-Last updated: 2025-10-14T03:30:49.944Z
+Last updated: 2025-10-19T01:37:04.275Z
 
 ---
 
 
 --- START OF FILE: README.md ---
+
+> **Note for AI Agents:** For a deeper understanding of the project's structure and conventions, please review the `GEMINI.md` files located throughout the repository. These files provide specific instructions and context for development.
+
+**-- GEMINI.md files --**
+
+.
+├── [GEMINI.md](d:\Development Files\repositories\nodus\GEMINI.md)
+├── docs
+│   └── development
+│       └── [GEMINI.md](d:\Development Files\repositories\nodus\docs\development\GEMINI.md)
+├── src
+│   ├── core
+│   │   ├── database
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\database\GEMINI.md)
+│   │   ├── models
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\models\GEMINI.md)
+│   │   ├── utils
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\utils\GEMINI.md)
+│   │   └── viewmodels
+│   │       └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\viewmodels\GEMINI.md)
+│   └── ui
+│       └── components
+│           └── [GEMINI.md](d:\Development Files\repositories\nodus\src\ui\components\GEMINI.md)
+└── tests
+    └── [GEMINI.md](d:\Development Files\repositories\nodus\tests\GEMINI.md)
+
+
 
 # Organizational Ecosystem
 **A radically simple, infinitely extensible productivity platform**
@@ -2169,6 +2196,31 @@ The simplified schema with **Universal Field System**, **Embedded Templates**, a
 
 This architecture achieves the perfect balance: **maximum power through minimum complexity**. Users can create unlimited organizational modules through pure configuration, with sub-second query performance and a radically simple underlying architecture that maintains your core philosophies of clean, simple, pure data structures.
 
+
+
+
+**-- GEMINI --**
+
+.
+├── [GEMINI.md](d:\Development Files\repositories\nodus\GEMINI.md)
+├── docs
+│   └── development
+│       └── [GEMINI.md](d:\Development Files\repositories\nodus\docs\development\GEMINI.md)
+├── src
+│   ├── core
+│   │   ├── database
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\database\GEMINI.md)
+│   │   ├── models
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\models\GEMINI.md)
+│   │   ├── utils
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\utils\GEMINI.md)
+│   │   └── viewmodels
+│   │       └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\viewmodels\GEMINI.md)
+│   └── ui
+│       └── components
+│           └── [GEMINI.md](d:\Development Files\repositories\nodus\src\ui\components\GEMINI.md)
+└── tests
+    └── [GEMINI.md](d:\Development Files\repositories\nodus\tests\GEMINI.md)
 
 --- END OF FILE: docs/architecture/SYSTEM_ARCHITECTURE.md ---
 

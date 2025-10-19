@@ -7,10 +7,12 @@
 
 import appDb from "../database/db.js";
 import ItemModel from "../models/item.js";
+import FieldDefinitionModel from "../models/field-definition.js";
 
 class ItemViewModel {
 	constructor() {
 		this.itemModel = new ItemModel();
+		this.fieldDefinitionModel = new FieldDefinitionModel();
 
 		// Observable state specific to items
 		this.state = {
@@ -18,6 +20,8 @@ class ItemViewModel {
 			items: [],
 			selectedItem: null,
 			itemTypes: [],
+			fieldDefinitions: [],
+			customFields: {},
 
 			// UI State
 			isLoading: false,
@@ -132,8 +136,16 @@ class ItemViewModel {
 				pageSize: this.state.pageSize,
 			});
 
+			const customFields = { ...this.state.customFields };
+			await Promise.all(items.map(async (item) => {
+				customFields[item.item_id] = await this.fieldDefinitionModel.getFieldsForEntity("item", item.item_id);
+			}));
+
+			console.log("Custom Fields Loaded:", customFields);
+
 			this.setState({
 				items,
+				customFields,
 				isLoading: false,
 				totalCount: items.length,
 			});
@@ -162,11 +174,29 @@ class ItemViewModel {
 		}
 	}
 
-	async createItem(itemData) {
+	async loadFieldDefinitions() {
+		try {
+			const fieldDefinitions = await this.fieldDefinitionModel.getAll();
+			this.setState({ fieldDefinitions });
+			return fieldDefinitions;
+		} catch (error) {
+			console.error("Failed to load field definitions:", error);
+			throw error;
+		}
+	}
+
+	async createItem(itemData, customFields = {}) {
 		try {
 			this.setState({ isCreating: true });
 
 			const newItem = await this.itemModel.create(itemData);
+
+			// Assign custom fields
+			if (customFields) {
+				for (const [fieldId, value] of Object.entries(customFields)) {
+					await this.fieldDefinitionModel.assignValue("item", newItem.item_id, fieldId, value);
+				}
+			}
 
 			// Reload items to reflect the change
 			await this.loadItems();
@@ -182,11 +212,18 @@ class ItemViewModel {
 		}
 	}
 
-	async updateItem(itemId, updateData) {
+	async updateItem(itemId, updateData, customFields) {
 		try {
 			this.setState({ isUpdating: true });
 
 			const updatedItem = await this.itemModel.update(itemId, updateData);
+
+			// Update custom fields
+			if (customFields) {
+				for (const [fieldId, value] of Object.entries(customFields)) {
+					await this.fieldDefinitionModel.assignValue("item", itemId, fieldId, value);
+				}
+			}
 
 			// Update the item in the current list
 			const items = this.state.items.map((item) =>
@@ -212,14 +249,19 @@ class ItemViewModel {
 	async deleteItem(itemId) {
 		try {
 			await this.itemModel.delete(itemId);
+			await this.fieldDefinitionModel.deleteValuesForEntity("item", itemId);
 
 			// Remove from current list
 			const items = this.state.items.filter(
 				(item) => item.item_id !== itemId
 			);
 
+			const customFields = { ...this.state.customFields };
+			delete customFields[itemId];
+
 			this.setState({
 				items,
+				customFields,
 				selectedItem:
 					this.state.selectedItem?.item_id === itemId
 						? null
@@ -502,6 +544,7 @@ class ItemViewModel {
 	async initialize() {
 		try {
 			await this.loadItemTypes();
+			await this.loadFieldDefinitions();
 			await this.loadItems();
 			console.log("ItemViewModel initialized successfully");
 		} catch (error) {
