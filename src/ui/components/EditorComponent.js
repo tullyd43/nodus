@@ -5,7 +5,8 @@
  * @pattern Web Component + ViewModel
  */
 
-import { EditorState, EditorView } from "prosemirror-view";
+import { EditorState } from "prosemirror-state";
+import { EditorView } from "prosemirror-view";
 import { history } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import { schema } from "../../core/editor/schema.js";
