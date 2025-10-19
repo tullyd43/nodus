@@ -2,7 +2,7 @@
 
 This file is auto-generated to provide context to AI assistants. Do not edit it manually, as your changes will be overwritten.
 
-Last updated: 2025-10-19T16:44:22.319Z
+Last updated: 2025-10-19T17:51:51.240Z
 
 ---
 
@@ -617,9 +617,12 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 {
 	"scripts": {
-		"dev": "live-server --port=3000 --entry-file=index.html",
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview",
 		"test": "jest",
 		"lint": "eslint src/",
+		"lint:fix": "eslint src/ --fix",
 		"docs:generate": "jsdoc -c jsdoc.json",
 		"docs:todos": "node scripts/extract-todos.js",
 		"docs:validate": "node scripts/validate-docs.js",
@@ -657,11 +660,12 @@ MIT License - see [LICENSE](LICENSE) file for details.
 		"@babel/preset-env": "^7.28.3",
 		"@types/jest": "^29.5.3",
 		"babel-jest": "^30.2.0",
-		"eslint": "^8.45.0",
+		"eslint": "^8.57.1",
+		"eslint-plugin-jsdoc": "^61.1.4",
 		"husky": "^8.0.3",
 		"jest": "^29.6.1",
-		"live-server": "^1.2.2",
-		"serve": "^14.2.1"
+		"terser": "^5.44.0",
+		"vite": "^7.1.10"
 	}
 }
 
