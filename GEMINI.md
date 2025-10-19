@@ -2,7 +2,7 @@
 
 This file is auto-generated to provide context to AI assistants. Do not edit it manually, as your changes will be overwritten.
 
-Last updated: 2025-10-19T01:37:04.275Z
+Last updated: 2025-10-19T02:55:38.070Z
 
 ---
 
@@ -2416,7 +2416,7 @@ const DB_SCHEMA = {
 			},
 		},
 
-		// === TEMPLATING SYSTEM ===
+		// === TEMPLATING & CUSTOM FIELDS SYSTEM (V2) ===
 
 		event_types: {
 			keyPath: "event_type_id",
@@ -2438,17 +2438,18 @@ const DB_SCHEMA = {
 			},
 		},
 
-		custom_fields: {
+		// Defines the library of available fields
+		field_definitions: {
 			keyPath: "field_id",
 			autoIncrement: true,
 			indexes: {
-				object_type: {},
-				object_id: {},
-				field_name: {},
-				"[object_type+object_id]": {},
+				name: {},
+				field_type: {}, // Index for finding all fields of a certain type
+				is_indexed: {}, // Index for finding fields to promote
 			},
 		},
 
+		// Stores the typed values for custom fields
 		custom_field_values: {
 			keyPath: "value_id",
 			autoIncrement: true,
@@ -2456,8 +2457,10 @@ const DB_SCHEMA = {
 				field_id: {},
 				object_type: {},
 				object_id: {},
+				value_type: {}, // NEW: Index by type for type-specific queries
 				"[object_type+object_id]": {},
-				"[field_id+object_id]": {},
+				"[field_id+object_id]": { unique: true }, // A field can only have one value per object
+				"[field_id+value]": {}, // NEW: Critical for range queries on typed values
 			},
 		},
 
@@ -2550,7 +2553,8 @@ const DB_SCHEMA = {
 		audit_logs: {
 			keyPath: "log_id",
 			autoIncrement: true,
-			indexes: {
+			indexes:.
+			{
 				actor_user_id: {},
 				action_type: {},
 				object_type: {},

@@ -7,9 +7,6 @@
  * described in the system architecture.
  */
 
-// Use a full URL to import the ES module version of Dexie.
-// This resolves the "bare module specifier" error in the browser and uses a reliable
-// CDN (esm.sh) to avoid CORS and 404 issues.
 import Dexie from "https://esm.sh/dexie@3.2.4";
 
 import { DB_SCHEMA } from "./schema.js";
@@ -17,8 +14,7 @@ import { DB_SCHEMA } from "./schema.js";
 /**
  * Converts the DB_SCHEMA stores object into a Dexie-compatible schema definition.
  * This keeps the schema definition centralized in schema.js while allowing
- * db.js to use it for versioning and migrations, aligning with the "Identical
- * Schema Strategy" and "Radical Simplicity" principles.
+ * db.js to use it for versioning and migrations.
  * @param {object} stores - The stores object from DB_SCHEMA.
  * @returns {object} A Dexie-compatible schema definition.
  */
@@ -28,16 +24,22 @@ function generateSchemaDefinition(stores) {
 		const indexes = storeConfig.indexes
 			? Object.keys(storeConfig.indexes)
 			: [];
-		const primaryKey = storeConfig.autoIncrement
-			? `++${storeConfig.keyPath}`
-			: storeConfig.keyPath;
+
+		let primaryKey;
+		if (Array.isArray(storeConfig.keyPath)) {
+			primaryKey = `[${storeConfig.keyPath.join("+")}]`;
+		} else {
+			primaryKey = storeConfig.autoIncrement
+				? `++${storeConfig.keyPath}`
+				: storeConfig.keyPath;
+		}
 
 		schemaDefinition[storeName] = [primaryKey, ...indexes].join(",");
 	}
 	return schemaDefinition;
 }
 
-class ProductivityDatabase extends Dexie {
+class OrganizationalDatabase extends Dexie {
 	constructor() {
 		super(DB_SCHEMA.name);
 		this.setupSchemaAndMigrations();
@@ -45,40 +47,30 @@ class ProductivityDatabase extends Dexie {
 	}
 
 	/**
-	 * Defines the database schema and migration path. This is the standard
-	 * Dexie pattern for handling schema evolution safely.
+	 * Defines the database schema and migration path.
 	 */
 	setupSchemaAndMigrations() {
-		// --- Version 1: Initial Schema ---
-		// This version is defined directly from your schema.js file,
-		// fulfilling the "single source of truth" principle.
-		this.version(1).stores(generateSchemaDefinition(DB_SCHEMA.stores));
-
-		// --- EXAMPLE MIGRATION TO VERSION 2 ---
-		// When you change the schema, you add a new block like this.
-		// this.version(2).stores({
-		// 	// Define ONLY the new or changed tables. Dexie carries forward the rest.
-		// 	operational_logs: "++op_log_id,severity_level,timestamp,correlation_id"
-		// });
+		// --- Version 2: Schema from /docs/architecture/DATABASE_SCHEMA.md ---
+		// This version is defined directly from the updated schema.js file.
+		// Incrementing the version number triggers Dexie's migration logic.
+		// For this major schema change, we are simply defining the new schema.
+		// Dexie will drop old tables and add new ones, clearing existing data.
+		this.version(2).stores(generateSchemaDefinition(DB_SCHEMA.stores));
 	}
 
 	/**
-	 * Sets up Dexie hooks for automatic timestamping and audit logging,
-	 * aligning with the "Security & Audit Features" in the feature matrix.
+	 * Sets up Dexie hooks for automatic timestamping and audit logging.
 	 */
 	setupHooks() {
 		// Add created_at and updated_at timestamps automatically
 		this.tables.forEach((table) => {
-			// Hook for creating records
 			table.hook("creating", (primKey, obj, trans) => {
 				const now = new Date();
 				if (typeof obj.created_at === "undefined") obj.created_at = now;
 				if (typeof obj.updated_at === "undefined") obj.updated_at = now;
 			});
 
-			// Hook for updating records
 			table.hook("updating", (modifications, primKey, obj, trans) => {
-				// Only set updated_at if it's not already being set
 				if (typeof modifications.updated_at === "undefined") {
 					modifications.updated_at = new Date();
 				}
@@ -98,16 +90,8 @@ class ProductivityDatabase extends Dexie {
 
 		auditedTables.forEach((table) => {
 			table.hook("creating", (primKey, obj, trans) => {
-				// Using trans.on('complete') is the recommended way to perform
-				// actions after a transaction has successfully committed.
 				trans.on("complete", () => {
-					this.logAuditEvent(
-						"CREATE",
-						table.name,
-						primKey,
-						null,
-						obj
-					);
+					this.logAuditEvent("CREATE", table.name, primKey, null, obj);
 				});
 			});
 
@@ -117,21 +101,15 @@ class ProductivityDatabase extends Dexie {
 						"UPDATE",
 						table.name,
 						primKey,
-						obj, // The original object before modifications
-						{ ...obj, ...modifications } // The object after modifications
+						obj,
+						{ ...obj, ...modifications }
 					);
 				});
 			});
 
 			table.hook("deleting", (primKey, obj, trans) => {
 				trans.on("complete", () => {
-					this.logAuditEvent(
-						"DELETE",
-						table.name,
-						primKey,
-						obj,
-						null
-					);
+					this.logAuditEvent("DELETE", table.name, primKey, obj, null);
 				});
 			});
 		});
@@ -145,15 +123,13 @@ class ProductivityDatabase extends Dexie {
 		resultingState
 	) {
 		try {
-			// Use a separate transaction for logging to avoid interfering
-			// with the main operation, especially on failure.
-			await this.transaction("rw", this.audit_logs, async () => {
-				await this.audit_logs.add({
+			await this.transaction("rw", this.operation_logs, async () => {
+				await this.operation_logs.add({
 					actor_user_id: this.getCurrentUserId(),
 					action_type: action,
 					object_type: objectType,
 					object_id: objectId,
-					prior_state: priorState, // Dexie handles object cloning
+					prior_state: priorState,
 					resulting_state: resultingState,
 					timestamp: new Date(),
 				});
@@ -164,7 +140,6 @@ class ProductivityDatabase extends Dexie {
 	}
 
 	getCurrentUserId() {
-		// For now, return a default user ID
 		// In a real app, this would come from an authentication service.
 		return 1;
 	}
@@ -173,10 +148,7 @@ class ProductivityDatabase extends Dexie {
 		try {
 			await this.open();
 			console.log("Database initialized successfully");
-
-			// Check if we need to seed default data
 			await this.seedDefaultData();
-
 			return true;
 		} catch (error) {
 			console.error("Failed to initialize database:", error);
@@ -222,7 +194,6 @@ class ProductivityDatabase extends Dexie {
 		});
 	}
 
-	// Utility method to clear all data (for testing)
 	async clearAllData() {
 		try {
 			await this.delete();
@@ -236,8 +207,6 @@ class ProductivityDatabase extends Dexie {
 	}
 }
 
-// Create and export the database instance
-const appDb = new ProductivityDatabase();
+const appDb = new OrganizationalDatabase();
 
-// Export the instance so other modules can import it.
 export default appDb;
