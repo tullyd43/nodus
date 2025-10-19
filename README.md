@@ -1,3 +1,30 @@
+> **Note for AI Agents:** For a deeper understanding of the project's structure and conventions, please review the `GEMINI.md` files located throughout the repository. These files provide specific instructions and context for development.
+
+**-- GEMINI.md files --**
+
+.
+├── [GEMINI.md](d:\Development Files\repositories\nodus\GEMINI.md)
+├── docs
+│   └── development
+│       └── [GEMINI.md](d:\Development Files\repositories\nodus\docs\development\GEMINI.md)
+├── src
+│   ├── core
+│   │   ├── database
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\database\GEMINI.md)
+│   │   ├── models
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\models\GEMINI.md)
+│   │   ├── utils
+│   │   │   └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\utils\GEMINI.md)
+│   │   └── viewmodels
+│   │       └── [GEMINI.md](d:\Development Files\repositories\nodus\src\core\viewmodels\GEMINI.md)
+│   └── ui
+│       └── components
+│           └── [GEMINI.md](d:\Development Files\repositories\nodus\src\ui\components\GEMINI.md)
+└── tests
+    └── [GEMINI.md](d:\Development Files\repositories\nodus\tests\GEMINI.md)
+
+
+
 # Organizational Ecosystem
 **A radically simple, infinitely extensible productivity platform**
 
