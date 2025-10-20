@@ -1,10 +1,8 @@
 /**
  * @file src/core/editor/keybindings.js
- * @description Keyboard shortcuts for the editor.
- * @requires prosemirror-keymap
- * @requires prosemirror-history
- * @author Gemini
- * @version 1.0.0
+ * @description Keyboard shortcuts for editor
+ * @dependencies prosemirror-keymap, prosemirror-history
+ * @pattern Vim-like and standard editor shortcuts
  */
 
 import { baseKeymap, splitBlock } from "prosemirror-commands";
@@ -19,21 +17,47 @@ import {
 	clearFormatting,
 } from "./commands.js";
 
-/**
- * @description Custom Enter key handler for code blocks.
- *              Inserts a hard break inside code blocks, otherwise splits the block.
- * @param {EditorState} state - The current editor state.
- * @param {function} dispatch - The dispatch function.
- * @returns {boolean} - True if the command was applied.
- */
+// custom Enter handler
 const handleEnterInCodeBlock = (state, dispatch) => {
 	const { $from } = state.selection;
 
 	// Check if cursor is inside code_block
 	for (let d = $from.depth; d > 0; d--) {
-		if ($from.node(d).type.name === "code_block") {
-			console.log("✓ CODE_BLOCK DETECTED - inserting hardbreak");
-			// Inside code block: insert hardbreak node instead of newline
+		const node = $from.node(d);
+		if (node.type.name === "code_block") {
+			// Check if cursor is at the very end of the code block content
+			const isAtEnd = $from.parentOffset === node.content.size;
+
+			if (isAtEnd) {
+				console.log("✓ AT END OF CODE_BLOCK - moving cursor outside");
+
+				// Move cursor to the position right after the code block
+				// Don't modify the code block at all
+				const codeBlockEnd = $from.before(d) + node.nodeSize;
+
+				const tr = state.tr;
+				const newSelection = state.selection.constructor.near(
+					tr.doc.resolve(codeBlockEnd)
+				);
+				tr.setSelection(newSelection);
+
+				// Then insert a new paragraph and place cursor there
+				const newPara = state.schema.nodes.paragraph.create();
+				tr.insert(codeBlockEnd, newPara);
+
+				// Set selection to the new paragraph
+				tr.setSelection(
+					state.selection.constructor.near(
+						tr.doc.resolve(codeBlockEnd + 1)
+					)
+				);
+
+				dispatch(tr);
+				return true;
+			}
+
+			// Inside code block but not at the end - insert hardbreak
+			console.log("✓ INSIDE CODE_BLOCK - inserting hardbreak");
 			const breakNode = state.schema.nodes.hardbreak.create();
 			const tr = state.tr.replaceSelectionWith(breakNode);
 			dispatch(tr);
@@ -41,15 +65,14 @@ const handleEnterInCodeBlock = (state, dispatch) => {
 		}
 	}
 
-	console.log("✗ NOT code_block - calling splitBlock");
+	console.log("✗ NOT in code_block - calling splitBlock");
 	// Not in code block: use normal split behavior
 	return splitBlock(state, dispatch);
 };
 
 /**
- * @description Standard markdown editor keybindings.
- *              Includes: formatting, navigation, undo/redo.
- * @type {Object<string, function>}
+ * Standard markdown editor keybindings
+ * Includes: formatting, navigation, undo/redo
  */
 export const keybindings = {
 	// custom keybinds
@@ -86,9 +109,9 @@ export const keybindings = {
 };
 
 /**
- * @description Get the full keymap with base commands.
- *              Custom Enter handler is prioritized over baseKeymap.
- * @returns {Object} The complete keymap configuration.
+ * Get full keymap with base commands
+ * Custom Enter handler is prioritized over baseKeymap
+ * @returns {Object} Complete keymap configuration
  */
 export function getKeymap() {
 	// Start with baseKeymap, then override with our custom keybindings

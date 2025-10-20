@@ -1,10 +1,8 @@
 /**
  * @file src/core/editor/commands.js
- * @description ProseMirror commands for editor actions.
- * @requires prosemirror-commands
- * @requires prosemirror-state
- * @author Gemini
- * @version 1.0.0
+ * @description ProseMirror commands for editor actions
+ * @dependencies prosemirror-commands, prosemirror-state
+ * @pattern Command patterns following ProseMirror conventions
  */
 
 import {
@@ -17,34 +15,34 @@ import {
 import { schema } from "./schema.js";
 
 /**
- * @description Toggles an inline format mark.
- * @param {string} markType - The type of mark to toggle.
- * @returns {Function} A ProseMirror command function.
+ * Toggle inline formatting
+ * @param {string} markType - Type of mark to toggle
+ * @returns {Function} Command function
  */
 export const toggleFormat = (markType) => toggleMark(schema.marks[markType]);
 
 /**
- * @description Sets the block type for the current selection.
- * @param {string} nodeType - The type of node to set.
- * @param {Object} [attrs={}] - The attributes for the node.
- * @returns {Function} A ProseMirror command function.
+ * Set block type (heading level, code block, etc.)
+ * @param {string} nodeType - Type of node
+ * @param {Object} attrs - Attributes for the node
+ * @returns {Function} Command function
  */
 export const setBlock = (nodeType, attrs = {}) =>
 	setBlockType(schema.nodes[nodeType], attrs);
 
 /**
- * @description Wraps the current block in another block.
- * @param {string} nodeType - The type of the wrapper node.
- * @returns {Function} A ProseMirror command function.
+ * Wrap current block in another block (list, quote)
+ * @param {string} nodeType - Type of wrapper node
+ * @returns {Function} Command function
  */
 export const wrapBlock = (nodeType) => wrapIn(schema.nodes[nodeType]);
 
 /**
- * @description Inserts inline content with a mark.
- * @param {string} markType - The type of the mark.
- * @param {string} text - The text to insert.
- * @param {Object} [attrs={}] - The mark attributes.
- * @returns {Function} A ProseMirror command function.
+ * Insert inline content (link, code)
+ * @param {string} markType - Type of mark
+ * @param {string} text - Text to insert
+ * @param {Object} attrs - Mark attributes
+ * @returns {Function} Command function
  */
 export const insertInline =
 	(markType, text, attrs = {}) =>
@@ -61,10 +59,10 @@ export const insertInline =
 	};
 
 /**
- * @description Inserts a block node.
- * @param {string} nodeType - The type of the node.
- * @param {Object} [attrs={}] - The node attributes.
- * @returns {Function} A ProseMirror command function.
+ * Insert block content (callout, divider, etc.)
+ * @param {string} nodeType - Type of node
+ * @param {Object} attrs - Node attributes
+ * @returns {Function} Command function
  */
 export const insertBlock =
 	(nodeType, attrs = {}) =>
@@ -78,52 +76,82 @@ export const insertBlock =
 	};
 
 /**
- * @description Inserts a heading.
- * @param {number} level - The heading level (1-6).
- * @returns {Function} A ProseMirror command function.
+ * Insert heading
+ * @param {number} level - Heading level (1-6)
+ * @returns {Function} Command function
  */
 export const insertHeading = (level) => setBlock("heading", { level });
 
 /**
- * @description Inserts a code block.
- * @param {string} [language=""] - The programming language for syntax highlighting.
- * @returns {Function} A ProseMirror command function.
+ * Insert code block - creates a code_block node with editable backticks
+ * Uses plugin to show/hide backticks based on focus state
+ * @param {string} language - Programming language for syntax highlighting
+ * @returns {Function} Command function
  */
 export const insertCodeBlock =
 	(language = "") =>
 	(state, dispatch) => {
 		const { $from, $to } = state.selection;
 
-		// Get selected text if any
-		let selectedText = "";
+		// Get selected content, preserving line breaks
+		const selectedContent = [];
 		if (!state.selection.empty) {
 			const { $from: from, $to: to } = state.selection;
-			state.doc.nodesBetween(from.pos, to.pos, (node) => {
+			let currentLineText = "";
+
+			state.doc.nodesBetween(from.pos, to.pos, (node, nodePos) => {
 				if (node.isText) {
-					selectedText += node.text;
+					// Add text to current line
+					currentLineText += node.text;
+				} else if (
+					node.type.name === "paragraph" ||
+					node.type.name === "heading"
+				) {
+					// Paragraph boundary - if we have accumulated text, push it
+					if (currentLineText) {
+						selectedContent.push({
+							type: "text",
+							value: currentLineText,
+						});
+						currentLineText = "";
+					}
+					// Add hardbreak to separate paragraphs (except at the end)
+					if (selectedContent.length > 0) {
+						selectedContent.push({ type: "break" });
+					}
+				}
+			});
+
+			// Don't forget the last accumulated text
+			if (currentLineText) {
+				selectedContent.push({ type: "text", value: currentLineText });
+			}
+		}
+
+		// Create code block content with backticks as editable text
+		// Format: ```\n[content with line breaks]\n```
+		const backtickLine = state.schema.text("```");
+		const closingLine = state.schema.text("```");
+		const hardbreak = state.schema.nodes.hardbreak.create();
+
+		// Build content array with preserved line breaks
+		const content = [];
+		content.push(backtickLine);
+		content.push(hardbreak);
+
+		// Add selected content with hardbreaks between lines
+		if (selectedContent.length > 0) {
+			selectedContent.forEach((item, index) => {
+				if (item.type === "text") {
+					content.push(state.schema.text(item.value));
+				} else if (item.type === "break") {
+					content.push(hardbreak);
 				}
 			});
 		}
 
-		// Create code block content with backticks as editable text
-		// Format: ```\ncontent\n```
-		const backtickLine = state.schema.text("```");
-		const contentLine = selectedText
-			? state.schema.text(selectedText)
-			: state.schema.text("");
-		const closingLine = state.schema.text("```");
-
-		// Create hardbreak nodes to separate lines
-		const hardbreak = state.schema.nodes.hardbreak.create();
-
-		// Build the code block with: opening backticks, hardbreak, content, hardbreak, closing backticks
-		const content = [
-			backtickLine,
-			hardbreak,
-			contentLine,
-			hardbreak,
-			closingLine,
-		];
+		content.push(hardbreak);
+		content.push(closingLine);
 
 		// Create the code_block node
 		const codeBlock = state.schema.nodes.code_block.create(
@@ -138,7 +166,7 @@ export const insertCodeBlock =
 			codeBlock
 		);
 
-		// Position cursor on the content line (after first hardbreak)
+		// Position cursor after opening backticks and first hardbreak
 		const codeBlockPos = $from.before($from.depth);
 		const cursorPos =
 			codeBlockPos + backtickLine.nodeSize + hardbreak.nodeSize + 1;
@@ -151,34 +179,32 @@ export const insertCodeBlock =
 	};
 
 /**
- * @description Inserts a horizontal rule.
- * @returns {Function} A ProseMirror command function.
+ * Insert horizontal rule
+ * @returns {Function} Command function
  */
 export const insertHorizontalRule = insertBlock("horizontal_rule");
 
 /**
- * @description Inserts a bullet list.
- * @returns {Function} A ProseMirror command function.
+ * Insert bullet list
+ * @returns {Function} Command function
  */
 export const insertBulletList = wrapBlock("bullet_list");
 
 /**
- * @description Inserts an ordered list.
- * @returns {Function} A ProseMirror command function.
+ * Insert ordered list
+ * @returns {Function} Command function
  */
 export const insertOrderedList = wrapBlock("ordered_list");
 
 /**
- * @description Inserts a blockquote.
- * @returns {Function} A ProseMirror command function.
+ * Insert blockquote
+ * @returns {Function} Command function
  */
 export const insertBlockquote = wrapBlock("blockquote");
 
 /**
- * @description Clears all formatting from the selection.
- * @param {EditorState} state - The current editor state.
- * @param {function} dispatch - The dispatch function.
- * @returns {boolean} - True if the command was applied.
+ * Clear formatting (remove all marks)
+ * @returns {Function} Command function
  */
 export const clearFormatting = (state, dispatch) => {
 	const { $from, $to } = state.selection;
@@ -195,16 +221,16 @@ export const clearFormatting = (state, dispatch) => {
 };
 
 /**
- * @description Lifts the selection out of the parent block.
- * @type {Function}
+ * Lift selection out of parent block
+ * @returns {Function} Command function
  */
 export const liftBlock = lift;
 
 /**
- * @description Adds a link to the selection.
- * @param {string} href - The URL of the link.
- * @param {string} [title=""] - The title of the link.
- * @returns {Function} A ProseMirror command function.
+ * Add link to selection
+ * @param {string} href - URL
+ * @param {string} title - Link title
+ * @returns {Function} Command function
  */
 export const addLink =
 	(href, title = "") =>
@@ -219,10 +245,8 @@ export const addLink =
 	};
 
 /**
- * @description Removes a link from the selection.
- * @param {EditorState} state - The current editor state.
- * @param {function} dispatch - The dispatch function.
- * @returns {boolean} - True if the command was applied.
+ * Remove link from selection
+ * @returns {Function} Command function
  */
 export const removeLink = (state, dispatch) => {
 	const { $from, $to } = state.selection;
