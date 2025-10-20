@@ -536,12 +536,17 @@ class EditorComponent extends window.BaseComponent {
 
       /* Code block backticks visibility */
       .ProseMirror pre.code-block-focused {
-        /* Backticks are visible when code block is focused */
+        /* Backticks are visible when focused */
       }
 
-      .ProseMirror pre:not(.code-block-focused) {
-        /* Hide the first line (opening backticks) when not focused */
-        /* We'll use color-matching to hide them */
+      /* Hide backticks when code block is not focused */
+      .backtick-hidden {
+        display: none;
+      }
+
+      /* When focused, make sure backticks are visible */
+      .ProseMirror pre.code-block-focused .backtick-hidden {
+        display: inline;
       }
 
       .ProseMirror blockquote {

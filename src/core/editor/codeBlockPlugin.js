@@ -35,6 +35,7 @@ function isInCodeBlock(state, pos) {
 /**
  * Check if code block has valid opening and closing backticks
  * Valid = first child is "```" and last child is "```"
+ * Can have 3 children (with content) or 4 children (empty with extra hardbreak)
  */
 function validateCodeBlockBackticks(node) {
 	if (node.type.name !== "code_block") {
@@ -42,8 +43,8 @@ function validateCodeBlockBackticks(node) {
 	}
 
 	const content = node.content;
-	if (content.childCount < 5) {
-		// Need at least: ```, hardbreak, content, hardbreak, ```
+	// Need at least 3 children: ```, at least one hardbreak, ```
+	if (content.childCount < 3) {
 		return { valid: false };
 	}
 
@@ -154,7 +155,7 @@ export function createCodeBlockPlugin() {
 								pos <= focusedCodeBlockPos &&
 								focusedCodeBlockPos < pos + node.nodeSize;
 
-							const decoration = Decoration.node(
+							const nodeDecoration = Decoration.node(
 								pos,
 								pos + node.nodeSize,
 								{
@@ -163,7 +164,48 @@ export function createCodeBlockPlugin() {
 										: "code-block",
 								}
 							);
-							decorations.push(decoration);
+							decorations.push(nodeDecoration);
+
+							// If NOT focused, add inline decorations to hide backticks
+							if (!isFocused && node.content.childCount > 0) {
+								// Hide opening backticks (first child)
+								const firstChild = node.content.firstChild;
+								if (
+									firstChild &&
+									firstChild.isText &&
+									firstChild.text === "```"
+								) {
+									const startPos = pos + 1; // +1 to get inside the node
+									decorations.push(
+										Decoration.inline(
+											startPos,
+											startPos + firstChild.nodeSize,
+											{ class: "backtick-hidden" }
+										)
+									);
+								}
+
+								// Hide closing backticks (last child)
+								const lastChild = node.content.lastChild;
+								if (
+									lastChild &&
+									lastChild.isText &&
+									lastChild.text === "```"
+								) {
+									const lastPos =
+										pos +
+										node.nodeSize -
+										lastChild.nodeSize -
+										1; // -1 for closing
+									decorations.push(
+										Decoration.inline(
+											lastPos,
+											lastPos + lastChild.nodeSize,
+											{ class: "backtick-hidden" }
+										)
+									);
+								}
+							}
 						}
 					}
 				);
@@ -174,70 +216,34 @@ export function createCodeBlockPlugin() {
 
 		/**
 		 * After transaction is applied, check for invalid code blocks and unwrap them
-		 * NOTE: This is at plugin level, not inside props!
 		 */
 		appendTransaction(transactions, oldState, newState) {
-			console.log("🔍 appendTransaction called, checking code blocks...");
 			let tr = null;
-
-			// Collect all invalid code blocks
 			const invalidBlocks = [];
-			let codeBlockCount = 0;
 
 			newState.doc.nodesBetween(
 				0,
 				newState.doc.content.size,
 				(node, pos) => {
 					if (node.type.name === "code_block") {
-						codeBlockCount++;
 						const { valid } = validateCodeBlockBackticks(node);
-
-						console.log(
-							`  Code block #${codeBlockCount} at pos ${pos}:`,
-							{
-								valid,
-								firstChild:
-									node.content.firstChild?.text || "NONE",
-								lastChild:
-									node.content.lastChild?.text || "NONE",
-								childCount: node.content.childCount,
-							}
-						);
-
 						if (!valid) {
-							console.log(`  ❌ Marking for unwrap`);
 							invalidBlocks.push({ node, pos });
-						} else {
-							console.log(`  ✅ Valid, keeping`);
 						}
 					}
 				}
 			);
 
-			console.log(
-				`Found ${codeBlockCount} code blocks, ${invalidBlocks.length} invalid`
-			);
-
-			// If no invalid blocks, no need to do anything
+			// If no invalid blocks, done
 			if (invalidBlocks.length === 0) {
 				return null;
 			}
-
-			console.log(
-				`🔄 Unwrapping ${invalidBlocks.length} invalid code blocks`
-			);
 
 			// Process invalid blocks in reverse order to preserve positions
 			tr = newState.tr;
 			for (let i = invalidBlocks.length - 1; i >= 0; i--) {
 				const { node, pos } = invalidBlocks[i];
 				const unwrappedContent = unwrapCodeBlock(newState, node);
-
-				console.log(
-					`  Replacing code block at ${pos} with ${unwrappedContent.length} paragraphs`
-				);
-
-				// Replace code block with unwrapped paragraphs
 				tr.replaceWith(pos, pos + node.nodeSize, unwrappedContent);
 			}
 

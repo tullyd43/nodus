@@ -12,6 +12,7 @@ import {
 	lift,
 	splitBlock,
 } from "prosemirror-commands";
+import { Fragment } from "prosemirror-model";
 import { schema } from "./schema.js";
 
 /**
@@ -128,30 +129,39 @@ export const insertCodeBlock =
 			}
 		}
 
-		// Create code block content with backticks as editable text
-		// Format: ```\n[content with line breaks]\n```
-		const backtickLine = state.schema.text("```");
-		const closingLine = state.schema.text("```");
-		const hardbreak = state.schema.nodes.hardbreak.create();
-
-		// Build content array with preserved line breaks
-		const content = [];
-		content.push(backtickLine);
-		content.push(hardbreak);
+		// Build content by appending nodes one by one
+		let content = Fragment.empty;
+		content = content.append(Fragment.from(state.schema.text("```")));
+		content = content.append(
+			Fragment.from(state.schema.nodes.hardbreak.create())
+		);
 
 		// Add selected content with hardbreaks between lines
 		if (selectedContent.length > 0) {
-			selectedContent.forEach((item, index) => {
+			// If there's content, don't add the extra hardbreak - content goes right after first hardbreak
+			selectedContent.forEach((item) => {
 				if (item.type === "text") {
-					content.push(state.schema.text(item.value));
+					content = content.append(
+						Fragment.from(state.schema.text(item.value))
+					);
 				} else if (item.type === "break") {
-					content.push(hardbreak);
+					content = content.append(
+						Fragment.from(state.schema.nodes.hardbreak.create())
+					);
 				}
 			});
+			// Add hardbreak before closing backticks
+			content = content.append(
+				Fragment.from(state.schema.nodes.hardbreak.create())
+			);
+		} else {
+			// No content selected - add second hardbreak to create empty line
+			content = content.append(
+				Fragment.from(state.schema.nodes.hardbreak.create())
+			);
 		}
 
-		content.push(hardbreak);
-		content.push(closingLine);
+		content = content.append(Fragment.from(state.schema.text("```")));
 
 		// Create the code_block node
 		const codeBlock = state.schema.nodes.code_block.create(
@@ -166,10 +176,11 @@ export const insertCodeBlock =
 			codeBlock
 		);
 
-		// Position cursor after opening backticks and first hardbreak
+		// Position cursor on the empty line (after first hardbreak)
+		// Structure: text("```")[4] + hardbreak[1] + hardbreak[1] + text("```")[4]
+		// We want: codeBlockPos + 1 (enter) + 4 (past text) + 1 (past first hardbreak) = codeBlockPos + 6
 		const codeBlockPos = $from.before($from.depth);
-		const cursorPos =
-			codeBlockPos + backtickLine.nodeSize + hardbreak.nodeSize + 1;
+		const cursorPos = codeBlockPos + 1 + 4 + 1; // = codeBlockPos + 6
 		tr.setSelection(
 			state.selection.constructor.near(tr.doc.resolve(cursorPos))
 		);
