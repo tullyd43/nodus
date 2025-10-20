@@ -1,13 +1,22 @@
 /**
- * Database Schema Definition (v2)
- *
- * This schema is updated to align with the 19-table structure defined in:
- * /docs/architecture/DATABASE_SCHEMA.md
- *
- * This version introduces new tables for routines, lists, file sync, and more,
- * and standardizes naming conventions.
+ * @file src/core/database/schema.js
+ * @description Database Schema Definition (v2)
+ *              This schema is updated to align with the 19-table structure defined in:
+ *              /docs/architecture/DATABASE_SCHEMA.md
+ *              This version introduces new tables for routines, lists, file sync, and more,
+ *              and standardizes naming conventions.
+ * @author Gemini
+ * @version 2.0.0
  */
 
+/**
+ * @constant
+ * @type {object}
+ * @description The database schema definition for the application.
+ * @property {number} version - The version of the database schema.
+ * @property {string} name - The name of the database.
+ * @property {object} stores - The definition of the database stores (tables).
+ */
 const DB_SCHEMA = {
 	version: 2,
 	name: "OrganizationalEcosystem",

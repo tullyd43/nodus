@@ -1,21 +1,23 @@
 /**
  * @file src/core/editor/inputrules.js
- * @description InputRules for automatic markdown syntax detection and conversion
- * @dependencies prosemirror-inputrules
- * @pattern Auto-convert markdown syntax to nodes as user types
+ * @description InputRules for automatic markdown syntax detection and conversion.
+ * @requires prosemirror-inputrules
+ * @author Gemini
+ * @version 1.0.0
  */
 
 import { inputRules, wrappingInputRule, textblockTypeInputRule } from 'prosemirror-inputrules';
 import { schema } from './schema.js';
 
 /**
- * Create input rules for markdown syntax
- * Detects patterns like:
- * - # for h1, ## for h2, etc.
- * - > for blockquote
- * - ``` for code block
- * - - or * for bullet list
- * - 1. for ordered list
+ * @description Creates a ProseMirror plugin for handling markdown-style input rules.
+ *              Detects patterns like:
+ *              - # for h1, ## for h2, etc.
+ *              - > for blockquote
+ *              - ``` for code block
+ *              - - or * for bullet list
+ *              - 1. for ordered list
+ * @returns {Plugin}
  */
 export function createInputRules() {
   return inputRules({

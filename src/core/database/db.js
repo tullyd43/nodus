@@ -1,10 +1,14 @@
 /**
- * Database Connection and Initialization
- *
- * This file sets up the Dexie.js database, defines the schema from the
- * central DB_SCHEMA object, handles migrations, and configures hooks.
- * It directly implements the "Offline-First" client database layer
- * described in the system architecture.
+ * @file src/core/database/db.js
+ * @description Database Connection and Initialization.
+ *              This file sets up the Dexie.js database, defines the schema from the
+ *              central DB_SCHEMA object, handles migrations, and configures hooks.
+ *              It directly implements the "Offline-First" client database layer
+ *              described in the system architecture.
+ * @requires dexie
+ * @requires ./schema.js
+ * @author Gemini
+ * @version 1.0.0
  */
 
 import Dexie from "dexie";
@@ -12,9 +16,9 @@ import Dexie from "dexie";
 import { DB_SCHEMA } from "./schema.js";
 
 /**
- * Converts the DB_SCHEMA stores object into a Dexie-compatible schema definition.
- * This keeps the schema definition centralized in schema.js while allowing
- * db.js to use it for versioning and migrations.
+ * @description Converts the DB_SCHEMA stores object into a Dexie-compatible schema definition.
+ *              This keeps the schema definition centralized in schema.js while allowing
+ *              db.js to use it for versioning and migrations.
  * @param {object} stores - The stores object from DB_SCHEMA.
  * @returns {object} A Dexie-compatible schema definition.
  */
@@ -39,7 +43,16 @@ function generateSchemaDefinition(stores) {
 	return schemaDefinition;
 }
 
+/**
+ * @class OrganizationalDatabase
+ * @classdesc Represents the application's database, built on Dexie.js.
+ *              It handles schema definition, migrations, and data hooks.
+ * @extends Dexie
+ */
 class OrganizationalDatabase extends Dexie {
+	/**
+	 * @description Creates an instance of the OrganizationalDatabase.
+	 */
 	constructor() {
 		super(DB_SCHEMA.name);
 		this.setupSchemaAndMigrations();
@@ -47,7 +60,7 @@ class OrganizationalDatabase extends Dexie {
 	}
 
 	/**
-	 * Defines the database schema and migration path.
+	 * @description Defines the database schema and migration path.
 	 */
 	setupSchemaAndMigrations() {
 		// --- Version 2: Schema from /docs/architecture/DATABASE_SCHEMA.md ---
@@ -59,7 +72,7 @@ class OrganizationalDatabase extends Dexie {
 	}
 
 	/**
-	 * Sets up Dexie hooks for automatic timestamping and audit logging.
+	 * @description Sets up Dexie hooks for automatic timestamping and audit logging.
 	 */
 	setupHooks() {
 		// Add created_at and updated_at timestamps automatically
@@ -115,6 +128,15 @@ class OrganizationalDatabase extends Dexie {
 		});
 	}
 
+	/**
+	 * @description Logs an audit event to the operation_logs table.
+	 * @async
+	 * @param {string} action - The action performed (e.g., 'CREATE', 'UPDATE', 'DELETE').
+	 * @param {string} objectType - The type of object being modified (e.g., 'events', 'items').
+	 * @param {*} objectId - The ID of the object being modified.
+	 * @param {object|null} priorState - The state of the object before the action.
+	 * @param {object|null} resultingState - The state of the object after the action.
+	 */
 	async logAuditEvent(
 		action,
 		objectType,
@@ -139,11 +161,20 @@ class OrganizationalDatabase extends Dexie {
 		}
 	}
 
+	/**
+	 * @description Gets the current user's ID.
+	 * @returns {number} The current user's ID.
+	 */
 	getCurrentUserId() {
 		// In a real app, this would come from an authentication service.
 		return 1;
 	}
 
+	/**
+	 * @description Initializes the database.
+	 * @async
+	 * @returns {Promise<boolean>} A promise that resolves to true if the database was initialized successfully, false otherwise.
+	 */
 	async initialize() {
 		try {
 			await this.open();
@@ -156,6 +187,10 @@ class OrganizationalDatabase extends Dexie {
 		}
 	}
 
+	/**
+	 * @description Seeds the database with default data.
+	 * @async
+	 */
 	async seedDefaultData() {
 		await this.transaction(
 			"rw",
@@ -194,6 +229,11 @@ class OrganizationalDatabase extends Dexie {
 		});
 	}
 
+	/**
+	 * @description Clears all data from the database.
+	 * @async
+	 * @returns {Promise<boolean>} A promise that resolves to true if the database was cleared successfully, false otherwise.
+	 */
 	async clearAllData() {
 		try {
 			await this.delete();
@@ -207,6 +247,10 @@ class OrganizationalDatabase extends Dexie {
 	}
 }
 
+/**
+ * @description The application's database instance.
+ * @type {OrganizationalDatabase}
+ */
 const appDb = new OrganizationalDatabase();
 
 export default appDb;

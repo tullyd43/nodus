@@ -1,8 +1,10 @@
 /**
  * @file src/core/editor/keybindings.js
- * @description Keyboard shortcuts for editor
- * @dependencies prosemirror-keymap, prosemirror-history
- * @pattern Vim-like and standard editor shortcuts
+ * @description Keyboard shortcuts for the editor.
+ * @requires prosemirror-keymap
+ * @requires prosemirror-history
+ * @author Gemini
+ * @version 1.0.0
  */
 
 import { baseKeymap, splitBlock } from "prosemirror-commands";
@@ -17,7 +19,13 @@ import {
 	clearFormatting,
 } from "./commands.js";
 
-// custom Enter handler
+/**
+ * @description Custom Enter key handler for code blocks.
+ *              Inserts a hard break inside code blocks, otherwise splits the block.
+ * @param {EditorState} state - The current editor state.
+ * @param {function} dispatch - The dispatch function.
+ * @returns {boolean} - True if the command was applied.
+ */
 const handleEnterInCodeBlock = (state, dispatch) => {
 	const { $from } = state.selection;
 
@@ -39,8 +47,9 @@ const handleEnterInCodeBlock = (state, dispatch) => {
 };
 
 /**
- * Standard markdown editor keybindings
- * Includes: formatting, navigation, undo/redo
+ * @description Standard markdown editor keybindings.
+ *              Includes: formatting, navigation, undo/redo.
+ * @type {Object<string, function>}
  */
 export const keybindings = {
 	// custom keybinds
@@ -77,9 +86,9 @@ export const keybindings = {
 };
 
 /**
- * Get full keymap with base commands
- * Custom Enter handler is prioritized over baseKeymap
- * @returns {Object} Complete keymap configuration
+ * @description Get the full keymap with base commands.
+ *              Custom Enter handler is prioritized over baseKeymap.
+ * @returns {Object} The complete keymap configuration.
  */
 export function getKeymap() {
 	// Start with baseKeymap, then override with our custom keybindings

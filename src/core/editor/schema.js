@@ -1,8 +1,11 @@
 /**
  * @file src/core/editor/schema.js
- * @description ProseMirror schema definition for markdown-native editing
- * @dependencies prosemirror-model, prosemirror-schema-basic, prosemirror-schema-list
- * @pattern Schema configuration for bidirectional markdown sync
+ * @description ProseMirror schema definition for markdown-native editing.
+ * @requires prosemirror-model
+ * @requires prosemirror-schema-basic
+ * @requires prosemirror-schema-list
+ * @author Gemini
+ * @version 1.0.0
  */
 
 import { Schema } from "prosemirror-model";
@@ -10,16 +13,9 @@ import { schema as baseSchema } from "prosemirror-schema-basic";
 import { addListNodes } from "prosemirror-schema-list";
 
 /**
- * Extended schema with support for:
- * - Headings (h1-h6)
- * - Lists (bullet, ordered, task)
- * - Code blocks with language support
- * - Blockquotes
- * - Custom marks (highlight, custom link)
- * - Custom nodes (callout)
+ * @description Custom node specifications for the editor schema.
+ * @type {Object}
  */
-
-// Start with base schema nodes and add custom nodes
 const customNodeSpecs = {
 	hardbreak: {
 		inline: true,
@@ -90,6 +86,10 @@ const nodesWithLists = addListNodes(
 	"block+"
 );
 
+/**
+ * @description The editor schema.
+ * @type {Schema}
+ */
 export const schema = new Schema({
 	nodes: nodesWithLists,
 	marks: baseSchema.spec.marks.append({

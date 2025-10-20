@@ -19,6 +19,7 @@ import { schema } from "../../core/editor/schema.js";
 import { getKeymap } from "../../core/editor/keybindings.js";
 import * as commands from "../../core/editor/commands.js";
 import createInputRules from "../../core/editor/inputrules.js";
+import { createCodeBlockPlugin } from "../../core/editor/codeBlockPlugin.js";
 import EditorViewModel from "../../core/viewmodels/editor.js";
 
 // Ensure BaseComponent is available
@@ -71,6 +72,7 @@ class EditorComponent extends window.BaseComponent {
 					history(),
 					keymap(getKeymap()),
 					createInputRules(),
+					createCodeBlockPlugin(),
 					// Custom plugin to preserve newlines in code blocks
 					new Plugin({
 						props: {
@@ -520,6 +522,7 @@ class EditorComponent extends window.BaseComponent {
         margin: 0.5em 0;
         white-space: pre-wrap;
         word-wrap: break-word;
+        position: relative;
       }
 
       .ProseMirror pre code {
@@ -527,6 +530,18 @@ class EditorComponent extends window.BaseComponent {
         padding: 0;
         border-radius: 0;
         display: block;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9em;
+      }
+
+      /* Code block backticks visibility */
+      .ProseMirror pre.code-block-focused {
+        /* Backticks are visible when code block is focused */
+      }
+
+      .ProseMirror pre:not(.code-block-focused) {
+        /* Hide the first line (opening backticks) when not focused */
+        /* We'll use color-matching to hide them */
       }
 
       .ProseMirror blockquote {
