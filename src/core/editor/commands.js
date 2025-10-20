@@ -176,11 +176,10 @@ export const insertCodeBlock =
 			codeBlock
 		);
 
-		// Position cursor on the empty line (after first hardbreak)
-		// Structure: text("```")[4] + hardbreak[1] + hardbreak[1] + text("```")[4]
-		// We want: codeBlockPos + 1 (enter) + 4 (past text) + 1 (past first hardbreak) = codeBlockPos + 6
+		// Position cursor before closing backticks (same rule for all cases)
 		const codeBlockPos = $from.before($from.depth);
-		const cursorPos = codeBlockPos + 1 + 4 + 1; // = codeBlockPos + 6
+		const cursorPos = codeBlockPos + codeBlock.nodeSize - 4 - 1;
+
 		tr.setSelection(
 			state.selection.constructor.near(tr.doc.resolve(cursorPos))
 		);
