@@ -21,6 +21,13 @@ import { addListNodes } from "prosemirror-schema-list";
 
 // Start with base schema nodes and add custom nodes
 const customNodeSpecs = {
+	hardbreak: {
+		inline: true,
+		group: "inline",
+		selectable: false,
+		parseDOM: [{ tag: "br" }],
+		toDOM: () => ["br"],
+	},
 	heading: {
 		attrs: { level: { default: 1 } },
 		content: "inline*",
@@ -47,7 +54,7 @@ const customNodeSpecs = {
 		attrs: {
 			language: { default: "" },
 		},
-		content: "text*",
+		content: "(text | hardbreak)*",
 		marks: "",
 		group: "block",
 		defining: true,

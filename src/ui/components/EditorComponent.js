@@ -6,7 +6,7 @@
  */
 
 import "prosemirror-view/style/prosemirror.css";
-import { EditorState } from "prosemirror-state";
+import { EditorState, Plugin } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
 import { DOMSerializer } from "prosemirror-model";
 import { history } from "prosemirror-history";
@@ -18,286 +18,348 @@ import {
 import { schema } from "../../core/editor/schema.js";
 import { getKeymap } from "../../core/editor/keybindings.js";
 import * as commands from "../../core/editor/commands.js";
+import createInputRules from "../../core/editor/inputrules.js";
 import EditorViewModel from "../../core/viewmodels/editor.js";
 
 // Ensure BaseComponent is available
 if (!window.BaseComponent) {
-  throw new Error('BaseComponent must be loaded before EditorComponent');
+	throw new Error("BaseComponent must be loaded before EditorComponent");
 }
 
 class EditorComponent extends window.BaseComponent {
-  constructor() {
-    super();
-    this.editorView = null;
-    this.state = {
-      content: '',
-      markdown: '',
-      isDirty: false,
-      isSaving: false,
-      error: null,
-    };
-  }
+	constructor() {
+		super();
+		this.editorView = null;
+		this.state = {
+			content: "",
+			markdown: "",
+			isDirty: false,
+			isSaving: false,
+			error: null,
+		};
+	}
 
-  connectedCallback() {
-    // Don't call super.connectedCallback() - we handle our own initialization
-    // Ensure shadow DOM is ready
-    if (!this.shadowRoot) {
-      this.attachShadow({ mode: 'open' });
-    }
-    
-    this.render();
-    this.initializeEditor();
-    this.connectToViewModel();
-    this.bindEvents();
-  }
+	connectedCallback() {
+		// Don't call super.connectedCallback() - we handle our own initialization
+		// Ensure shadow DOM is ready
+		if (!this.shadowRoot) {
+			this.attachShadow({ mode: "open" });
+		}
 
-  /**
-   * Initialize ProseMirror editor
-   */
-  initializeEditor() {
-    try {
-      // Parse initial content - create empty doc
-      const initialDoc = schema.nodes.doc.create(
-        null,
-        schema.nodes.paragraph.create()
-      );
+		this.render();
+		this.initializeEditor();
+		this.connectToViewModel();
+		this.bindEvents();
+	}
 
-      // Create editor state
-      const state = EditorState.create({
-        schema,
-        doc: initialDoc,
-        plugins: [
-          history(),
-          keymap(getKeymap()),
-        ],
-      });
+	/**
+	 * Initialize ProseMirror editor
+	 */
+	initializeEditor() {
+		try {
+			// Parse initial content - create empty doc
+			const initialDoc = schema.nodes.doc.create(
+				null,
+				schema.nodes.paragraph.create()
+			);
 
-      // Get or create editor container
-      const editorContainer = this.shadowRoot.querySelector('.editor-content');
-      if (!editorContainer) {
-        throw new Error('Editor container not found in template');
-      }
+			// Create editor state
+			const state = EditorState.create({
+				schema,
+				doc: initialDoc,
+				plugins: [
+					history(),
+					keymap(getKeymap()),
+					createInputRules(),
+					// Custom plugin to preserve newlines in code blocks
+					new Plugin({
+						props: {
+							handleDOMEvents: {
+								beforeinput: (view, event) => {
+									if (
+										event.inputType === "insertText" ||
+										event.inputType ===
+											"insertCompositionText"
+									) {
+										const { $from } = view.state.selection;
 
-      // Create editor view
-      this.editorView = new EditorView(editorContainer, {
-        state,
-        dispatchTransaction: (tr) => {
-          const newState = this.editorView.state.apply(tr);
-          this.editorView.updateState(newState);
+										// Check if we're in a code_block
+										for (let d = $from.depth; d > 0; d--) {
+											if (
+												$from.node(d).type.name ===
+												"code_block"
+											) {
+												// In code block - let it process normally
+												// but we'll handle the text carefully
+												return false;
+											}
+										}
+									}
+									return false;
+								},
+							},
+						},
+					}),
+				],
+			});
 
-          // Notify of changes
-          this.onEditorUpdate();
-        },
-      });
+			// Get or create editor container
+			const editorContainer =
+				this.shadowRoot.querySelector(".editor-content");
+			if (!editorContainer) {
+				throw new Error("Editor container not found in template");
+			}
 
-      // Focus editor on load
-      this.editorView.focus();
-      console.log('Editor initialized successfully');
-    } catch (error) {
-      console.error('Failed to initialize editor:', error);
-      this.state.error = error.message;
-    }
-  }
+			// Create editor view
+			this.editorView = new EditorView(editorContainer, {
+				state,
+				dispatchTransaction: (tr) => {
+					console.log("=== TRANSACTION ===");
+					console.log("Step type:", tr.getMeta("uiEvent"));
 
-  /**
-   * Handle editor content changes
-   */
-  onEditorUpdate() {
-    if (!this.editorView) return;
+					// Check code_block content before apply
+					state.doc.descendants((node) => {
+						if (node.type.name === "code_block") {
+							console.log(
+								"Code block BEFORE:",
+								JSON.stringify(node.textContent)
+							);
+						}
+					});
 
-    this.state.isDirty = true;
+					const newState = this.editorView.state.apply(tr);
 
-    // Emit change event for ViewModel
-    this.dispatchEvent(new CustomEvent('content-changed', {
-      detail: {
-        doc: this.editorView.state.doc.toJSON(),
-      },
-      bubbles: true,
-      composed: true,
-    }));
-  }
+					// Check code_block content after apply
+					newState.doc.descendants((node) => {
+						if (node.type.name === "code_block") {
+							console.log(
+								"Code block AFTER:",
+								JSON.stringify(node.textContent)
+							);
+						}
+					});
 
-  /**
-   * Connect to ViewModel for external updates
-   */
-  connectToViewModel() {
-    if (window.app?.editorViewModel) {
-      this.connectToViewModel(window.app.editorViewModel);
-    }
-  }
+					this.editorView.updateState(newState);
 
-  /**
-   * Handle ViewModel updates
-   */
-  onViewModelChange(change) {
-    if (!change || !this.editorView) return;
+					// Notify of changes
+					this.onEditorUpdate();
+				},
+			});
 
-    switch (change.type) {
-      case 'CONTENT_LOADED':
-        this.loadContent(change.content);
-        break;
-      case 'CONTENT_SYNCED':
-        this.loadContent(change.content);
-        break;
-    }
-  }
+			// Focus editor on load
+			this.editorView.focus();
+			console.log("Editor initialized successfully");
+		} catch (error) {
+			console.error("Failed to initialize editor:", error);
+			this.state.error = error.message;
+		}
+	}
 
-  /**
-   * Load content into editor
-   */
-  loadContent(content) {
-    if (!this.editorView || !content) return;
+	/**
+	 * Handle editor content changes
+	 */
+	onEditorUpdate() {
+		if (!this.editorView) return;
 
-    try {
-      const doc = schema.nodeFromJSON(
-        typeof content === 'string'
-          ? JSON.parse(content)
-          : content
-      );
+		this.state.isDirty = true;
 
-      const tr = this.editorView.state.tr.replaceWith(
-        0,
-        this.editorView.state.doc.content.size,
-        doc.content
-      );
+		// Emit change event for ViewModel
+		this.dispatchEvent(
+			new CustomEvent("content-changed", {
+				detail: {
+					doc: this.editorView.state.doc.toJSON(),
+				},
+				bubbles: true,
+				composed: true,
+			})
+		);
+	}
 
-      this.editorView.dispatch(tr);
-    } catch (error) {
-      console.error('Failed to load content:', error);
-      this.state.error = error.message;
-    }
-  }
+	/**
+	 * Connect to ViewModel for external updates
+	 */
+	connectToViewModel() {
+		if (window.app?.editorViewModel) {
+			this.connectToViewModel(window.app.editorViewModel);
+		}
+	}
 
-  /**
-   * Bind toolbar button events
-   */
-  bindEvents() {
-    if (!this.shadowRoot) return;
+	/**
+	 * Handle ViewModel updates
+	 */
+	onViewModelChange(change) {
+		if (!change || !this.editorView) return;
 
-    const buttons = {
-      'bold': () => {
-        if (!this.editorView) return;
-        commands.toggleFormat('strong')(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-      'italic': () => {
-        if (!this.editorView) return;
-        commands.toggleFormat('em')(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-      'code': () => {
-        if (!this.editorView) return;
-        commands.toggleFormat('code')(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-      'link': () => this.showLinkDialog(),
-      'h1': () => {
-        if (!this.editorView) return;
-        commands.insertHeading(1)(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-      'h2': () => {
-        if (!this.editorView) return;
-        commands.insertHeading(2)(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-      'bullet': () => {
-        if (!this.editorView) return;
-        commands.insertBulletList()(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-      'ordered': () => {
-        if (!this.editorView) return;
-        commands.insertOrderedList()(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-      'quote': () => {
-        if (!this.editorView) return;
-        commands.insertBlockquote()(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-      'code-block': () => {
-        if (!this.editorView) return;
-        commands.insertCodeBlock()(
-          this.editorView.state,
-          this.editorView.dispatch
-        );
-      },
-    };
+		switch (change.type) {
+			case "CONTENT_LOADED":
+				this.loadContent(change.content);
+				break;
+			case "CONTENT_SYNCED":
+				this.loadContent(change.content);
+				break;
+		}
+	}
 
-    // Attach click handlers for toolbar buttons
-    this.shadowRoot.querySelectorAll('[data-command]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const command = btn.dataset.command;
-        const handler = buttons[command];
-        if (handler) {
-          handler();
-          if (this.editorView) {
-            this.editorView.focus();
-          }
-        }
-      });
-    });
+	/**
+	 * Load content into editor
+	 */
+	loadContent(content) {
+		if (!this.editorView || !content) return;
 
-    // FIX 4: Make editor clickable and focusable anywhere
-    const editorContent = this.shadowRoot.querySelector('.editor-content');
-    if (editorContent) {
-      editorContent.addEventListener('click', () => {
-        if (this.editorView) {
-          this.editorView.focus();
-        }
-      });
-    }
-  }
+		console.log(
+			"⚠️ loadContent called with:",
+			typeof content,
+			content?.length ? `${content.length} chars` : content
+		);
 
-  /**
-   * Show dialog to get link URL
-   */
-  showLinkDialog() {
-    if (!this.editorView) return;
-    
-    const { $from, $to } = this.editorView.state.selection;
-    
-    // Check if there's selected text
-    if ($from.pos === $to.pos) {
-      alert('Please select text first');
-      return;
-    }
+		try {
+			const doc = schema.nodeFromJSON(
+				typeof content === "string" ? JSON.parse(content) : content
+			);
 
-    const url = prompt('Enter URL:');
-    if (!url) return;
+			const tr = this.editorView.state.tr.replaceWith(
+				0,
+				this.editorView.state.doc.content.size,
+				doc.content
+			);
 
-    commands.addLink(url)(this.editorView.state, this.editorView.dispatch);
-  }
+			this.editorView.dispatch(tr);
+		} catch (error) {
+			console.error("Failed to load content:", error);
+			this.state.error = error.message;
+		}
+	}
 
-  /**
-   * Web Component lifecycle - render template
-   */
-  render() {
-    this.shadowRoot.innerHTML = `
+	/**
+	 * Bind toolbar button events
+	 */
+	bindEvents() {
+		if (!this.shadowRoot) return;
+
+		const buttons = {
+			bold: () => {
+				if (!this.editorView) return;
+				commands.toggleFormat("strong")(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+			italic: () => {
+				if (!this.editorView) return;
+				commands.toggleFormat("em")(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+			code: () => {
+				if (!this.editorView) return;
+				commands.toggleFormat("code")(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+			link: () => this.showLinkDialog(),
+			h1: () => {
+				if (!this.editorView) return;
+				commands.insertHeading(1)(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+			h2: () => {
+				if (!this.editorView) return;
+				commands.insertHeading(2)(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+			bullet: () => {
+				if (!this.editorView) return;
+				commands.insertBulletList()(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+			ordered: () => {
+				if (!this.editorView) return;
+				commands.insertOrderedList()(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+			quote: () => {
+				if (!this.editorView) return;
+				commands.insertBlockquote()(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+			"code-block": () => {
+				if (!this.editorView) return;
+				commands.insertCodeBlock()(
+					this.editorView.state,
+					this.editorView.dispatch
+				);
+			},
+		};
+
+		// Attach click handlers for toolbar buttons
+		this.shadowRoot.querySelectorAll("[data-command]").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const command = btn.dataset.command;
+				const handler = buttons[command];
+				if (handler) {
+					handler();
+					if (this.editorView) {
+						this.editorView.focus();
+					}
+				}
+			});
+		});
+
+		// FIX 4: Make editor clickable and focusable anywhere
+		const editorContent = this.shadowRoot.querySelector(".editor-content");
+		if (editorContent) {
+			editorContent.addEventListener("click", () => {
+				if (this.editorView) {
+					this.editorView.focus();
+				}
+			});
+		}
+	}
+
+	/**
+	 * Show dialog to get link URL
+	 */
+	showLinkDialog() {
+		if (!this.editorView) return;
+
+		const { $from, $to } = this.editorView.state.selection;
+
+		// Check if there's selected text
+		if ($from.pos === $to.pos) {
+			alert("Please select text first");
+			return;
+		}
+
+		const url = prompt("Enter URL:");
+		if (!url) return;
+
+		commands.addLink(url)(this.editorView.state, this.editorView.dispatch);
+	}
+
+	/**
+	 * Web Component lifecycle - render template
+	 */
+	render() {
+		this.shadowRoot.innerHTML = `
       <style>${this.getStyles()}</style>
       ${this.getTemplate()}
     `;
-  }
+	}
 
-  getTemplate() {
-    return `
+	getTemplate() {
+		return `
       <div class="editor-wrapper">
         <div class="editor-toolbar">
           <button data-command="bold" class="btn" title="Bold (Cmd+B)">
@@ -338,10 +400,10 @@ class EditorComponent extends window.BaseComponent {
         </div>
       </div>
     `;
-  }
+	}
 
-  getStyles() {
-    return `
+	getStyles() {
+		return `
       * {
         box-sizing: border-box;
       }
@@ -448,16 +510,14 @@ class EditorComponent extends window.BaseComponent {
         font-size: 0.9em;
       }
 
-      /* FIX 2: Unified code block with line numbers */
+      /* Code block styling - clean, no line numbers */
       .ProseMirror pre {
         background: #f5f5f5;
         border: 1px solid #ddd;
         border-radius: 4px;
         padding: 12px;
-        padding-left: 50px;
         overflow-x: auto;
         margin: 0.5em 0;
-        counter-reset: line-number;
         white-space: pre-wrap;
         word-wrap: break-word;
       }
@@ -467,23 +527,6 @@ class EditorComponent extends window.BaseComponent {
         padding: 0;
         border-radius: 0;
         display: block;
-        counter-increment: line-number;
-        position: relative;
-      }
-
-      /* Line number styling */
-      .ProseMirror pre code::before {
-        content: counter(line-number);
-        display: inline-block;
-        width: 40px;
-        text-align: right;
-        margin-right: 12px;
-        color: #999;
-        user-select: none;
-        padding-right: 12px;
-        border-right: 1px solid #ddd;
-        position: absolute;
-        left: -50px;
       }
 
       .ProseMirror blockquote {
@@ -523,17 +566,17 @@ class EditorComponent extends window.BaseComponent {
         background: #fafafa;
       }
     `;
-  }
+	}
 
-  disconnectedCallback() {
-    if (this.editorView) {
-      this.editorView.destroy();
-    }
-    super.disconnectedCallback();
-  }
+	disconnectedCallback() {
+		if (this.editorView) {
+			this.editorView.destroy();
+		}
+		super.disconnectedCallback();
+	}
 }
 
 // Register the Web Component
-customElements.define('app-editor', EditorComponent);
+customElements.define("app-editor", EditorComponent);
 
 export default EditorComponent;

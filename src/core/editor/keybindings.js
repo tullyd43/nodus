@@ -5,7 +5,7 @@
  * @pattern Vim-like and standard editor shortcuts
  */
 
-import { baseKeymap } from "prosemirror-commands";
+import { baseKeymap, splitBlock } from "prosemirror-commands";
 import { history, undo, redo } from "prosemirror-history";
 import {
 	toggleFormat,
@@ -17,7 +17,6 @@ import {
 	clearFormatting,
 } from "./commands.js";
 
-
 // custom Enter handler
 const handleEnterInCodeBlock = (state, dispatch) => {
 	const { $from } = state.selection;
@@ -25,24 +24,27 @@ const handleEnterInCodeBlock = (state, dispatch) => {
 	// Check if cursor is inside code_block
 	for (let d = $from.depth; d > 0; d--) {
 		if ($from.node(d).type.name === "code_block") {
-			// Insert newline instead of splitting block
-			dispatch(state.tr.insertText("\n"));
+			console.log("✓ CODE_BLOCK DETECTED - inserting hardbreak");
+			// Inside code block: insert hardbreak node instead of newline
+			const breakNode = state.schema.nodes.hardbreak.create();
+			const tr = state.tr.replaceSelectionWith(breakNode);
+			dispatch(tr);
 			return true;
 		}
 	}
 
-	// Not in code block, use default behavior
-	return false;
+	console.log("✗ NOT code_block - calling splitBlock");
+	// Not in code block: use normal split behavior
+	return splitBlock(state, dispatch);
 };
-
 
 /**
  * Standard markdown editor keybindings
  * Includes: formatting, navigation, undo/redo
  */
 export const keybindings = {
-  // custom keybinds
-	"Enter": handleEnterInCodeBlock,
+	// custom keybinds
+	Enter: handleEnterInCodeBlock,
 
 	// Formatting
 	"Mod-b": toggleFormat("strong"),
@@ -76,13 +78,17 @@ export const keybindings = {
 
 /**
  * Get full keymap with base commands
+ * Custom Enter handler is prioritized over baseKeymap
  * @returns {Object} Complete keymap configuration
  */
 export function getKeymap() {
-	return {
-		...keybindings,
-		...baseKeymap,
-	};
+	// Start with baseKeymap, then override with our custom keybindings
+	const finalKeymap = { ...baseKeymap };
+
+	// Explicitly add our keybindings, which will override any conflicts
+	Object.assign(finalKeymap, keybindings);
+
+	return finalKeymap;
 }
 
 export default keybindings;
