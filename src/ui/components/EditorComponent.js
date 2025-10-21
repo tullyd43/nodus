@@ -19,7 +19,6 @@ import { schema } from "../../core/editor/schema.js";
 import { getKeymap } from "../../core/editor/keybindings.js";
 import * as commands from "../../core/editor/commands.js";
 import createInputRules from "../../core/editor/inputrules.js";
-import { createCodeBlockPlugin } from "../../core/editor/codeBlockPlugin.js";
 import EditorViewModel from "../../core/viewmodels/editor.js";
 
 // Ensure BaseComponent is available
@@ -72,7 +71,6 @@ class EditorComponent extends window.BaseComponent {
 					history(),
 					keymap(getKeymap()),
 					createInputRules(),
-					createCodeBlockPlugin(),
 					// Custom plugin to preserve newlines in code blocks
 					new Plugin({
 						props: {
