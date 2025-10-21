@@ -14,7 +14,7 @@ import AppViewModel from "./viewmodels/app-vm.js";
 import MainView from "../ui/views/main-view.js";
 import CollectionViewModel from "./viewmodels/collection-vm.js"; // Import the new VM
 import { BaseComponent } from "../ui/components/base/BaseComponent.js";
-import EditorComponent from "../ui/components/EditorComponent.js";
+import MarkdownEditorComponentEditorComponent from "../ui/components/MarkdownEditorComponent.js";
 
 /**
  * @class App
