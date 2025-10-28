@@ -1,11 +1,21 @@
 {
+	"name": "nodus-v7",
+	"version": "7.1.0",
+	"type": "module",
+	"description": "Nodus V7.1 - Enhanced Grid System with Composable Architecture",
+	"main": "src/main.js",
 	"scripts": {
 		"dev": "vite",
 		"build": "vite build",
 		"preview": "vite preview",
-		"test": "jest",
-		"lint": "eslint src/",
-		"lint:fix": "eslint src/ --fix",
+		"test": "vitest",
+		"test:ui": "vitest --ui",
+		"test:coverage": "vitest --coverage",
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix",
+		"format": "prettier --write src/**/*.js",
+		"format:check": "prettier --check src/**/*.js",
+		"typecheck": "tsc --noEmit",
 		"docs:generate": "jsdoc -c jsdoc.json",
 		"docs:todos": "node scripts/extract-todos.js",
 		"docs:validate": "node scripts/validate-docs.js",
@@ -14,44 +24,76 @@
 		"ai:status": "node -e \"console.log(JSON.stringify(JSON.parse(require('fs').readFileSync('.ai-sync-state.json', 'utf8')), null, 2))\"",
 		"ai:summary": "cat docs/AI_SYNC_LATEST.md",
 		"ai:reset": "rm -f .ai-sync-state.json .project-knowledge.json docs/AI_SYNC_LATEST.md",
+		"setup": "node scripts/setup.js",
 		"setup:hooks": "chmod +x .git/hooks/post-commit .git/hooks/post-merge && echo 'Git hooks activated'",
 		"setup:ai-docs": "npm run ai:sync && npm run setup:hooks && echo 'AI documentation system ready'",
-		"full-docs": "npm run docs:generate && npm run docs:todos && npm run docs:readme && npm run ai:sync"
+		"full-docs": "npm run docs:generate && npm run docs:todos && npm run docs:readme && npm run ai:sync",
+		"migrate": "node scripts/migrate.js",
+		"start": "npm run dev",
+		"clean": "rm -rf dist node_modules/.vite",
+		"analyze": "vite-bundle-analyzer dist"
 	},
-	"husky": {
-		"hooks": {
-			"pre-commit": "npm run lint",
-			"prepare-commit-msg": "node scripts/prepare-commit-msg.js"
-		}
-	},
+	"keywords": [
+		"grid-system",
+		"composable-architecture",
+		"drag-and-drop",
+		"accessibility",
+		"performance",
+		"policy-driven",
+		"vanilla-javascript",
+		"css-grid"
+	],
+	"author": "Nodus Team",
+	"license": "MIT",
 	"dependencies": {
-		"date-fns": "^2.30.0",
-		"dexie": "^3.2.4",
-		"orderedmap": "^2.1.1",
-		"prosemirror-commands": "^1.7.1",
-		"prosemirror-history": "^1.4.1",
-		"prosemirror-inputrules": "^1.5.1",
-		"prosemirror-keymap": "^1.2.3",
-		"prosemirror-markdown": "^1.13.2",
-		"prosemirror-model": "^1.25.3",
-		"prosemirror-schema-basic": "^1.2.4",
-		"prosemirror-schema-list": "^1.5.1",
-		"prosemirror-state": "^1.4.3",
-		"prosemirror-view": "^1.41.3"
+		"date-fns": "^4.1.0",
+		"dexie": "^4.0.8"
 	},
 	"devDependencies": {
-		"@babel/core": "^7.28.4",
-		"@babel/preset-env": "^7.28.3",
-		"@eslint/js": "^9.38.0",
-		"@types/jest": "^29.5.3",
-		"babel-jest": "^30.2.0",
-		"eslint": "^8.57.1",
-		"eslint-plugin-jsdoc": "^61.1.4",
-		"globals": "^16.4.0",
-		"husky": "^8.0.3",
-		"jest": "^29.6.1",
-		"terser": "^5.44.0",
-		"vite": "^7.1.10"
+		"@eslint/config-array": "",
+		"@eslint/js": "",
+		"@types/node": "",
+		"@vitest/coverage-v8": "",
+		"@vitest/ui": "",
+		"eslint": "",
+		"eslint-plugin-jsdoc": "",
+		"globals": "",
+		"husky": "",
+		"jsdoc": "",
+		"prettier": "",
+		"terser": "",
+		"typescript": "",
+		"vite": "",
+		"vite-bundle-analyzer": "",
+		"vitest": ""
 	},
-	"type": "module"
+	"engines": {
+		"node": ">=18.0.0",
+		"npm": ">=9.0.0"
+	},
+	"browserslist": [
+		"> 1%",
+		"last 2 versions",
+		"not dead",
+		"not ie <= 11"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/your-org/nodus-v7.git"
+	},
+	"bugs": {
+		"url": "https://github.com/your-org/nodus-v7/issues"
+	},
+	"homepage": "https://github.com/your-org/nodus-v7#readme",
+	"husky": {
+		"hooks": {
+			"pre-commit": "npm run lint && npm run format:check",
+			"prepare-commit-msg": "node scripts/prepare-commit-msg.js",
+			"pre-push": "npm run test && npm run build"
+		}
+	},
+	"volta": {
+		"node": "20.17.0",
+		"npm": "10.8.2"
+	}
 }

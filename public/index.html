@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en" class="wa-theme-default wa-palette-default wa-brand-blue">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Productivity App</title>
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+    <!-- WebAwesome Theme -->
+    <link rel="stylesheet" href="https://early.webawesome.com/webawesome@3.0.0-beta.6/dist/styles/themes/default.css" />
+    <link rel="stylesheet" href="src/ui/assets/styles/main.css">
+    <!-- WebAwesome Components -->
+    <script>
+        window.WebAwesome = {
+            // Use a public icon library to avoid Font Awesome 403 errors
+            icons: { default: 'bootstrap' }
+        };
+    </script>
+    <!-- <script type="module" src="https://cdn.jsdelivr.net/npm/@webawesome/icons@latest/dist/webawesome.js"></script> -->
+
+</head>
+
+<body class="wa-theme-light">
+    <div id="app">
+        <aside class="sidebar">
+
+            <div class="work-block">
+
+                <nav class="main-nav">
+                    <ul class="tabs">
+                        <li class="tab-item active" data-tab="files">Files & Data</li>
+                        <li class="tab-item" data-tab="views">Views</li>
+                        <li class="tab-item" data-tab="config">Config</li>
+                        <li class="tab-item" data-tab="bookmarks">Bookmarks</li>
+                    </ul>
+                </nav>
+
+                <div class="workspace">
+                    <div class="collapsible-section is-open">
+                        <h3 class="collapsible-trigger">Workspace (3) <span class="chevron">▼</span></h3>
+                        <div class="collapsible-content">
+                            <ul class="working-area">
+                                <li>project-notes.md</li>
+                                <li>Health collection</li>
+                                <li>New draft (pending)</li>
+                                <li>Meeting Notes.md</li>
+                                <li>Latest KPI.md</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="collapsible-section">
+                        <h3 class="collapsible-trigger">Review (2) <span class="chevron">▼</span></h3>
+                        <div class="collapsible-content" style="display: none;">
+                            <ul class="review-list">
+                                <li>New draft"</li>
+                                <li>New draft"</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+
+            <div class="files-tree">...</div>
+
+            <div class="quick-capture-container" id="quick-capture">
+                <textarea id="capture-input" placeholder="Quick Capture..." rows="2"></textarea>
+            </div>
+
+            <div class="sidebar-footer">
+                <div id="status-container">
+                    <span id="status">Initializing...</span>
+                </div>
+                <button id="theme-toggle">💡</button>
+            </div>
+        </aside>
+
+        <header class="header">
+            <input type="search" id="main-search" placeholder="...Search Nodus">
+        </header>
+
+        <div class="main-content">
+            <main id="main-area">
+                <!-- Default view: Split Editor/Preview -->
+                <div id="editor-pane" class="pane">
+                    <app-editor toolbar="true" preview="true" autosave="true" shortcuts="true">
+                    </app-editor>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script type="module" src="src/core/app.js"></script>
+</body>
+
+
+</html>
