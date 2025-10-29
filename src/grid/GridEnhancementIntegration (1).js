@@ -38,29 +38,32 @@ export class MainViewWithEnhancedGrid {
   enhanceGrid() {
     // Add modern enhancements while preserving existing functionality
     this.gridEnhancer = new EnhancedGridRenderer(
-      this.elements.gridContainer,
-      this.appViewModel,
       {
-        // Hook into HybridStateManager for instant layout persistence
-        onLayoutChange: (changeEvent) => {
-          console.log("Layout changed:", changeEvent);
+        container: this.elements.gridContainer,
+        appViewModel: this.appViewModel,
+        options: {
+          // Hook into HybridStateManager for instant layout persistence
+          onLayoutChange: (changeEvent) => {
+            console.log("Layout changed:", changeEvent);
 
-          // Save to HybridStateManager if available
-          if (this.appViewModel.hybridStateManager) {
-            this.appViewModel.hybridStateManager.recordOperation({
-              type: "grid_layout_change",
-              data: changeEvent,
-            });
-          }
+            // Save to HybridStateManager if available
+            if (this.appViewModel.hybridStateManager) {
+              this.appViewModel.hybridStateManager.recordOperation({
+                type: "grid_layout_change",
+                data: changeEvent,
+              });
+            }
 
-          // Optional: Send to analytics
-          this.trackLayoutChange(changeEvent);
-        },
+            // Optional: Send to analytics
+            this.trackLayoutChange(changeEvent);
+          },
 
-        // Enable accessibility features
-        enableKeyboard: true,
-        enableAria: true,
+          // Enable accessibility features
+          enableKeyboard: true,
+          enableAria: true,
+        }
       },
+      this.appViewModel.hybridStateManager
     );
 
     // Listen for enhancement events
@@ -327,24 +330,31 @@ export function enhanceExistingGrid(appViewModel, options = {}) {
     return null;
   }
 
-  const enhancer = new EnhancedGridRenderer(gridContainer, appViewModel, {
-    // Default persistence to HybridStateManager
-    onLayoutChange: (changeEvent) => {
-      if (appViewModel.hybridStateManager) {
-        appViewModel.hybridStateManager.recordOperation({
-          type: "grid_layout_change",
-          data: changeEvent,
-        });
+  const enhancer = new EnhancedGridRenderer(
+    {
+      container: gridContainer,
+      appViewModel: appViewModel,
+      options: {
+        // Default persistence to HybridStateManager
+        onLayoutChange: (changeEvent) => {
+          if (appViewModel.hybridStateManager) {
+            appViewModel.hybridStateManager.recordOperation({
+              type: "grid_layout_change",
+              data: changeEvent,
+            });
+          }
+        },
+
+        // Enable accessibility by default
+        enableKeyboard: true,
+        enableAria: true,
+
+        // Allow custom options to override
+        ...options,
       }
     },
-
-    // Enable accessibility by default
-    enableKeyboard: true,
-    enableAria: true,
-
-    // Allow custom options to override
-    ...options,
-  });
+    appViewModel.hybridStateManager
+  );
 
   // Optional: Add toggle button to existing UI
   if (!options.hideToggle) {

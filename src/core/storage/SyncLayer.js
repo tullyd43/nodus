@@ -25,6 +25,11 @@ export class SyncLayer {
   #ready = false;
   #syncInProgress = false;
   #retryTimeouts = new Map();
+  stateManager = null;
+
+  bindStateManager(manager) {
+    this.stateManager = manager;
+  }
 
   constructor(storage, options = {}) {
     this.#storage = storage;
@@ -114,6 +119,8 @@ export class SyncLayer {
       const latency = performance.now() - startTime;
       this.#recordSync(true, latency, result);
 
+      this.stateManager?.emit?.('syncCompleted', result);
+
       console.log(`[SyncLayer] Sync completed in ${latency.toFixed(2)}ms`);
       return result;
 
@@ -121,6 +128,8 @@ export class SyncLayer {
       const latency = performance.now() - startTime;
       this.#recordSync(false, latency, null, error);
       
+      this.stateManager?.emit?.('syncError', error);
+
       console.error('[SyncLayer] Sync failed:', error);
       throw error;
     } finally {

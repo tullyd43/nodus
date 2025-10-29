@@ -13,14 +13,16 @@
 import EventBus from "../core/EventBus.js";
 
 export class EnhancedGridRenderer {
-  constructor(container, appViewModel, options = {}) {
-    this.container = container;
-    this.appViewModel = appViewModel;
+  constructor(gridOptions, stateManager) {
+    this.gridOptions = gridOptions;
+    this.stateManager = stateManager;
+    this.container = gridOptions.container;
+    this.appViewModel = gridOptions.appViewModel;
     this.options = {
       onLayoutChange: null, // Callback for layout persistence
       enableKeyboard: true, // Enable keyboard accessibility
       enableAria: true, // Enable ARIA attributes
-      ...options,
+      ...gridOptions.options,
     };
     this.isEnhanced = false;
     this.isDragging = false;
@@ -29,6 +31,13 @@ export class EnhancedGridRenderer {
     this.performanceMode = false; // Start in full-feature mode
 
     this.init();
+  }
+
+  bindState() {
+    const refresh = () => this.refresh?.();
+    this.stateManager.on?.('entitySaved', refresh);
+    this.stateManager.on?.('entityDeleted', refresh);
+    this.stateManager.on?.('syncCompleted', refresh);
   }
 
   init() {

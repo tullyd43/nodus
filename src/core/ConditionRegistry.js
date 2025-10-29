@@ -618,6 +618,19 @@ export class ConditionRegistry {
   }
 }
 
+export function evaluateCondition(condition, dataContext, stateManager) {
+  const sourceId = condition?.entityId || dataContext?.entityId;
+  const entity = sourceId ? stateManager.clientState.entities.get(sourceId) : dataContext;
+  const fieldValue = entity?.[condition.field];
+  switch (condition.operator || 'equals') {
+    case 'equals': return fieldValue === condition.value;
+    case 'not_equals': return fieldValue !== condition.value;
+    case 'exists': return fieldValue !== undefined && fieldValue !== null;
+    case 'contains': return typeof fieldValue === 'string' && fieldValue.includes(condition.value);
+    default: return false;
+  }
+}
+
 // Global condition registry instance
 export const conditionRegistry = new ConditionRegistry();
 

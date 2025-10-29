@@ -299,6 +299,9 @@ export class HybridStateManager {
         this.config.storageConfig
       );
 
+      // Link HybridStateManager ↔ ModularOfflineStorage
+      this.storage.instance.bindStateManager?.(this);
+
       this.storage.ready = true;
       this.storage.config = this.config.storageConfig;
       

@@ -259,4 +259,10 @@ export class QueryService {
   }
 }
 
+export async function queryEntities(stateManager, { store = 'objects', index, query, fallbackFilter } = {}) {
+  const results = await stateManager.storage.instance.query(store, index, query);
+  if (fallbackFilter) return results.filter(fallbackFilter);
+  return results;
+}
+
 export default QueryService;

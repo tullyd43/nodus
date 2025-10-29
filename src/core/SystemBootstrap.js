@@ -399,6 +399,17 @@ export class SystemBootstrap {
 
     // Get system references
     const stateManager = this.systems.get("state_manager");
+
+    // bind global error listeners once
+    if (stateManager) {
+      try {
+        const { attachErrorListeners } = await import('./ErrorHelpers_EventFlow.js');
+        attachErrorListeners(stateManager);
+      } catch (e) {
+        console.error("Failed to attach error listeners", e);
+      }
+    }
+
     const adaptiveRenderer = this.systems.get("adaptive_renderer");
     const eventFlowEngine = this.systems.get("event_flow_engine");
     const pluginSystem = this.systems.get("plugin_system");

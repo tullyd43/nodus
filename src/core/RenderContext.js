@@ -4,6 +4,7 @@
 
 export class RenderContext {
   constructor(options = {}) {
+    this.uiContext = options.uiContext || {};
     // Environment context
     this.viewport = options.viewport || this.getViewportInfo();
     this.theme = options.theme || "dark";
@@ -46,6 +47,18 @@ export class RenderContext {
     this.timestamp = Date.now();
     this.priority = options.priority || 0;
   }
+
+  getEntity(entityId) {
+    return this.stateManager.clientState.entities.get(entityId)
+      || this.uiContext.entities?.find?.(e => e.id === entityId) || null;
+  }
+
+  async saveEntity(entity) {
+    await this.stateManager.managers.validation?.validate?.(entity);
+    await this.stateManager.storage.instance.put('objects', entity);
+    this.stateManager.emit?.('entitySaved', { store: 'objects', item: entity });
+  }
+
 
   /**
    * Create extended context for child components

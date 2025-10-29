@@ -17,6 +17,11 @@ export default class ValidationStack {
     averageValidationTime: 0,
     cacheHitRate: 0
   };
+  stateManager = null;
+
+  bindStateManager(manager) {
+    this.stateManager = manager;
+  }
 
   constructor(validators = [], options = {}) {
     this.#validators = validators;
@@ -98,6 +103,10 @@ export default class ValidationStack {
     // Track history if enabled
     if (this.#config.trackHistory) {
       this.#addToHistory(entity, result, validationTime);
+    }
+
+    if (!result.valid) {
+      this.stateManager?.emit?.('validationError', { entity, errors: result.errors || [] });
     }
 
     return result;

@@ -86,22 +86,29 @@ export class CompleteGridSystem {
       throw new Error("Grid container not found");
     }
 
-    this.gridEnhancer = new EnhancedGridRenderer(container, this.appViewModel, {
-      // Persistence with policy awareness
-      onLayoutChange: (changeEvent) => {
-        this.onLayoutChanged(changeEvent);
+    this.gridEnhancer = new EnhancedGridRenderer(
+      {
+        container: container,
+        appViewModel: this.appViewModel,
+        options: {
+          // Persistence with policy awareness
+          onLayoutChange: (changeEvent) => {
+            this.onLayoutChanged(changeEvent);
+          },
+
+          // Accessibility features
+          enableKeyboard: true,
+          enableAria: true,
+
+          // Toast notifications
+          enableToasts: this.options.enableToasts,
+
+          // AI features (future)
+          enableAI: this.options.enableAI,
+        }
       },
-
-      // Accessibility features
-      enableKeyboard: true,
-      enableAria: true,
-
-      // Toast notifications
-      enableToasts: this.options.enableToasts,
-
-      // AI features (future)
-      enableAI: this.options.enableAI,
-    });
+      this.appViewModel.hybridStateManager
+    );
 
     // Listen for grid events
     EventBus.on("gridEnhanced", this.onGridEnhanced.bind(this));

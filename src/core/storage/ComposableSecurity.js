@@ -18,6 +18,11 @@ export class ComposableSecurity {
   #config;
   #metrics;
   #ready = false;
+  stateManager = null;
+
+  bindStateManager(manager) {
+    this.stateManager = manager;
+  }
 
   constructor(crypto, options = {}) {
     this.#crypto = crypto;
@@ -178,6 +183,7 @@ export class ComposableSecurity {
         userClearance: this.#context.clearanceLevel,
         userCompartments: Array.from(this.#context.compartments)
       });
+      this.stateManager?.emit?.('accessDenied', { resource: classification });
     }
 
     return hasAccess;

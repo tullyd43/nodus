@@ -61,6 +61,15 @@ export class AdaptiveRenderer {
     });
   }
 
+  getComponent(def) {
+    // Prefer type metadata from schema registry
+    const typeInfo = this.stateManager.schema?.entities?.get?.(def?.type_name);
+    // existing resolution...
+    const component = this.componentDefinitions.get(def.id);
+    return { ...component, __schema: typeInfo };
+  }
+
+
   /**
    * @function render
    * @description The main entry point for rendering a component. It selects the best adaptation based on the context and renders it.

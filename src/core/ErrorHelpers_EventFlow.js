@@ -1,5 +1,6 @@
 // utils/ErrorHelpers.js
 // Enhanced error handling utilities with EventFlow integration
+import { GridToastManager } from '../grid/GridToastManager.js';
 
 /**
  * Error formatting and analysis utilities
@@ -593,6 +594,19 @@ export class ErrorHelpers {
       eventFlowConnected: !!this.eventFlow,
     };
   }
+}
+
+
+export function attachErrorListeners(stateManager) {
+  stateManager.on?.('validationError', ({ entity, errors }) => {
+    GridToastManager?.show?.(`Validation error: ${entity?.id} • ${errors?.join(', ')}`);
+  });
+  stateManager.on?.('syncError', (err) => {
+    GridToastManager?.show?.(`Sync failed: ${err?.message || err}`);
+  });
+  stateManager.on?.('accessDenied', ({ resource }) => {
+    GridToastManager?.show?.(`Access denied for: ${resource}`);
+  });
 }
 
 /**

@@ -532,4 +532,12 @@ export class ComponentDefinitionRegistry {
  */
 export const componentRegistry = new ComponentDefinitionRegistry();
 
+// Optional: attach schema-aware hints at registration time
+export function registerComponent(name, def, stateManager) {
+  const typeInfo = def?.type_name ? stateManager.schema?.entities?.get?.(def.type_name) : null;
+  const definitionToRegister = { ...def, __schema: typeInfo || undefined };
+  componentRegistry.register(new ComponentDefinition(name, definitionToRegister));
+}
+
+
 export default ComponentDefinition;

@@ -25,6 +25,8 @@ export class StorageLoader {
     };
   }
 
+  
+
   /**
    * Initialize with minimal footprint
    */
@@ -318,28 +320,60 @@ export class StorageLoader {
  * Modular Offline Storage - Lightweight core with dynamic modules
  */
 class ModularOfflineStorage {
-  #modules;
-  #ready = false;
+   #modules;
+   #ready = false;
+  stateManager = null;
 
-  constructor(modules) {
-    this.#modules = modules;
-  }
+   constructor(modules) {
+     this.#modules = modules;
+   }
 
-  async init() {
-    if (this.#ready) return this;
+   async init() {
+     if (this.#ready) return this;
+     const initOrder = ['indexeddb', 'crypto', 'security', 'validation', 'sync'];
+     for (const moduleType of initOrder) {
+       if (this.#modules[moduleType]) {
+         await this.#modules[moduleType].init();
+       }
+     }
+     this.#ready = true;
+     console.log('[ModularOfflineStorage] Initialized with dynamic modules');
+     return this;
+   }
 
-    // Initialize modules in dependency order
-    const initOrder = ['indexeddb', 'crypto', 'security', 'validation', 'sync'];
-    
-    for (const moduleType of initOrder) {
-      if (this.#modules[moduleType]) {
-        await this.#modules[moduleType].init();
+  /**
+   * Bind the HybridStateManager so modules can emit global events.
+   */
+  bindStateManager(manager) {
+    this.stateManager = manager;
+    for (const mod of Object.values(this.#modules)) {
+      if (typeof mod.bindStateManager === 'function') {
+        mod.bindStateManager(manager);
       }
     }
+  }
 
-    this.#ready = true;
-    console.log('[ModularOfflineStorage] Initialized with dynamic modules');
-    return this;
+  /**
+   * Basic CRUD passthroughs to IndexedDB Adapter
+   */
+  async put(store, item) {
+    const result = await this.#modules.indexeddb?.put(store, item);
+    this.stateManager?.emit?.('entitySaved', { store, item });
+    return result;
+  }
+
+  async get(store, id) {
+    return this.#modules.indexeddb?.get(store, id);
+  }
+
+  async delete(store, id) {
+    const result = await this.#modules.indexeddb?.delete(store, id);
+    this.stateManager?.emit?.('entityDeleted', { store, id });
+    return result;
+  }
+
+  async query(store, index, query) {
+    return this.#modules.indexeddb?.queryByIndex(store, index, query);
   }
 
   // Delegate to appropriate modules

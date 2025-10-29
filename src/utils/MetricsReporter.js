@@ -481,6 +481,11 @@ export class MetricsReporter {
       this.thresholds,
     );
   }
+
+  log(metric, value) {
+    console.log(`[Metrics] ${metric}: ${value}`);
+    try { this.context.stateManager?.metrics?.[metric] = value; } catch {}
+  }
 }
 
 export default MetricsReporter;
