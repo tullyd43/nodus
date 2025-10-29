@@ -35,10 +35,10 @@ pathsToClean.forEach(path => {
 // Step 2: Install dependencies
 console.log('\n2️⃣ Installing dependencies...');
 try {
-  execSync('npm install', { 
-    stdio: 'inherit',
-    cwd: projectRoot 
-  });
+execSync('npm install --ignore-scripts', {
+  stdio: 'inherit',
+  cwd: projectRoot
+});
   console.log('✅ Dependencies installed successfully');
 } catch (error) {
   console.error('❌ Failed to install dependencies:', error.message);

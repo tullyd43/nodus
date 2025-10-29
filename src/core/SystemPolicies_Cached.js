@@ -1,7 +1,7 @@
 // core/SystemPolicies.js
 // Enhanced with LRUCache to prevent repeated API calls
 
-import { LRUCache } from './utils/LRUCache.js';
+import { LRUCache } from "./utils/LRUCache.js";
 
 /**
  * Default system policies organized by domain
@@ -16,9 +16,9 @@ const DEFAULT_POLICIES = {
     enable_maintenance_mode: false,
     auto_backup: true,
     performance_monitoring: true,
-    security_logging: true
+    security_logging: true,
   },
-  
+
   ui: {
     enable_lazy_loading: true,
     enable_caching: true,
@@ -29,9 +29,9 @@ const DEFAULT_POLICIES = {
     responsive_design: true,
     accessibility_mode: false,
     high_contrast: false,
-    reduced_motion: false
+    reduced_motion: false,
   },
-  
+
   events: {
     enable_event_flows: true,
     enable_event_logging: true,
@@ -40,9 +40,9 @@ const DEFAULT_POLICIES = {
     enable_event_validation: true,
     event_retention_days: 30,
     max_event_queue_size: 10000,
-    enable_event_compression: true
+    enable_event_compression: true,
   },
-  
+
   user: {
     enable_user_analytics: true,
     enable_preference_sync: true,
@@ -51,9 +51,9 @@ const DEFAULT_POLICIES = {
     data_retention_days: 365,
     privacy_mode: false,
     allow_data_export: true,
-    require_consent: true
+    require_consent: true,
   },
-  
+
   meta: {
     enable_performance_tracking: true,
     enable_error_reporting: true,
@@ -62,8 +62,8 @@ const DEFAULT_POLICIES = {
     enable_capacity_planning: true,
     metrics_retention_days: 90,
     detailed_logging: false,
-    export_metrics: true
-  }
+    export_metrics: true,
+  },
 };
 
 /**
@@ -71,61 +71,81 @@ const DEFAULT_POLICIES = {
  */
 const POLICY_VALIDATORS = {
   // System domain validators
-  'system.enable_debug_mode': (value, context) => {
-    if (value && context.environment === 'production') {
-      return { valid: false, message: 'Debug mode should not be enabled in production' };
+  "system.enable_debug_mode": (value, context) => {
+    if (value && context.environment === "production") {
+      return {
+        valid: false,
+        message: "Debug mode should not be enabled in production",
+      };
     }
     return { valid: true };
   },
-  
-  'system.enable_maintenance_mode': (value, context) => {
-    if (value && !context.hasPermission('system_admin')) {
-      return { valid: false, message: 'Insufficient permissions to enable maintenance mode' };
+
+  "system.enable_maintenance_mode": (value, context) => {
+    if (value && !context.hasPermission("system_admin")) {
+      return {
+        valid: false,
+        message: "Insufficient permissions to enable maintenance mode",
+      };
     }
     return { valid: true };
   },
 
   // Event domain validators
-  'events.event_retention_days': (value) => {
-    if (typeof value !== 'number' || value < 1 || value > 365) {
-      return { valid: false, message: 'Event retention must be between 1 and 365 days' };
+  "events.event_retention_days": (value) => {
+    if (typeof value !== "number" || value < 1 || value > 365) {
+      return {
+        valid: false,
+        message: "Event retention must be between 1 and 365 days",
+      };
     }
     return { valid: true };
   },
 
-  'events.max_event_queue_size': (value) => {
-    if (typeof value !== 'number' || value < 100 || value > 100000) {
-      return { valid: false, message: 'Event queue size must be between 100 and 100,000' };
+  "events.max_event_queue_size": (value) => {
+    if (typeof value !== "number" || value < 100 || value > 100000) {
+      return {
+        valid: false,
+        message: "Event queue size must be between 100 and 100,000",
+      };
     }
     return { valid: true };
   },
 
   // User domain validators
-  'user.data_retention_days': (value) => {
-    if (typeof value !== 'number' || value < 30 || value > 2555) { // Max ~7 years
-      return { valid: false, message: 'User data retention must be between 30 and 2555 days' };
+  "user.data_retention_days": (value) => {
+    if (typeof value !== "number" || value < 30 || value > 2555) {
+      // Max ~7 years
+      return {
+        valid: false,
+        message: "User data retention must be between 30 and 2555 days",
+      };
     }
     return { valid: true };
   },
 
   // Meta domain validators
-  'meta.metrics_retention_days': (value) => {
-    if (typeof value !== 'number' || value < 7 || value > 730) { // Max 2 years
-      return { valid: false, message: 'Metrics retention must be between 7 and 730 days' };
+  "meta.metrics_retention_days": (value) => {
+    if (typeof value !== "number" || value < 7 || value > 730) {
+      // Max 2 years
+      return {
+        valid: false,
+        message: "Metrics retention must be between 7 and 730 days",
+      };
     }
     return { valid: true };
-  }
+  },
 };
 
 /**
  * Policy dependencies - some policies require others to be enabled
  */
 const POLICY_DEPENDENCIES = {
-  'system.enable_optimization': ['system.enable_monitoring'],
-  'system.enable_debug_mode': ['system.enable_auditing'],
-  'events.enable_event_replay': ['events.enable_event_logging'],
-  'user.enable_preference_sync': ['user.enable_session_tracking'],
-  'meta.enable_capacity_planning': ['meta.enable_performance_tracking']
+  "system.enable_optimization": ["system.enable_monitoring"],
+  "system.enable_debug_mode": ["system.enable_auditing"],
+  "events.enable_event_replay": ["events.enable_event_logging"],
+  "user.enable_preference_sync": ["user.enable_session_tracking"],
+  "meta.enable_capacity_planning": ["meta.enable_performance_tracking"],
 };
 
 /**
@@ -136,30 +156,30 @@ export class SystemPolicies {
   static listeners = new Set();
   static validationEnabled = true;
   static persistenceEnabled = true;
-  static environment = 'development';
-  
+  static environment = "development";
+
   // Enhanced caching system
   static cache = null;
-  static apiEndpoint = '/api/configurations';
+  static apiEndpoint = "/api/configurations";
   static stateManager = null;
-  
+
   // Performance tracking
   static metrics = {
     cacheHits: 0,
     cacheMisses: 0,
     apiCalls: 0,
     lastSync: null,
-    syncDuration: 0
+    syncDuration: 0,
   };
 
   /**
    * Initialize the policy system with enhanced caching
    */
   static async initialize(config = {}) {
-    this.environment = config.environment || 'development';
+    this.environment = config.environment || "development";
     this.validationEnabled = config.validationEnabled !== false;
     this.persistenceEnabled = config.persistenceEnabled !== false;
-    this.apiEndpoint = config.apiEndpoint || '/api/configurations';
+    this.apiEndpoint = config.apiEndpoint || "/api/configurations";
     this.stateManager = config.stateManager || null;
 
     // Initialize cache with appropriate TTL
@@ -173,13 +193,13 @@ export class SystemPolicies {
         console.log(`Policy cache expiration: ${key}`);
         // Optionally trigger background refresh
         this.backgroundRefresh(key);
-      }
+      },
     });
 
     try {
       // Load policies with caching
       await this.loadPolicies();
-      
+
       // Validate all policies
       if (this.validationEnabled) {
         await this.validateAllPolicies();
@@ -190,17 +210,16 @@ export class SystemPolicies {
         this.setupBackgroundSync(config.syncInterval || 60000); // 1 minute default
       }
 
-      console.log('SystemPolicies initialized:', {
+      console.log("SystemPolicies initialized:", {
         environment: this.environment,
         validation: this.validationEnabled,
         persistence: this.persistenceEnabled,
         domains: Object.keys(this.policies),
         cacheEnabled: !!this.cache,
-        apiEndpoint: this.apiEndpoint
+        apiEndpoint: this.apiEndpoint,
       });
-
     } catch (error) {
-      console.error('Failed to initialize SystemPolicies:', error);
+      console.error("Failed to initialize SystemPolicies:", error);
       // Fall back to defaults
       this.policies = JSON.parse(JSON.stringify(DEFAULT_POLICIES));
     }
@@ -211,38 +230,39 @@ export class SystemPolicies {
    */
   static async loadPolicies() {
     const startTime = performance.now();
-    
+
     try {
       // Tier 1: Memory cache
       const cached = this.getCachedPolicies();
       if (cached) {
         this.policies = cached;
         this.metrics.cacheHits++;
-        console.log('Policies loaded from memory cache');
+        console.log("Policies loaded from memory cache");
         return;
       }
 
       // Tier 2: StateManager cache (if available)
       if (this.stateManager) {
-        const stateManagerPolicies = this.stateManager.getCachedValue('system_policies');
+        const stateManagerPolicies =
+          this.stateManager.getCachedValue("system_policies");
         if (stateManagerPolicies) {
           this.policies = stateManagerPolicies;
           this.setCachedPolicies(this.policies);
           this.metrics.cacheHits++;
-          console.log('Policies loaded from StateManager cache');
+          console.log("Policies loaded from StateManager cache");
           return;
         }
       }
 
       // Tier 3: Local storage
       if (this.persistenceEnabled) {
-        const stored = localStorage.getItem('system_policies');
+        const stored = localStorage.getItem("system_policies");
         if (stored) {
           const parsed = JSON.parse(stored);
           this.policies = this.mergePolicies(DEFAULT_POLICIES, parsed);
           this.setCachedPolicies(this.policies);
           this.metrics.cacheMisses++;
-          console.log('Policies loaded from localStorage');
+          console.log("Policies loaded from localStorage");
           return;
         }
       }
@@ -255,10 +275,10 @@ export class SystemPolicies {
           this.setCachedPolicies(this.policies);
           await this.savePolicies();
           this.metrics.apiCalls++;
-          console.log('Policies loaded from API');
+          console.log("Policies loaded from API");
           return;
         } catch (apiError) {
-          console.warn('Failed to load policies from API:', apiError);
+          console.warn("Failed to load policies from API:", apiError);
         }
       }
 
@@ -266,8 +286,7 @@ export class SystemPolicies {
       this.policies = JSON.parse(JSON.stringify(DEFAULT_POLICIES));
       this.setCachedPolicies(this.policies);
       await this.savePolicies();
-      console.log('Policies initialized with defaults');
-
+      console.log("Policies initialized with defaults");
     } finally {
       this.metrics.syncDuration = performance.now() - startTime;
       this.metrics.lastSync = new Date().toISOString();
@@ -279,16 +298,18 @@ export class SystemPolicies {
    */
   static async fetchPoliciesFromAPI() {
     const response = await fetch(`${this.apiEndpoint}/system`, {
-      method: 'GET',
+      method: "GET",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         // Add authentication headers if needed
-        ...(this.getAuthHeaders && this.getAuthHeaders())
-      }
+        ...(this.getAuthHeaders && this.getAuthHeaders()),
+      },
     });
 
     if (!response.ok) {
-      throw new Error(`API fetch failed: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `API fetch failed: ${response.status} ${response.statusText}`,
+      );
     }
 
     const data = await response.json();
@@ -303,21 +324,23 @@ export class SystemPolicies {
 
     try {
       const response = await fetch(`${this.apiEndpoint}/system`, {
-        method: 'PUT',
+        method: "PUT",
         headers: {
-          'Content-Type': 'application/json',
-          ...(this.getAuthHeaders && this.getAuthHeaders())
+          "Content-Type": "application/json",
+          ...(this.getAuthHeaders && this.getAuthHeaders()),
         },
-        body: JSON.stringify({ policies })
+        body: JSON.stringify({ policies }),
       });
 
       if (!response.ok) {
-        throw new Error(`API save failed: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `API save failed: ${response.status} ${response.statusText}`,
+        );
       }
 
-      console.log('Policies saved to API successfully');
+      console.log("Policies saved to API successfully");
     } catch (error) {
-      console.error('Failed to save policies to API:', error);
+      console.error("Failed to save policies to API:", error);
       throw error;
     }
   }
@@ -327,20 +350,20 @@ export class SystemPolicies {
    */
   static getCachedPolicies() {
     if (!this.cache) return null;
-    return this.cache.get('system_policies');
+    return this.cache.get("system_policies");
   }
 
   static setCachedPolicies(policies) {
     if (!this.cache) return;
-    this.cache.set('system_policies', JSON.parse(JSON.stringify(policies)));
+    this.cache.set("system_policies", JSON.parse(JSON.stringify(policies)));
   }
 
   static invalidateCache() {
     if (this.cache) {
-      this.cache.delete('system_policies');
+      this.cache.delete("system_policies");
     }
     if (this.stateManager) {
-      this.stateManager.clearCachedValue('system_policies');
+      this.stateManager.clearCachedValue("system_policies");
     }
   }
 
@@ -348,16 +371,16 @@ export class SystemPolicies {
    * Background refresh for expired cache entries
    */
   static async backgroundRefresh(key) {
-    if (key === 'system_policies') {
+    if (key === "system_policies") {
       try {
-        console.log('Background refresh triggered for policies');
+        console.log("Background refresh triggered for policies");
         await this.loadPolicies();
-        this.emitPolicyEvent('policies_refreshed', {
+        this.emitPolicyEvent("policies_refreshed", {
           timestamp: new Date().toISOString(),
-          trigger: 'background_refresh'
+          trigger: "background_refresh",
         });
       } catch (error) {
-        console.error('Background refresh failed:', error);
+        console.error("Background refresh failed:", error);
       }
     }
   }
@@ -369,14 +392,17 @@ export class SystemPolicies {
     setInterval(async () => {
       try {
         // Only sync if we have local changes or cache is stale
-        const lastModified = localStorage.getItem('system_policies_modified');
-        const cacheAge = this.cache ? this.cache.getAge('system_policies') : Infinity;
-        
-        if (lastModified || cacheAge > 300000) { // 5 minutes
+        const lastModified = localStorage.getItem("system_policies_modified");
+        const cacheAge = this.cache
+          ? this.cache.getAge("system_policies")
+          : Infinity;
+
+        if (lastModified || cacheAge > 300000) {
+          // 5 minutes
           await this.loadPolicies();
         }
       } catch (error) {
-        console.error('Background sync failed:', error);
+        console.error("Background sync failed:", error);
       }
     }, interval);
   }
@@ -393,28 +419,30 @@ export class SystemPolicies {
 
       // Save to StateManager if available
       if (this.stateManager) {
-        this.stateManager.setCachedValue('system_policies', this.policies);
+        this.stateManager.setCachedValue("system_policies", this.policies);
       }
 
       // Save to localStorage
-      localStorage.setItem('system_policies', JSON.stringify(this.policies));
-      localStorage.setItem('system_policies_modified', new Date().toISOString());
+      localStorage.setItem("system_policies", JSON.stringify(this.policies));
+      localStorage.setItem(
+        "system_policies_modified",
+        new Date().toISOString(),
+      );
 
       // Save to API (async, don't block)
       if (this.apiEndpoint) {
-        this.savePoliciesAPI(this.policies).catch(error => {
-          console.error('Background API save failed:', error);
+        this.savePoliciesAPI(this.policies).catch((error) => {
+          console.error("Background API save failed:", error);
         });
       }
-      
-      // Emit save event
-      this.emitPolicyEvent('policies_saved', {
-        timestamp: new Date().toISOString(),
-        domains: Object.keys(this.policies)
-      });
 
+      // Emit save event
+      this.emitPolicyEvent("policies_saved", {
+        timestamp: new Date().toISOString(),
+        domains: Object.keys(this.policies),
+      });
     } catch (error) {
-      console.error('Failed to save policies:', error);
+      console.error("Failed to save policies:", error);
     }
   }
 
@@ -439,7 +467,7 @@ export class SystemPolicies {
    */
   static getDomainPolicies(domain) {
     const cacheKey = `domain_policies_${domain}`;
-    
+
     // Check cache first
     if (this.cache) {
       const cached = this.cache.get(cacheKey);
@@ -451,11 +479,11 @@ export class SystemPolicies {
 
     // Generate and cache result
     const result = this.policies?.[domain] ? { ...this.policies[domain] } : {};
-    
+
     if (this.cache) {
       this.cache.set(cacheKey, result, 60000); // 1 minute TTL for domain-specific cache
     }
-    
+
     this.metrics.cacheMisses++;
     return result;
   }
@@ -465,7 +493,7 @@ export class SystemPolicies {
    */
   static getPolicy(domain, key) {
     const cacheKey = `policy_${domain}_${key}`;
-    
+
     // Check cache first
     if (this.cache) {
       const cached = this.cache.get(cacheKey);
@@ -477,11 +505,11 @@ export class SystemPolicies {
 
     // Generate and cache result
     const result = this.policies?.[domain]?.[key];
-    
+
     if (this.cache) {
       this.cache.set(cacheKey, result, 30000); // 30 seconds TTL for individual policies
     }
-    
+
     this.metrics.cacheMisses++;
     return result;
   }
@@ -491,11 +519,11 @@ export class SystemPolicies {
    */
   static async update(domain, key, value, context = {}) {
     if (!this.policies) {
-      throw new Error('Policies not initialized');
+      throw new Error("Policies not initialized");
     }
 
     const policyPath = `${domain}.${key}`;
-    
+
     // Validate the update
     if (this.validationEnabled) {
       const validation = this.validatePolicy(policyPath, value, context);
@@ -527,17 +555,16 @@ export class SystemPolicies {
       await this.savePolicies();
 
       // Emit change event
-      this.emitPolicyEvent('policy_updated', {
+      this.emitPolicyEvent("policy_updated", {
         domain,
         key,
         oldValue,
         newValue: value,
         timestamp: new Date().toISOString(),
-        context
+        context,
       });
 
       console.log(`Policy updated: ${policyPath} = ${value}`);
-
     } catch (error) {
       // Rollback on failure
       if (oldValue !== undefined) {
@@ -545,10 +572,10 @@ export class SystemPolicies {
       } else {
         delete this.policies[domain][key];
       }
-      
+
       // Re-invalidate cache to ensure consistency
       this.invalidatePolicyCache(domain, key);
-      
+
       throw error;
     }
   }
@@ -561,12 +588,12 @@ export class SystemPolicies {
 
     // Invalidate specific policy cache
     this.cache.delete(`policy_${domain}_${key}`);
-    
+
     // Invalidate domain cache
     this.cache.delete(`domain_policies_${domain}`);
-    
+
     // Invalidate main policies cache
-    this.cache.delete('system_policies');
+    this.cache.delete("system_policies");
   }
 
   /**
@@ -574,12 +601,16 @@ export class SystemPolicies {
    */
   static getCacheMetrics() {
     const cacheStats = this.cache ? this.cache.getStatistics() : null;
-    
+
     return {
       ...this.metrics,
       cacheStatistics: cacheStats,
-      hitRate: this.metrics.cacheHits + this.metrics.cacheMisses > 0 ? 
-        (this.metrics.cacheHits / (this.metrics.cacheHits + this.metrics.cacheMisses)) * 100 : 0
+      hitRate:
+        this.metrics.cacheHits + this.metrics.cacheMisses > 0
+          ? (this.metrics.cacheHits /
+              (this.metrics.cacheHits + this.metrics.cacheMisses)) *
+            100
+          : 0,
     };
   }
 
@@ -587,18 +618,18 @@ export class SystemPolicies {
    * Force refresh from API
    */
   static async forceRefresh() {
-    console.log('Force refreshing policies from API...');
-    
+    console.log("Force refreshing policies from API...");
+
     // Clear all caches
     this.invalidateCache();
-    localStorage.removeItem('system_policies');
-    localStorage.removeItem('system_policies_modified');
-    
+    localStorage.removeItem("system_policies");
+    localStorage.removeItem("system_policies_modified");
+
     // Reload policies
     await this.loadPolicies();
-    
-    this.emitPolicyEvent('policies_force_refreshed', {
-      timestamp: new Date().toISOString()
+
+    this.emitPolicyEvent("policies_force_refreshed", {
+      timestamp: new Date().toISOString(),
     });
   }
 
@@ -617,7 +648,7 @@ export class SystemPolicies {
     // Add environment and other context
     const fullContext = {
       environment: this.environment,
-      ...context
+      ...context,
     };
 
     return validator(value, fullContext);
@@ -629,20 +660,20 @@ export class SystemPolicies {
   static checkDependencies(domain, key, value) {
     const policyPath = `${domain}.${key}`;
     const dependencies = POLICY_DEPENDENCIES[policyPath];
-    
+
     if (!dependencies || !value) {
       return { valid: true }; // No dependencies or policy being disabled
     }
 
     // Check if all dependencies are enabled
     for (const depPath of dependencies) {
-      const [depDomain, depKey] = depPath.split('.');
+      const [depDomain, depKey] = depPath.split(".");
       const depValue = this.getPolicy(depDomain, depKey);
-      
+
       if (!depValue) {
         return {
           valid: false,
-          message: `Required dependency not enabled: ${depPath}`
+          message: `Required dependency not enabled: ${depPath}`,
         };
       }
     }
@@ -687,7 +718,7 @@ export class SystemPolicies {
     const event = {
       type,
       data,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
     // Notify all listeners
@@ -695,13 +726,13 @@ export class SystemPolicies {
       try {
         listener(event);
       } catch (error) {
-        console.error('Policy event listener error:', error);
+        console.error("Policy event listener error:", error);
       }
     }
 
     // Also emit through global event system if available
-    if (typeof window !== 'undefined' && window.eventFlowEngine) {
-      window.eventFlowEngine.emit('policy_event', event);
+    if (typeof window !== "undefined" && window.eventFlowEngine) {
+      window.eventFlowEngine.emit("policy_event", event);
     }
   }
 
@@ -716,20 +747,20 @@ export class SystemPolicies {
       totalPolicies: 0,
       enabledPolicies: 0,
       domainStats: {},
-      cacheMetrics: this.getCacheMetrics()
+      cacheMetrics: this.getCacheMetrics(),
     };
 
     for (const [domain, domainPolicies] of Object.entries(this.policies)) {
       const domainCount = Object.keys(domainPolicies).length;
       const enabledCount = Object.values(domainPolicies).filter(Boolean).length;
-      
+
       stats.totalPolicies += domainCount;
       stats.enabledPolicies += enabledCount;
-      
+
       stats.domainStats[domain] = {
         total: domainCount,
         enabled: enabledCount,
-        disabled: domainCount - enabledCount
+        disabled: domainCount - enabledCount,
       };
     }
 

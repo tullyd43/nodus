@@ -33,7 +33,7 @@ export default [
 				{ definedTags: ["dependencies", "pattern"] },
 			],
 			"jsdoc/check-types": "warn",
-			"jsdoc/reject-any-type": "warn",
+			// "jsdoc/reject-any-type": "warn",
 			"no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
 			"no-console": ["warn", { allow: ["warn", "error"] }],
 		},

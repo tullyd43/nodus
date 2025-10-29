@@ -7,11 +7,11 @@
 export class RenderMetrics {
   constructor(options = {}) {
     this.options = {
-      sampleSize: 60,        // Number of frames to average
-      reportInterval: 1000,  // How often to emit updates (ms)
-      trackLatency: true,    // Track render latency
-      trackMemory: false,    // Track memory usage (expensive)
-      ...options
+      sampleSize: 60, // Number of frames to average
+      reportInterval: 1000, // How often to emit updates (ms)
+      trackLatency: true, // Track render latency
+      trackMemory: false, // Track memory usage (expensive)
+      ...options,
     };
 
     // FPS tracking
@@ -29,7 +29,7 @@ export class RenderMetrics {
     this.memoryStats = {
       usedJSHeapSize: 0,
       totalJSHeapSize: 0,
-      jsHeapSizeLimit: 0
+      jsHeapSizeLimit: 0,
     };
 
     // Subscribers for real-time updates
@@ -48,14 +48,14 @@ export class RenderMetrics {
    */
   startTracking() {
     this.rafId = requestAnimationFrame(this.trackFrame.bind(this));
-    
+
     // Set up periodic reporting
     this.reportInterval = setInterval(() => {
       this.calculateMetrics();
       this.emitUpdate();
     }, this.options.reportInterval);
 
-    console.log('[RenderMetrics] Started tracking performance metrics');
+    console.log("[RenderMetrics] Started tracking performance metrics");
   }
 
   /**
@@ -76,7 +76,7 @@ export class RenderMetrics {
       this.performanceObserver.disconnect();
     }
 
-    console.log('[RenderMetrics] Stopped tracking performance metrics');
+    console.log("[RenderMetrics] Stopped tracking performance metrics");
   }
 
   /**
@@ -84,11 +84,11 @@ export class RenderMetrics {
    */
   trackFrame(currentTime) {
     this.frameCount++;
-    
+
     // Calculate frame time
     const frameTime = currentTime - this.lastFrameTime;
     this.frameTimes.push(frameTime);
-    
+
     // Keep only recent frames for averaging
     if (this.frameTimes.length > this.options.sampleSize) {
       this.frameTimes.shift();
@@ -106,7 +106,9 @@ export class RenderMetrics {
   calculateMetrics() {
     // Calculate FPS from frame times
     if (this.frameTimes.length > 0) {
-      const avgFrameTime = this.frameTimes.reduce((sum, time) => sum + time, 0) / this.frameTimes.length;
+      const avgFrameTime =
+        this.frameTimes.reduce((sum, time) => sum + time, 0) /
+        this.frameTimes.length;
       this.fps = Math.round(1000 / avgFrameTime);
     }
 
@@ -115,7 +117,7 @@ export class RenderMetrics {
       this.memoryStats = {
         usedJSHeapSize: performance.memory.usedJSHeapSize,
         totalJSHeapSize: performance.memory.totalJSHeapSize,
-        jsHeapSizeLimit: performance.memory.jsHeapSizeLimit
+        jsHeapSizeLimit: performance.memory.jsHeapSizeLimit,
       };
     }
 
@@ -123,7 +125,7 @@ export class RenderMetrics {
     const metrics = this.getCurrentMetrics();
     this.metricsHistory.push({
       ...metrics,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     // Keep only last 100 entries
@@ -136,8 +138,8 @@ export class RenderMetrics {
    * Set up Performance Observer for paint and layout metrics
    */
   setupPerformanceObserver() {
-    if (!('PerformanceObserver' in window)) {
-      console.warn('[RenderMetrics] PerformanceObserver not supported');
+    if (!("PerformanceObserver" in window)) {
+      console.warn("[RenderMetrics] PerformanceObserver not supported");
       return;
     }
 
@@ -149,11 +151,14 @@ export class RenderMetrics {
       });
 
       // Observe paint and layout metrics
-      this.performanceObserver.observe({ 
-        entryTypes: ['paint', 'measure', 'navigation', 'layout-shift'] 
+      this.performanceObserver.observe({
+        entryTypes: ["paint", "measure", "navigation", "layout-shift"],
       });
     } catch (error) {
-      console.warn('[RenderMetrics] Failed to setup PerformanceObserver:', error);
+      console.warn(
+        "[RenderMetrics] Failed to setup PerformanceObserver:",
+        error,
+      );
     }
   }
 
@@ -162,19 +167,19 @@ export class RenderMetrics {
    */
   handlePerformanceEntry(entry) {
     switch (entry.entryType) {
-      case 'paint':
-        if (entry.name === 'first-contentful-paint') {
+      case "paint":
+        if (entry.name === "first-contentful-paint") {
           this.firstContentfulPaint = entry.startTime;
         }
         break;
-      
-      case 'measure':
-        if (entry.name.startsWith('grid-')) {
-          this.recordCustomLatency('grid', entry.duration);
+
+      case "measure":
+        if (entry.name.startsWith("grid-")) {
+          this.recordCustomLatency("grid", entry.duration);
         }
         break;
-      
-      case 'layout-shift':
+
+      case "layout-shift":
         this.recordLayoutShift(entry.value);
         break;
     }
@@ -183,13 +188,13 @@ export class RenderMetrics {
   /**
    * Record render latency for specific operations
    */
-  recordRenderLatency(latency, operation = 'render') {
+  recordRenderLatency(latency, operation = "render") {
     if (!this.options.trackLatency) return;
 
     this.renderLatencies.push({
       latency,
       operation,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     // Keep only recent latencies
@@ -201,13 +206,13 @@ export class RenderMetrics {
   /**
    * Record layout latency (grid operations)
    */
-  recordLayoutLatency(latency, operation = 'layout') {
+  recordLayoutLatency(latency, operation = "layout") {
     if (!this.options.trackLatency) return;
 
     this.layoutLatencies.push({
       latency,
       operation,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     if (this.layoutLatencies.length > this.options.sampleSize) {
@@ -218,13 +223,13 @@ export class RenderMetrics {
   /**
    * Record interaction latency (user input to visual response)
    */
-  recordInteractionLatency(latency, interaction = 'unknown') {
+  recordInteractionLatency(latency, interaction = "unknown") {
     if (!this.options.trackLatency) return;
 
     this.interactionLatencies.push({
       latency,
       interaction,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     if (this.interactionLatencies.length > this.options.sampleSize) {
@@ -237,14 +242,14 @@ export class RenderMetrics {
    */
   recordCustomLatency(category, latency) {
     switch (category) {
-      case 'grid':
-        this.recordLayoutLatency(latency, 'grid-operation');
+      case "grid":
+        this.recordLayoutLatency(latency, "grid-operation");
         break;
-      case 'render':
-        this.recordRenderLatency(latency, 'component-render');
+      case "render":
+        this.recordRenderLatency(latency, "component-render");
         break;
-      case 'interaction':
-        this.recordInteractionLatency(latency, 'user-interaction');
+      case "interaction":
+        this.recordInteractionLatency(latency, "user-interaction");
         break;
     }
   }
@@ -257,10 +262,10 @@ export class RenderMetrics {
     if (!this.layoutShifts) {
       this.layoutShifts = [];
     }
-    
+
     this.layoutShifts.push({
       value,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     // Keep only recent shifts
@@ -275,7 +280,9 @@ export class RenderMetrics {
   getCurrentMetrics() {
     const avgRenderLatency = this.calculateAverageLatency(this.renderLatencies);
     const avgLayoutLatency = this.calculateAverageLatency(this.layoutLatencies);
-    const avgInteractionLatency = this.calculateAverageLatency(this.interactionLatencies);
+    const avgInteractionLatency = this.calculateAverageLatency(
+      this.interactionLatencies,
+    );
 
     return {
       fps: this.fps,
@@ -285,7 +292,7 @@ export class RenderMetrics {
       avgInteractionLatency,
       memory: this.options.trackMemory ? this.memoryStats : null,
       firstContentfulPaint: this.firstContentfulPaint || null,
-      cumulativeLayoutShift: this.calculateCLS()
+      cumulativeLayoutShift: this.calculateCLS(),
     };
   }
 
@@ -294,9 +301,9 @@ export class RenderMetrics {
    */
   calculateAverageLatency(latencies) {
     if (latencies.length === 0) return 0;
-    
+
     const sum = latencies.reduce((total, entry) => total + entry.latency, 0);
-    return Math.round(sum / latencies.length * 100) / 100; // Round to 2 decimal places
+    return Math.round((sum / latencies.length) * 100) / 100; // Round to 2 decimal places
   }
 
   /**
@@ -304,7 +311,7 @@ export class RenderMetrics {
    */
   calculateCLS() {
     if (!this.layoutShifts || this.layoutShifts.length === 0) return 0;
-    
+
     return this.layoutShifts.reduce((sum, shift) => sum + shift.value, 0);
   }
 
@@ -313,7 +320,7 @@ export class RenderMetrics {
    */
   onUpdate(callback) {
     this.subscribers.add(callback);
-    
+
     // Return unsubscribe function
     return () => {
       this.subscribers.delete(callback);
@@ -325,12 +332,12 @@ export class RenderMetrics {
    */
   emitUpdate() {
     const metrics = this.getCurrentMetrics();
-    
+
     for (const callback of this.subscribers) {
       try {
         callback(metrics);
       } catch (error) {
-        console.warn('[RenderMetrics] Subscriber error:', error);
+        console.warn("[RenderMetrics] Subscriber error:", error);
       }
     }
   }
@@ -347,19 +354,28 @@ export class RenderMetrics {
       trend: {
         fps: {
           current: metrics.fps,
-          avg: history.length > 0 ? 
-            Math.round(history.reduce((sum, h) => sum + h.fps, 0) / history.length) : 
-            metrics.fps,
-          min: history.length > 0 ? Math.min(...history.map(h => h.fps)) : metrics.fps,
-          max: history.length > 0 ? Math.max(...history.map(h => h.fps)) : metrics.fps
+          avg:
+            history.length > 0
+              ? Math.round(
+                  history.reduce((sum, h) => sum + h.fps, 0) / history.length,
+                )
+              : metrics.fps,
+          min:
+            history.length > 0
+              ? Math.min(...history.map((h) => h.fps))
+              : metrics.fps,
+          max:
+            history.length > 0
+              ? Math.max(...history.map((h) => h.fps))
+              : metrics.fps,
         },
         latency: {
           render: metrics.avgRenderLatency,
           layout: metrics.avgLayoutLatency,
-          interaction: metrics.avgInteractionLatency
-        }
+          interaction: metrics.avgInteractionLatency,
+        },
       },
-      issues: this.detectPerformanceIssues(metrics)
+      issues: this.detectPerformanceIssues(metrics),
     };
   }
 
@@ -371,37 +387,37 @@ export class RenderMetrics {
 
     if (metrics.fps < 30) {
       issues.push({
-        type: 'low_fps',
-        severity: metrics.fps < 15 ? 'critical' : 'warning',
+        type: "low_fps",
+        severity: metrics.fps < 15 ? "critical" : "warning",
         message: `Low frame rate: ${metrics.fps} FPS`,
-        suggestion: 'Consider enabling performance mode'
+        suggestion: "Consider enabling performance mode",
       });
     }
 
     if (metrics.avgRenderLatency > 16) {
       issues.push({
-        type: 'high_render_latency',
-        severity: metrics.avgRenderLatency > 50 ? 'critical' : 'warning',
+        type: "high_render_latency",
+        severity: metrics.avgRenderLatency > 50 ? "critical" : "warning",
         message: `High render latency: ${metrics.avgRenderLatency}ms`,
-        suggestion: 'Optimize component rendering'
+        suggestion: "Optimize component rendering",
       });
     }
 
     if (metrics.avgLayoutLatency > 50) {
       issues.push({
-        type: 'high_layout_latency',
-        severity: metrics.avgLayoutLatency > 100 ? 'critical' : 'warning',
+        type: "high_layout_latency",
+        severity: metrics.avgLayoutLatency > 100 ? "critical" : "warning",
         message: `High layout latency: ${metrics.avgLayoutLatency}ms`,
-        suggestion: 'Optimize grid operations'
+        suggestion: "Optimize grid operations",
       });
     }
 
     if (metrics.cumulativeLayoutShift > 0.1) {
       issues.push({
-        type: 'layout_instability',
-        severity: metrics.cumulativeLayoutShift > 0.25 ? 'critical' : 'warning',
+        type: "layout_instability",
+        severity: metrics.cumulativeLayoutShift > 0.25 ? "critical" : "warning",
         message: `High layout shift: ${metrics.cumulativeLayoutShift.toFixed(3)}`,
-        suggestion: 'Reduce layout changes during interactions'
+        suggestion: "Reduce layout changes during interactions",
       });
     }
 
@@ -416,7 +432,7 @@ export class RenderMetrics {
       current: this.getCurrentMetrics(),
       history: this.metricsHistory,
       config: this.options,
-      performance: this.getPerformanceSummary()
+      performance: this.getPerformanceSummary(),
     };
   }
 
@@ -432,8 +448,8 @@ export class RenderMetrics {
     this.metricsHistory = [];
     this.layoutShifts = [];
     this.firstContentfulPaint = null;
-    
-    console.log('[RenderMetrics] Metrics reset');
+
+    console.log("[RenderMetrics] Metrics reset");
   }
 
   /**

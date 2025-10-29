@@ -9,91 +9,110 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"test": "vitest",
+		"test:run": "vitest run",
 		"test:ui": "vitest --ui",
-		"test:coverage": "vitest --coverage",
-		"lint": "eslint .",
-		"lint:fix": "eslint . --fix",
-		"format": "prettier --write src/**/*.js",
-		"format:check": "prettier --check src/**/*.js",
+		"test:coverage": "vitest run --coverage",
+		"test:e2e": "playwright test",
+		"test:e2e:ui": "playwright test --ui",
+		"lint": "eslint src --ext .js",
+		"lint:fix": "eslint src --ext .js --fix",
+		"format": "prettier --write \"src/**/*.{js,css,html}\"",
+		"format:check": "prettier --check \"src/**/*.{js,css,html}\"",
 		"typecheck": "tsc --noEmit",
 		"docs:generate": "jsdoc -c jsdoc.json",
-		"docs:todos": "node scripts/extract-todos.js",
-		"docs:validate": "node scripts/validate-docs.js",
-		"docs:readme": "node scripts/generate-readme.js",
-		"ai:sync": "node scripts/sync-ai-documentation.js",
-		"ai:status": "node -e \"console.log(JSON.stringify(JSON.parse(require('fs').readFileSync('.ai-sync-state.json', 'utf8')), null, 2))\"",
-		"ai:summary": "cat docs/AI_SYNC_LATEST.md",
-		"ai:reset": "rm -f .ai-sync-state.json .project-knowledge.json docs/AI_SYNC_LATEST.md",
-		"setup": "node scripts/setup.js",
-		"setup:hooks": "chmod +x .git/hooks/post-commit .git/hooks/post-merge && echo 'Git hooks activated'",
-		"setup:ai-docs": "npm run ai:sync && npm run setup:hooks && echo 'AI documentation system ready'",
-		"full-docs": "npm run docs:generate && npm run docs:todos && npm run docs:readme && npm run ai:sync",
-		"migrate": "node scripts/migrate.js",
+		"docs:serve": "http-server ./docs -p 8080",
+		"analyze": "vite-bundle-analyzer dist",
+		"size": "bundlesize",
+		"lighthouse": "lhci autorun",
+		"clean": "rimraf dist coverage .nyc_output docs",
+		"clean:deps": "rimraf node_modules package-lock.json && npm ci",
+		"prepare": "husky install",
 		"start": "npm run dev",
-		"clean": "rm -rf dist node_modules/.vite",
-		"analyze": "vite-bundle-analyzer dist"
+		"validate": "npm run lint && npm run format:check && npm run typecheck && npm run test:run",
+		"ci": "npm run validate && npm run build && npm run size",
+		"release": "npm run ci && npm version patch",
+		"release:minor": "npm run ci && npm version minor",
+		"release:major": "npm run ci && npm version major",
+		"setup": "node scripts/setup.js"
 	},
 	"keywords": [
 		"grid-system",
 		"composable-architecture",
-		"drag-and-drop",
-		"accessibility",
-		"performance",
-		"policy-driven",
 		"vanilla-javascript",
-		"css-grid"
+		"jsdoc",
+		"offline-first",
+		"enterprise"
 	],
-	"author": "Nodus Team",
+	"author": {
+		"name": "Nodus Team",
+		"email": "team@nodus.dev",
+		"url": "https://nodus.dev"
+	},
 	"license": "MIT",
 	"dependencies": {
-		"date-fns": "^4.1.0",
-		"dexie": "^4.0.8"
+		"date-fns": "^4.1.0"
 	},
 	"devDependencies": {
-		"@eslint/config-array": "",
-		"@eslint/js": "",
-		"@types/node": "",
-		"@vitest/coverage-v8": "",
-		"@vitest/ui": "",
-		"eslint": "",
-		"eslint-plugin-jsdoc": "",
-		"globals": "",
-		"husky": "",
-		"jsdoc": "",
-		"prettier": "",
-		"terser": "",
-		"typescript": "",
-		"vite": "",
+		"@eslint/js": "^9.15.0",
+		"@playwright/test": "^1.48.0",
+		"@testing-library/dom": "^10.4.0",
+		"@testing-library/jest-dom": "^6.6.2",
+		"@types/node": "^22.9.0",
+		"@vitest/coverage-v8": "^4.0.5",
+		"@vitest/ui": "^4.0.5",
+		"eslint": "^9.15.0",
+		"eslint-plugin-jsdoc": "^50.5.0",
+		"globals": "^15.12.0",
+		"http-server": "^14.1.1",
+		"husky": "^9.1.6",
+		"jsdoc": "^4.0.4",
+		"jsdom": "^25.0.1",
+		"lint-staged": "^15.2.10",
+		"prettier": "^3.3.3",
+		"rimraf": "^6.0.1",
+		"typescript": "^5.6.3",
+		"vite": "^7.1.12",
 		"vite-bundle-analyzer": "",
-		"vitest": ""
+		"vitest": "^4.0.5"
 	},
 	"engines": {
-		"node": ">=18.0.0",
-		"npm": ">=9.0.0"
+		"node": ">=20.0.0",
+		"npm": ">=10.0.0"
 	},
 	"browserslist": [
 		"> 1%",
 		"last 2 versions",
-		"not dead",
-		"not ie <= 11"
+		"not dead"
 	],
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/your-org/nodus-v7.git"
-	},
-	"bugs": {
-		"url": "https://github.com/your-org/nodus-v7/issues"
-	},
-	"homepage": "https://github.com/your-org/nodus-v7#readme",
-	"husky": {
-		"hooks": {
-			"pre-commit": "npm run lint && npm run format:check",
-			"prepare-commit-msg": "node scripts/prepare-commit-msg.js",
-			"pre-push": "npm run test && npm run build"
-		}
+	"overrides": {
+		"iltorb": "npm:zlib",
+		"github-build": "npm:github-build@latest",
+		"bundlesize": "npm:bundlesize@latest",
+		"@lhci/cli": "npm:@lhci/cli@latest"
 	},
 	"volta": {
-		"node": "20.17.0",
-		"npm": "10.8.2"
-	}
+		"node": "22.17.0",
+		"npm": "11.6.2"
+	},
+	"lint-staged": {
+		"*.js": [
+			"eslint --fix",
+			"prettier --write"
+		],
+		"*.{css,html,md}": [
+			"prettier --write"
+		]
+	},
+	"bundlesize": [
+		{
+			"path": "./dist/**/*.js",
+			"maxSize": "50kb",
+			"compression": "gzip"
+		},
+		{
+			"path": "./dist/**/*.css",
+			"maxSize": "10kb",
+			"compression": "gzip"
+		}
+	]
 }

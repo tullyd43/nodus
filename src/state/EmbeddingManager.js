@@ -13,14 +13,14 @@ export class EmbeddingManager {
       embeddingDimensions: 384,
       batchSize: 10,
       apiEndpoint: null, // Set to use real API
-      ...options
+      ...options,
     };
-    
+
     this.vectors = new Map(); // In-memory vector cache
     this.pendingEmbeddings = new Map(); // Deduplication for concurrent requests
     this.processingQueue = [];
     this.isProcessing = false;
-    
+
     this.initializeCache();
   }
 
@@ -34,10 +34,15 @@ export class EmbeddingManager {
         for (const [id, data] of cachedVectors) {
           this.vectors.set(id, data);
         }
-        console.log(`[EmbeddingManager] Loaded ${cachedVectors.size} cached embeddings`);
+        console.log(
+          `[EmbeddingManager] Loaded ${cachedVectors.size} cached embeddings`,
+        );
       }
     } catch (error) {
-      console.warn('[EmbeddingManager] Failed to load cached embeddings:', error);
+      console.warn(
+        "[EmbeddingManager] Failed to load cached embeddings:",
+        error,
+      );
     }
   }
 
@@ -48,7 +53,7 @@ export class EmbeddingManager {
    * @returns {Promise<object>} Embedding result with id and vector
    */
   async generateEmbedding(text, meta = {}) {
-    if (!text || typeof text !== 'string') {
+    if (!text || typeof text !== "string") {
       return null;
     }
 
@@ -60,7 +65,7 @@ export class EmbeddingManager {
       return {
         id,
         vector: this.vectors.get(id).vector,
-        cached: true
+        cached: true,
       };
     }
 
@@ -89,7 +94,7 @@ export class EmbeddingManager {
   async processEmbedding(text, id, meta) {
     try {
       let vector;
-      
+
       if (this.options.apiEndpoint) {
         // Use real API endpoint
         vector = await this.callEmbeddingAPI(text);
@@ -104,13 +109,13 @@ export class EmbeddingManager {
           ...meta,
           text: text.substring(0, 100), // Store truncated text for debugging
           timestamp: Date.now(),
-          dimensions: vector.length
-        }
+          dimensions: vector.length,
+        },
       };
 
       // Store in cache
       this.vectors.set(id, embeddingData);
-      
+
       // Persist to HybridStateManager
       if (this.stateManager?.saveEmbedding) {
         await this.stateManager.saveEmbedding(id, embeddingData);
@@ -121,7 +126,7 @@ export class EmbeddingManager {
 
       return { id, vector, cached: false };
     } catch (error) {
-      console.error('[EmbeddingManager] Failed to generate embedding:', error);
+      console.error("[EmbeddingManager] Failed to generate embedding:", error);
       throw error;
     }
   }
@@ -131,15 +136,15 @@ export class EmbeddingManager {
    */
   async callEmbeddingAPI(text) {
     const response = await fetch(this.options.apiEndpoint, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.options.apiKey}`
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.options.apiKey}`,
       },
       body: JSON.stringify({
         model: this.options.model,
-        input: text
-      })
+        input: text,
+      }),
     });
 
     if (!response.ok) {
@@ -157,16 +162,18 @@ export class EmbeddingManager {
     // Create deterministic but varied embeddings based on text content
     const hash = this.hashText(text);
     const vector = [];
-    
+
     for (let i = 0; i < this.options.embeddingDimensions; i++) {
       const seed = (hash * (i + 1)) % 2147483647;
       const normalized = (Math.sin(seed) + 1) / 2; // Normalize to 0-1
       vector.push((normalized - 0.5) * 2); // Center around 0
     }
-    
+
     // Normalize the vector
-    const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
-    return vector.map(val => val / magnitude);
+    const magnitude = Math.sqrt(
+      vector.reduce((sum, val) => sum + val * val, 0),
+    );
+    return vector.map((val) => val / magnitude);
   }
 
   /**
@@ -176,11 +183,7 @@ export class EmbeddingManager {
    * @returns {Promise<Array>} Ranked results
    */
   async semanticSearch(query, options = {}) {
-    const {
-      topK = 5,
-      threshold = 0.5,
-      includeText = false
-    } = options;
+    const { topK = 5, threshold = 0.5, includeText = false } = options;
 
     if (!query) return [];
 
@@ -195,24 +198,21 @@ export class EmbeddingManager {
       // Calculate similarity with all cached embeddings
       for (const [id, data] of this.vectors.entries()) {
         const similarity = this.cosineSimilarity(queryVector, data.vector);
-        
+
         if (similarity >= threshold) {
           results.push({
             id,
             relevance: similarity,
             meta: data.meta,
-            text: includeText ? data.meta.text : undefined
+            text: includeText ? data.meta.text : undefined,
           });
         }
       }
 
       // Sort by relevance and return top K
-      return results
-        .sort((a, b) => b.relevance - a.relevance)
-        .slice(0, topK);
-
+      return results.sort((a, b) => b.relevance - a.relevance).slice(0, topK);
     } catch (error) {
-      console.error('[EmbeddingManager] Semantic search failed:', error);
+      console.error("[EmbeddingManager] Semantic search failed:", error);
       return [];
     }
   }
@@ -231,12 +231,15 @@ export class EmbeddingManager {
       });
 
       const batchResults = await Promise.allSettled(batchPromises);
-      
+
       batchResults.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
+        if (result.status === "fulfilled") {
           results.push(result.value);
         } else {
-          console.error(`[EmbeddingManager] Batch embedding ${index} failed:`, result.reason);
+          console.error(
+            `[EmbeddingManager] Batch embedding ${index} failed:`,
+            result.reason,
+          );
           results.push(null);
         }
       });
@@ -250,7 +253,7 @@ export class EmbeddingManager {
    */
   cosineSimilarity(vectorA, vectorB) {
     if (vectorA.length !== vectorB.length) {
-      throw new Error('Vectors must have the same dimensions');
+      throw new Error("Vectors must have the same dimensions");
     }
 
     const dotProduct = vectorA.reduce((sum, a, i) => sum + a * vectorB[i], 0);
@@ -280,19 +283,17 @@ export class EmbeddingManager {
       if (id === targetId) continue; // Skip self
 
       const similarity = this.cosineSimilarity(targetVector, data.vector);
-      
+
       if (similarity >= threshold) {
         results.push({
           id,
           relevance: similarity,
-          meta: data.meta
+          meta: data.meta,
         });
       }
     }
 
-    return results
-      .sort((a, b) => b.relevance - a.relevance)
-      .slice(0, topK);
+    return results.sort((a, b) => b.relevance - a.relevance).slice(0, topK);
   }
 
   /**
@@ -302,7 +303,7 @@ export class EmbeddingManager {
     let hash = 0;
     for (let i = 0; i < text.length; i++) {
       const char = text.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32-bit integer
     }
     return Math.abs(hash);
@@ -321,11 +322,16 @@ export class EmbeddingManager {
       // Remove oldest entries (simple LRU)
       const entries = Array.from(this.vectors.entries());
       entries.sort((a, b) => a[1].meta.timestamp - b[1].meta.timestamp);
-      
-      const toRemove = entries.slice(0, entries.length - this.options.maxCacheSize);
+
+      const toRemove = entries.slice(
+        0,
+        entries.length - this.options.maxCacheSize,
+      );
       toRemove.forEach(([id]) => this.vectors.delete(id));
-      
-      console.log(`[EmbeddingManager] Removed ${toRemove.length} old embeddings from cache`);
+
+      console.log(
+        `[EmbeddingManager] Removed ${toRemove.length} old embeddings from cache`,
+      );
     }
   }
 
@@ -338,7 +344,7 @@ export class EmbeddingManager {
       maxCacheSize: this.options.maxCacheSize,
       pendingEmbeddings: this.pendingEmbeddings.size,
       embeddingDimensions: this.options.embeddingDimensions,
-      apiConfigured: !!this.options.apiEndpoint
+      apiConfigured: !!this.options.apiEndpoint,
     };
   }
 
@@ -348,7 +354,7 @@ export class EmbeddingManager {
   clearCache() {
     this.vectors.clear();
     this.pendingEmbeddings.clear();
-    console.log('[EmbeddingManager] Cache cleared');
+    console.log("[EmbeddingManager] Cache cleared");
   }
 
   /**
@@ -359,7 +365,7 @@ export class EmbeddingManager {
     for (const [id, data] of this.vectors.entries()) {
       exported[id] = {
         vector: data.vector,
-        meta: data.meta
+        meta: data.meta,
       };
     }
     return exported;

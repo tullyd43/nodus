@@ -9,7 +9,7 @@ export class EventFlowEngine {
     this.actionHandlers = new Map();
     this.eventQueue = [];
     this.processing = false;
-    
+
     // Performance metrics
     this.metrics = {
       eventsProcessed: 0,
@@ -17,13 +17,13 @@ export class EventFlowEngine {
       conditionsEvaluated: 0,
       averageProcessingTime: 0,
       processingTimes: [],
-      errorCount: 0
+      errorCount: 0,
     };
 
     // Flow execution state
     this.executionStack = [];
     this.maxExecutionDepth = 10; // Prevent infinite loops
-    
+
     this.initialize();
   }
 
@@ -33,16 +33,16 @@ export class EventFlowEngine {
   async initialize() {
     // Load event flows from stored entities
     await this.loadEventFlows();
-    
+
     // Register default system flows
     this.registerDefaultFlows();
-    
+
     // Register built-in conditions
     this.registerBuiltinConditions();
-    
+
     // Register built-in action handlers
     this.registerBuiltinActionHandlers();
-    
+
     console.log(`EventFlowEngine initialized with ${this.flows.size} flows`);
   }
 
@@ -51,13 +51,14 @@ export class EventFlowEngine {
    */
   async loadEventFlows() {
     try {
-      const flowEntities = await this.stateManager.getEntitiesByType('event_flow');
-      
+      const flowEntities =
+        await this.stateManager.getEntitiesByType("event_flow");
+
       for (const entity of flowEntities) {
         this.registerFlow(entity.data);
       }
     } catch (error) {
-      console.error('Failed to load event flows:', error);
+      console.error("Failed to load event flows:", error);
     }
   }
 
@@ -66,22 +67,24 @@ export class EventFlowEngine {
    */
   registerFlow(flowDefinition) {
     const flow = {
-      id: flowDefinition.id || `flow_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id:
+        flowDefinition.id ||
+        `flow_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       name: flowDefinition.name,
       description: flowDefinition.description,
       trigger: flowDefinition.trigger,
       conditions: flowDefinition.conditions || {},
       actions: flowDefinition.actions || {},
       enabled: flowDefinition.enabled !== false,
-      priority: flowDefinition.priority || 'normal',
-      metadata: flowDefinition.metadata || {}
+      priority: flowDefinition.priority || "normal",
+      metadata: flowDefinition.metadata || {},
     };
 
     this.flows.set(flow.id, flow);
-    
+
     // Index by trigger events for fast lookup
     this.indexFlowByTriggers(flow);
-    
+
     return flow;
   }
 
@@ -93,8 +96,8 @@ export class EventFlowEngine {
       this.triggerIndex = new Map();
     }
 
-    const triggers = Array.isArray(flow.trigger.events) 
-      ? flow.trigger.events 
+    const triggers = Array.isArray(flow.trigger.events)
+      ? flow.trigger.events
       : [flow.trigger.events].filter(Boolean);
 
     for (const event of triggers) {
@@ -113,12 +116,12 @@ export class EventFlowEngine {
       type: eventType,
       data,
       timestamp: Date.now(),
-      id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     };
 
     // Add to processing queue
     this.eventQueue.push(event);
-    
+
     // Process queue if not already processing
     if (!this.processing) {
       this.processEventQueue();
@@ -132,14 +135,14 @@ export class EventFlowEngine {
    */
   async processEventQueue() {
     if (this.processing) return;
-    
+
     this.processing = true;
-    
+
     while (this.eventQueue.length > 0) {
       const event = this.eventQueue.shift();
       await this.processEvent(event);
     }
-    
+
     this.processing = false;
   }
 
@@ -148,30 +151,29 @@ export class EventFlowEngine {
    */
   async processEvent(event) {
     const startTime = performance.now();
-    
+
     try {
       // Find matching flows for this event
       const matchingFlows = this.getFlowsForEvent(event.type);
-      
+
       // Sort by priority
       const sortedFlows = this.sortFlowsByPriority(matchingFlows);
-      
+
       // Execute each matching flow
       for (const flow of sortedFlows) {
         if (flow.enabled) {
           await this.executeFlow(flow, event);
         }
       }
-      
+
       this.metrics.eventsProcessed++;
-      
     } catch (error) {
       console.error(`Error processing event ${event.type}:`, error);
       this.metrics.errorCount++;
-      
+
       // Emit error event (but prevent infinite loops)
-      if (event.type !== 'event_processing_error') {
-        this.emit('event_processing_error', { originalEvent: event, error });
+      if (event.type !== "event_processing_error") {
+        this.emit("event_processing_error", { originalEvent: event, error });
       }
     } finally {
       const duration = performance.now() - startTime;
@@ -184,7 +186,7 @@ export class EventFlowEngine {
    */
   getFlowsForEvent(eventType) {
     const matchingFlows = [];
-    
+
     // Use trigger index for fast lookup
     if (this.triggerIndex && this.triggerIndex.has(eventType)) {
       const flowIds = this.triggerIndex.get(eventType);
@@ -195,10 +197,10 @@ export class EventFlowEngine {
         }
       }
     }
-    
+
     // Also check for wildcard flows
-    if (this.triggerIndex && this.triggerIndex.has('*')) {
-      const wildcardFlowIds = this.triggerIndex.get('*');
+    if (this.triggerIndex && this.triggerIndex.has("*")) {
+      const wildcardFlowIds = this.triggerIndex.get("*");
       for (const flowId of wildcardFlowIds) {
         const flow = this.flows.get(flowId);
         if (flow && !matchingFlows.includes(flow)) {
@@ -206,7 +208,7 @@ export class EventFlowEngine {
         }
       }
     }
-    
+
     return matchingFlows;
   }
 
@@ -214,8 +216,8 @@ export class EventFlowEngine {
    * Sort flows by priority
    */
   sortFlowsByPriority(flows) {
-    const priorityOrder = { 'high': 3, 'normal': 2, 'low': 1 };
-    
+    const priorityOrder = { high: 3, normal: 2, low: 1 };
+
     return flows.sort((a, b) => {
       const aPriority = priorityOrder[a.priority] || 2;
       const bPriority = priorityOrder[b.priority] || 2;
@@ -234,21 +236,21 @@ export class EventFlowEngine {
     }
 
     this.executionStack.push(flow.id);
-    
+
     try {
       // Evaluate conditions to determine which actions to execute
       const conditionResult = await this.evaluateConditions(flow, event);
-      
+
       // Get actions for the condition result
-      const actions = flow.actions[conditionResult] || flow.actions.default || [];
-      
+      const actions =
+        flow.actions[conditionResult] || flow.actions.default || [];
+
       // Execute actions
       for (const action of actions) {
         await this.executeAction(action, event, flow);
       }
-      
+
       this.metrics.flowsExecuted++;
-      
     } catch (error) {
       console.error(`Error executing flow ${flow.id}:`, error);
       throw error;
@@ -262,21 +264,23 @@ export class EventFlowEngine {
    */
   async evaluateConditions(flow, event) {
     this.metrics.conditionsEvaluated++;
-    
+
     // If no conditions, return 'default'
     if (!flow.conditions || Object.keys(flow.conditions).length === 0) {
-      return 'default';
+      return "default";
     }
 
     // Evaluate each condition
-    for (const [conditionName, conditionDef] of Object.entries(flow.conditions)) {
+    for (const [conditionName, conditionDef] of Object.entries(
+      flow.conditions,
+    )) {
       if (await this.evaluateCondition(conditionDef, event, flow)) {
         return conditionName;
       }
     }
 
     // No conditions matched
-    return 'default';
+    return "default";
   }
 
   /**
@@ -294,19 +298,18 @@ export class EventFlowEngine {
 
       // Simple property conditions
       for (const [property, expectedValue] of Object.entries(conditionDef)) {
-        if (property === 'type') continue; // Skip type property
-        
+        if (property === "type") continue; // Skip type property
+
         const actualValue = this.getPropertyValue(event, property);
-        
+
         if (!this.compareValues(actualValue, expectedValue)) {
           return false;
         }
       }
 
       return true;
-      
     } catch (error) {
-      console.error('Condition evaluation error:', error);
+      console.error("Condition evaluation error:", error);
       return false;
     }
   }
@@ -315,14 +318,14 @@ export class EventFlowEngine {
    * Get property value from event data using dot notation
    */
   getPropertyValue(event, property) {
-    const parts = property.split('.');
+    const parts = property.split(".");
     let value = event;
-    
+
     for (const part of parts) {
       value = value?.[part];
       if (value === undefined) break;
     }
-    
+
     return value;
   }
 
@@ -330,23 +333,32 @@ export class EventFlowEngine {
    * Compare values with support for operators
    */
   compareValues(actual, expected) {
-    if (typeof expected === 'object' && expected !== null) {
+    if (typeof expected === "object" && expected !== null) {
       // Handle operators like { ">": 100 }, { "in": ["a", "b"] }
       for (const [operator, value] of Object.entries(expected)) {
         switch (operator) {
-          case '>': return actual > value;
-          case '<': return actual < value;
-          case '>=': return actual >= value;
-          case '<=': return actual <= value;
-          case '!=': return actual !== value;
-          case 'in': return Array.isArray(value) && value.includes(actual);
-          case 'contains': return String(actual).includes(value);
-          case 'regex': return new RegExp(value).test(String(actual));
-          default: return actual === value;
+          case ">":
+            return actual > value;
+          case "<":
+            return actual < value;
+          case ">=":
+            return actual >= value;
+          case "<=":
+            return actual <= value;
+          case "!=":
+            return actual !== value;
+          case "in":
+            return Array.isArray(value) && value.includes(actual);
+          case "contains":
+            return String(actual).includes(value);
+          case "regex":
+            return new RegExp(value).test(String(actual));
+          default:
+            return actual === value;
         }
       }
     }
-    
+
     return actual === expected;
   }
 
@@ -356,22 +368,21 @@ export class EventFlowEngine {
   async executeAction(action, event, flow) {
     try {
       const actionHandler = this.actionHandlers.get(action.type);
-      
+
       if (actionHandler) {
         await actionHandler(action, event, flow, this);
       } else {
         console.warn(`No handler for action type: ${action.type}`);
       }
-      
     } catch (error) {
       console.error(`Error executing action ${action.type}:`, error);
-      
+
       // Emit action error event
-      this.emit('action_execution_error', {
+      this.emit("action_execution_error", {
         action,
         event,
         flow: flow.id,
-        error: error.message
+        error: error.message,
       });
     }
   }
@@ -382,68 +393,79 @@ export class EventFlowEngine {
   registerDefaultFlows() {
     // Error handling flow
     this.registerFlow({
-      id: 'error_handling',
-      name: 'Error Handling',
-      trigger: { events: ['error', 'exception', 'action_execution_error'] },
+      id: "error_handling",
+      name: "Error Handling",
+      trigger: { events: ["error", "exception", "action_execution_error"] },
       conditions: {
-        critical: { 'data.severity': 'error', 'data.user_facing': true },
-        warning: { 'data.severity': 'warn' },
-        info: { 'data.severity': 'info' }
+        critical: { "data.severity": "error", "data.user_facing": true },
+        warning: { "data.severity": "warn" },
+        info: { "data.severity": "info" },
       },
       actions: {
         critical: [
-          { type: 'log_error', level: 'error' },
-          { type: 'show_notification', template: 'error_dialog', duration: 0 },
-          { type: 'track_metric', metric: 'errors.critical' }
+          { type: "log_error", level: "error" },
+          { type: "show_notification", template: "error_dialog", duration: 0 },
+          { type: "track_metric", metric: "errors.critical" },
         ],
         warning: [
-          { type: 'log_error', level: 'warn' },
-          { type: 'show_notification', template: 'warning_toast', duration: 5000 }
+          { type: "log_error", level: "warn" },
+          {
+            type: "show_notification",
+            template: "warning_toast",
+            duration: 5000,
+          },
         ],
-        info: [
-          { type: 'log_error', level: 'info' }
-        ]
-      }
+        info: [{ type: "log_error", level: "info" }],
+      },
     });
 
     // Performance monitoring flow
     this.registerFlow({
-      id: 'performance_monitoring',
-      name: 'Performance Monitoring',
-      trigger: { events: ['operation_completed', 'render_completed'] },
+      id: "performance_monitoring",
+      name: "Performance Monitoring",
+      trigger: { events: ["operation_completed", "render_completed"] },
       conditions: {
-        slow: { 'data.duration': { '>': 1000 } },
-        normal: { 'data.duration': { '<=': 1000 } }
+        slow: { "data.duration": { ">": 1000 } },
+        normal: { "data.duration": { "<=": 1000 } },
       },
       actions: {
         slow: [
-          { type: 'log_error', level: 'warn', message: 'Slow operation detected' },
-          { type: 'track_metric', metric: 'performance.slow_operations' }
+          {
+            type: "log_error",
+            level: "warn",
+            message: "Slow operation detected",
+          },
+          { type: "track_metric", metric: "performance.slow_operations" },
         ],
-        normal: [
-          { type: 'track_metric', metric: 'performance.operations' }
-        ]
-      }
+        normal: [{ type: "track_metric", metric: "performance.operations" }],
+      },
     });
 
     // State change notification flow
     this.registerFlow({
-      id: 'state_change_notification',
-      name: 'State Change Notification',
-      trigger: { events: ['entity_created', 'entity_updated', 'entity_deleted'] },
+      id: "state_change_notification",
+      name: "State Change Notification",
+      trigger: {
+        events: ["entity_created", "entity_updated", "entity_deleted"],
+      },
       conditions: {
-        important: { 'data.entity.type': { 'in': ['user', 'organization', 'project'] } },
-        normal: {}
+        important: {
+          "data.entity.type": { in: ["user", "organization", "project"] },
+        },
+        normal: {},
       },
       actions: {
         important: [
-          { type: 'broadcast_event', event: 'important_entity_changed' },
-          { type: 'invalidate_cache', pattern: 'entity.*' }
+          { type: "broadcast_event", event: "important_entity_changed" },
+          { type: "invalidate_cache", pattern: "entity.*" },
         ],
         normal: [
-          { type: 'invalidate_cache', pattern: `entity.${event.data.entity.id}` }
-        ]
-      }
+          {
+            type: "invalidate_cache",
+            pattern: `entity.${event.data.entity.id}`,
+          },
+        ],
+      },
     });
   }
 
@@ -452,47 +474,52 @@ export class EventFlowEngine {
    */
   registerBuiltinConditions() {
     // Time-based condition
-    this.conditions.set('time_range', (conditionDef, event) => {
+    this.conditions.set("time_range", (conditionDef, event) => {
       const now = Date.now();
       const eventTime = event.timestamp;
-      
+
       if (conditionDef.after && eventTime < conditionDef.after) return false;
       if (conditionDef.before && eventTime > conditionDef.before) return false;
-      
+
       return true;
     });
 
     // User permission condition
-    this.conditions.set('user_permission', (conditionDef, event) => {
+    this.conditions.set("user_permission", (conditionDef, event) => {
       const userPermissions = event.data.userPermissions || [];
       const requiredPermissions = conditionDef.permissions || [];
-      
-      return requiredPermissions.every(perm => userPermissions.includes(perm));
+
+      return requiredPermissions.every((perm) =>
+        userPermissions.includes(perm),
+      );
     });
 
     // Rate limiting condition
-    this.conditions.set('rate_limit', (conditionDef, event) => {
+    this.conditions.set("rate_limit", (conditionDef, event) => {
       const key = `rate_limit_${conditionDef.key || event.type}`;
       const limit = conditionDef.limit || 10;
       const window = conditionDef.window || 60000; // 1 minute default
-      
+
       // Simple in-memory rate limiting (could be enhanced with Redis)
       if (!this.rateLimitCache) {
         this.rateLimitCache = new Map();
       }
-      
+
       const now = Date.now();
-      const record = this.rateLimitCache.get(key) || { count: 0, windowStart: now };
-      
+      const record = this.rateLimitCache.get(key) || {
+        count: 0,
+        windowStart: now,
+      };
+
       // Reset window if expired
       if (now - record.windowStart > window) {
         record.count = 0;
         record.windowStart = now;
       }
-      
+
       record.count++;
       this.rateLimitCache.set(key, record);
-      
+
       return record.count <= limit;
     });
   }
@@ -502,63 +529,72 @@ export class EventFlowEngine {
    */
   registerBuiltinActionHandlers() {
     // Logging action
-    this.actionHandlers.set('log_error', (action, event, flow) => {
-      const level = action.level || 'info';
+    this.actionHandlers.set("log_error", (action, event, flow) => {
+      const level = action.level || "info";
       const message = action.message || `Event: ${event.type}`;
-      
+
       console[level](`[EventFlow:${flow.id}] ${message}`, event.data);
     });
 
     // Notification action
-    this.actionHandlers.set('show_notification', (action, event, flow, engine) => {
-      const notification = {
-        type: action.template || 'info',
-        message: action.message || `Event: ${event.type}`,
-        duration: action.duration || 3000,
-        data: event.data
-      };
-      
-      engine.emit('show_notification', notification);
-    });
+    this.actionHandlers.set(
+      "show_notification",
+      (action, event, flow, engine) => {
+        const notification = {
+          type: action.template || "info",
+          message: action.message || `Event: ${event.type}`,
+          duration: action.duration || 3000,
+          data: event.data,
+        };
+
+        engine.emit("show_notification", notification);
+      },
+    );
 
     // Metric tracking action
-    this.actionHandlers.set('track_metric', (action, event, flow, engine) => {
+    this.actionHandlers.set("track_metric", (action, event, flow, engine) => {
       const metric = {
         name: action.metric,
         value: action.value || 1,
         timestamp: Date.now(),
         event: event.type,
-        flow: flow.id
+        flow: flow.id,
       };
-      
-      engine.emit('metric_tracked', metric);
+
+      engine.emit("metric_tracked", metric);
     });
 
     // Cache invalidation action
-    this.actionHandlers.set('invalidate_cache', (action, event, flow, engine) => {
-      const pattern = action.pattern || '*';
-      
-      if (engine.stateManager.clientState?.cache) {
-        // Simple pattern matching for cache invalidation
-        const cache = engine.stateManager.clientState.cache;
-        const keys = Array.from(cache.keys());
-        
-        for (const key of keys) {
-          if (pattern === '*' || key.includes(pattern.replace('*', ''))) {
-            cache.delete(key);
+    this.actionHandlers.set(
+      "invalidate_cache",
+      (action, event, flow, engine) => {
+        const pattern = action.pattern || "*";
+
+        if (engine.stateManager.clientState?.cache) {
+          // Simple pattern matching for cache invalidation
+          const cache = engine.stateManager.clientState.cache;
+          const keys = Array.from(cache.keys());
+
+          for (const key of keys) {
+            if (pattern === "*" || key.includes(pattern.replace("*", ""))) {
+              cache.delete(key);
+            }
           }
         }
-      }
-    });
+      },
+    );
 
     // Event broadcasting action
-    this.actionHandlers.set('broadcast_event', (action, event, flow, engine) => {
-      engine.emit(action.event, {
-        ...event.data,
-        originalEvent: event.type,
-        flow: flow.id
-      });
-    });
+    this.actionHandlers.set(
+      "broadcast_event",
+      (action, event, flow, engine) => {
+        engine.emit(action.event, {
+          ...event.data,
+          originalEvent: event.type,
+          flow: flow.id,
+        });
+      },
+    );
   }
 
   /**
@@ -567,21 +603,19 @@ export class EventFlowEngine {
   on(eventType, handler) {
     // Create a flow for this subscription
     const flowId = `subscription_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+
     this.registerFlow({
       id: flowId,
       name: `Subscription to ${eventType}`,
       trigger: { events: [eventType] },
       conditions: { always: {} },
       actions: {
-        always: [
-          { type: 'execute_callback', callback: handler }
-        ]
-      }
+        always: [{ type: "execute_callback", callback: handler }],
+      },
     });
 
     // Register callback action handler for this subscription
-    this.actionHandlers.set('execute_callback', (action, event, flow) => {
+    this.actionHandlers.set("execute_callback", (action, event, flow) => {
       if (action.callback) {
         action.callback(event.data);
       }
@@ -609,15 +643,15 @@ export class EventFlowEngine {
    */
   recordProcessingTime(duration) {
     this.metrics.processingTimes.push(duration);
-    
+
     // Keep only last 100 measurements
     if (this.metrics.processingTimes.length > 100) {
       this.metrics.processingTimes.shift();
     }
 
     // Calculate average
-    this.metrics.averageProcessingTime = 
-      this.metrics.processingTimes.reduce((sum, time) => sum + time, 0) / 
+    this.metrics.averageProcessingTime =
+      this.metrics.processingTimes.reduce((sum, time) => sum + time, 0) /
       this.metrics.processingTimes.length;
   }
 
@@ -631,7 +665,7 @@ export class EventFlowEngine {
       registeredConditions: this.conditions.size,
       registeredActionHandlers: this.actionHandlers.size,
       currentExecutionDepth: this.executionStack.length,
-      queueSize: this.eventQueue.length
+      queueSize: this.eventQueue.length,
     };
   }
 
@@ -657,10 +691,10 @@ export class EventFlowEngine {
    * Export all flows as entities
    */
   exportFlows() {
-    return Array.from(this.flows.values()).map(flow => ({
-      domain: 'system',
-      type: 'event_flow',
-      data: flow
+    return Array.from(this.flows.values()).map((flow) => ({
+      domain: "system",
+      type: "event_flow",
+      data: flow,
     }));
   }
 }

@@ -5,16 +5,16 @@ export class DatabaseOptimizationControlPanel {
   constructor(optimizer, container) {
     this.optimizer = optimizer;
     this.container = container;
-    this.currentView = 'dashboard';
+    this.currentView = "dashboard";
     this.refreshInterval = null;
     this.data = {
       dashboard: null,
       suggestions: [],
       applied: [],
       metrics: null,
-      health: null
+      health: null,
     };
-    
+
     // Real-time update settings
     this.updateInterval = 30000; // 30 seconds
     this.charts = {};
@@ -25,17 +25,17 @@ export class DatabaseOptimizationControlPanel {
    */
   async initialize() {
     try {
-      console.log('🎛️ Initializing Database Optimization Control Panel...');
-      
+      console.log("🎛️ Initializing Database Optimization Control Panel...");
+
       this.render();
       await this.loadAllData();
       this.setupEventListeners();
       this.startRealTimeUpdates();
-      
-      console.log('✅ Control Panel initialized');
+
+      console.log("✅ Control Panel initialized");
     } catch (error) {
-      console.error('Failed to initialize control panel:', error);
-      this.showError('Failed to initialize control panel', error.message);
+      console.error("Failed to initialize control panel:", error);
+      this.showError("Failed to initialize control panel", error.message);
     }
   }
 
@@ -500,9 +500,11 @@ export class DatabaseOptimizationControlPanel {
     `;
 
     // Set up global click handlers
-    this.container.addEventListener('click', (e) => {
-      if (e.target.matches('[onclick]')) {
-        const method = e.target.getAttribute('onclick').match(/this\.(\w+)\('?([^']*)'?\)/);
+    this.container.addEventListener("click", (e) => {
+      if (e.target.matches("[onclick]")) {
+        const method = e.target
+          .getAttribute("onclick")
+          .match(/this\.(\w+)\('?([^']*)'?\)/);
         if (method && this[method[1]]) {
           e.preventDefault();
           this[method[1]](method[2] || undefined);
@@ -516,22 +518,22 @@ export class DatabaseOptimizationControlPanel {
    */
   async loadAllData() {
     try {
-      const [dashboard, suggestions, applied, metrics, health] = await Promise.all([
-        this.loadDashboardData(),
-        this.optimizer.getPendingSuggestions(),
-        this.optimizer.getAppliedOptimizations(),
-        this.optimizer.getEnhancedMetrics(),
-        this.optimizer.getHealthStatus()
-      ]);
+      const [dashboard, suggestions, applied, metrics, health] =
+        await Promise.all([
+          this.loadDashboardData(),
+          this.optimizer.getPendingSuggestions(),
+          this.optimizer.getAppliedOptimizations(),
+          this.optimizer.getEnhancedMetrics(),
+          this.optimizer.getHealthStatus(),
+        ]);
 
       this.data = { dashboard, suggestions, applied, metrics, health };
       this.updateHealthIndicator();
       this.updateBadges();
       this.renderCurrentView();
-
     } catch (error) {
-      console.error('Failed to load panel data:', error);
-      this.showError('Failed to load data', error.message);
+      console.error("Failed to load panel data:", error);
+      this.showError("Failed to load data", error.message);
     }
   }
 
@@ -542,7 +544,7 @@ export class DatabaseOptimizationControlPanel {
     try {
       return await this.optimizer.getPerformanceMetrics();
     } catch (error) {
-      console.error('Failed to load dashboard data:', error);
+      console.error("Failed to load dashboard data:", error);
       return null;
     }
   }
@@ -552,8 +554,8 @@ export class DatabaseOptimizationControlPanel {
    */
   switchView(view) {
     // Update navigation
-    this.container.querySelectorAll('.nav-tab').forEach(tab => {
-      tab.classList.toggle('active', tab.dataset.view === view);
+    this.container.querySelectorAll(".nav-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.view === view);
     });
 
     this.currentView = view;
@@ -564,28 +566,31 @@ export class DatabaseOptimizationControlPanel {
    * Render the current view content
    */
   renderCurrentView() {
-    const content = this.container.querySelector('#panel-content');
-    
+    const content = this.container.querySelector("#panel-content");
+
     switch (this.currentView) {
-      case 'dashboard':
+      case "dashboard":
         content.innerHTML = this.renderDashboardView();
         this.initializeDashboardCharts();
         break;
-      case 'suggestions':
+      case "suggestions":
         content.innerHTML = this.renderSuggestionsView();
         break;
-      case 'applied':
+      case "applied":
         content.innerHTML = this.renderAppliedView();
         break;
-      case 'performance':
+      case "performance":
         content.innerHTML = this.renderPerformanceView();
         this.initializePerformanceCharts();
         break;
-      case 'maintenance':
+      case "maintenance":
         content.innerHTML = this.renderMaintenanceView();
         break;
       default:
-        content.innerHTML = '<div class="alert alert-error">Unknown view: ' + this.currentView + '</div>';
+        content.innerHTML =
+          '<div class="alert alert-error">Unknown view: ' +
+          this.currentView +
+          "</div>";
     }
   }
 
@@ -602,7 +607,7 @@ export class DatabaseOptimizationControlPanel {
       <div class="dashboard-grid">
         <div class="metric-card">
           <h3>🚀 Query Performance</h3>
-          <div class="metric-value">${metrics.current?.averageLatency?.toFixed(1) || '0'}ms</div>
+          <div class="metric-value">${metrics.current?.averageLatency?.toFixed(1) || "0"}ms</div>
           <div class="metric-subtitle">Average query latency</div>
           <div class="metric-trend trend-neutral">
             📊 ${metrics.current?.queriesLogged || 0} queries logged
@@ -623,18 +628,18 @@ export class DatabaseOptimizationControlPanel {
           <div class="metric-value">${this.data.applied?.length || 0}</div>
           <div class="metric-subtitle">Successfully applied</div>
           <div class="metric-trend trend-up">
-            📈 ${this.data.applied?.filter(opt => opt.performance_gain > 0).length || 0} with gains
+            📈 ${this.data.applied?.filter((opt) => opt.performance_gain > 0).length || 0} with gains
           </div>
         </div>
 
         <div class="metric-card">
           <h3>🎯 System Health</h3>
           <div class="metric-value" style="font-size: 24px; color: ${this.getHealthColor()}">
-            ${this.getHealthIcon()} ${this.data.health || 'Unknown'}
+            ${this.getHealthIcon()} ${this.data.health || "Unknown"}
           </div>
           <div class="metric-subtitle">Database optimizer status</div>
           <div class="metric-trend trend-neutral">
-            🔄 Auto-monitoring ${metrics.config?.monitoring ? 'enabled' : 'disabled'}
+            🔄 Auto-monitoring ${metrics.config?.monitoring ? "enabled" : "disabled"}
           </div>
         </div>
       </div>
@@ -673,11 +678,13 @@ export class DatabaseOptimizationControlPanel {
       `;
     }
 
-    const suggestionsTable = this.data.suggestions.map(suggestion => `
+    const suggestionsTable = this.data.suggestions
+      .map(
+        (suggestion) => `
       <tr>
         <td>${suggestion.table_name}</td>
         <td><code>${suggestion.jsonb_path}</code></td>
-        <td><span class="status-badge status-${suggestion.suggestion_type.replace('_', '-')}">${suggestion.suggestion_type}</span></td>
+        <td><span class="status-badge status-${suggestion.suggestion_type.replace("_", "-")}">${suggestion.suggestion_type}</span></td>
         <td class="text-right">${suggestion.query_frequency || 0}</td>
         <td class="text-right">${(suggestion.avg_query_time || 0).toFixed(1)}ms</td>
         <td class="text-right">${(suggestion.estimated_benefit || 0).toFixed(1)}ms</td>
@@ -695,7 +702,9 @@ export class DatabaseOptimizationControlPanel {
           </div>
         </td>
       </tr>
-    `).join('');
+    `,
+      )
+      .join("");
 
     return `
       <div class="alert alert-info">
@@ -735,15 +744,17 @@ export class DatabaseOptimizationControlPanel {
       `;
     }
 
-    const appliedTable = this.data.applied.map(opt => `
+    const appliedTable = this.data.applied
+      .map(
+        (opt) => `
       <tr>
         <td>${opt.table_name}</td>
         <td><code>${opt.target_field}</code></td>
-        <td><span class="status-badge status-${opt.optimization_type.replace('_', '-')}">${opt.optimization_type}</span></td>
+        <td><span class="status-badge status-${opt.optimization_type.replace("_", "-")}">${opt.optimization_type}</span></td>
         <td class="text-right">${(opt.avg_latency_before || 0).toFixed(1)}ms</td>
         <td class="text-right">${(opt.avg_latency_after || 0).toFixed(1)}ms</td>
-        <td class="text-right ${opt.performance_gain > 0 ? 'trend-up' : 'trend-neutral'}">
-          ${opt.performance_gain ? `${opt.performance_gain.toFixed(1)}%` : 'N/A'}
+        <td class="text-right ${opt.performance_gain > 0 ? "trend-up" : "trend-neutral"}">
+          ${opt.performance_gain ? `${opt.performance_gain.toFixed(1)}%` : "N/A"}
         </td>
         <td>${new Date(opt.applied_at).toLocaleDateString()}</td>
         <td>
@@ -757,10 +768,12 @@ export class DatabaseOptimizationControlPanel {
           </div>
         </td>
       </tr>
-    `).join('');
+    `,
+      )
+      .join("");
 
     const totalGain = this.data.applied
-      .filter(opt => opt.performance_gain > 0)
+      .filter((opt) => opt.performance_gain > 0)
       .reduce((sum, opt) => sum + opt.performance_gain, 0);
 
     return `
@@ -794,40 +807,48 @@ export class DatabaseOptimizationControlPanel {
    */
   getHealthColor() {
     switch (this.data.health) {
-      case 'healthy': return '#10b981';
-      case 'idle': return '#6b7280';
-      case 'unhealthy': return '#ef4444';
-      default: return '#f59e0b';
+      case "healthy":
+        return "#10b981";
+      case "idle":
+        return "#6b7280";
+      case "unhealthy":
+        return "#ef4444";
+      default:
+        return "#f59e0b";
     }
   }
 
   getHealthIcon() {
     switch (this.data.health) {
-      case 'healthy': return '🟢';
-      case 'idle': return '🟡';
-      case 'unhealthy': return '🔴';
-      default: return '🟠';
+      case "healthy":
+        return "🟢";
+      case "idle":
+        return "🟡";
+      case "unhealthy":
+        return "🔴";
+      default:
+        return "🟠";
     }
   }
 
   updateHealthIndicator() {
-    const dot = this.container.querySelector('#status-dot');
-    const text = this.container.querySelector('#status-text');
-    
+    const dot = this.container.querySelector("#status-dot");
+    const text = this.container.querySelector("#status-text");
+
     if (dot && text) {
-      dot.className = `status-dot ${this.data.health || 'warning'}`;
-      text.textContent = `System ${this.data.health || 'Unknown'}`;
+      dot.className = `status-dot ${this.data.health || "warning"}`;
+      text.textContent = `System ${this.data.health || "Unknown"}`;
     }
   }
 
   updateBadges() {
-    const suggestionsBadge = this.container.querySelector('#suggestions-badge');
-    const appliedBadge = this.container.querySelector('#applied-badge');
-    
+    const suggestionsBadge = this.container.querySelector("#suggestions-badge");
+    const appliedBadge = this.container.querySelector("#applied-badge");
+
     if (suggestionsBadge) {
       suggestionsBadge.textContent = this.data.suggestions?.length || 0;
     }
-    
+
     if (appliedBadge) {
       appliedBadge.textContent = this.data.applied?.length || 0;
     }
@@ -837,32 +858,33 @@ export class DatabaseOptimizationControlPanel {
    * Action handlers
    */
   async applySuggestion(suggestionId) {
-    if (!confirm('Are you sure you want to apply this optimization?')) return;
+    if (!confirm("Are you sure you want to apply this optimization?")) return;
 
     try {
-      await this.optimizer.applyOptimization(suggestionId, 'admin_panel');
-      this.showSuccess('Optimization applied successfully');
+      await this.optimizer.applyOptimization(suggestionId, "admin_panel");
+      this.showSuccess("Optimization applied successfully");
       await this.refreshAllData();
     } catch (error) {
-      this.showError('Failed to apply optimization', error.message);
+      this.showError("Failed to apply optimization", error.message);
     }
   }
 
   async rollbackOptimization(optimizationId) {
-    if (!confirm('Are you sure you want to rollback this optimization?')) return;
+    if (!confirm("Are you sure you want to rollback this optimization?"))
+      return;
 
     try {
       await this.optimizer.rollbackOptimization(optimizationId);
-      this.showSuccess('Optimization rolled back successfully');
+      this.showSuccess("Optimization rolled back successfully");
       await this.refreshAllData();
     } catch (error) {
-      this.showError('Failed to rollback optimization', error.message);
+      this.showError("Failed to rollback optimization", error.message);
     }
   }
 
   async refreshAllData() {
     await this.loadAllData();
-    this.showSuccess('Data refreshed successfully');
+    this.showSuccess("Data refreshed successfully");
   }
 
   /**
@@ -870,8 +892,8 @@ export class DatabaseOptimizationControlPanel {
    */
   startRealTimeUpdates() {
     this.refreshInterval = setInterval(() => {
-      this.loadAllData().catch(err => 
-        console.error('Auto-refresh failed:', err)
+      this.loadAllData().catch((err) =>
+        console.error("Auto-refresh failed:", err),
       );
     }, this.updateInterval);
   }
@@ -880,22 +902,23 @@ export class DatabaseOptimizationControlPanel {
    * Utility methods
    */
   showSuccess(message) {
-    this.showNotification(message, 'success');
+    this.showNotification(message, "success");
   }
 
   showError(title, message) {
-    this.showNotification(`${title}: ${message}`, 'error');
+    this.showNotification(`${title}: ${message}`, "error");
   }
 
   showNotification(message, type) {
     // Simple notification system
-    const notification = document.createElement('div');
+    const notification = document.createElement("div");
     notification.className = `alert alert-${type}`;
-    notification.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 10000; min-width: 300px;';
+    notification.style.cssText =
+      "position: fixed; top: 20px; right: 20px; z-index: 10000; min-width: 300px;";
     notification.textContent = message;
-    
+
     document.body.appendChild(notification);
-    
+
     setTimeout(() => {
       notification.remove();
     }, 5000);
@@ -911,15 +934,33 @@ export class DatabaseOptimizationControlPanel {
   }
 
   // Placeholder methods for additional functionality
-  renderPerformanceView() { return '<div class="alert alert-info">Performance charts coming soon!</div>'; }
-  renderMaintenanceView() { return '<div class="alert alert-info">Maintenance tools coming soon!</div>'; }
-  initializeDashboardCharts() { /* Chart initialization */ }
-  initializePerformanceCharts() { /* Performance charts */ }
-  updateChart() { /* Chart updates */ }
-  viewSuggestion() { /* View SQL modal */ }
-  rejectSuggestion() { /* Reject suggestion */ }
-  viewOptimizationDetails() { /* View details modal */ }
-  exportReport() { /* Export functionality */ }
+  renderPerformanceView() {
+    return '<div class="alert alert-info">Performance charts coming soon!</div>';
+  }
+  renderMaintenanceView() {
+    return '<div class="alert alert-info">Maintenance tools coming soon!</div>';
+  }
+  initializeDashboardCharts() {
+    /* Chart initialization */
+  }
+  initializePerformanceCharts() {
+    /* Performance charts */
+  }
+  updateChart() {
+    /* Chart updates */
+  }
+  viewSuggestion() {
+    /* View SQL modal */
+  }
+  rejectSuggestion() {
+    /* Reject suggestion */
+  }
+  viewOptimizationDetails() {
+    /* View details modal */
+  }
+  exportReport() {
+    /* Export functionality */
+  }
 }
 
 export default DatabaseOptimizationControlPanel;

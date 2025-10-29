@@ -8,30 +8,30 @@
 export function PerformanceOverlayBlock({ context, config = {} }) {
   const container = document.createElement("div");
   container.className = "performance-overlay-block";
-  
+
   // Apply theme-aware styling
   const theme = context.getThemeVariables();
   container.style.cssText = `
-    padding: ${config.padding || '1rem'};
-    border-radius: ${config.borderRadius || '8px'};
-    background: ${config.background || theme['--surface-elevated']};
-    color: ${config.color || theme['--text']};
+    padding: ${config.padding || "1rem"};
+    border-radius: ${config.borderRadius || "8px"};
+    background: ${config.background || theme["--surface-elevated"]};
+    color: ${config.color || theme["--text"]};
     font-family: 'Courier New', monospace;
-    font-size: ${config.fontSize || '12px'};
-    border: 1px solid ${theme['--border']};
-    min-width: ${config.minWidth || '250px'};
-    max-height: ${config.maxHeight || '400px'};
+    font-size: ${config.fontSize || "12px"};
+    border: 1px solid ${theme["--border"]};
+    min-width: ${config.minWidth || "250px"};
+    max-height: ${config.maxHeight || "400px"};
     overflow-y: auto;
-    position: ${config.position || 'relative'};
+    position: ${config.position || "relative"};
   `;
 
   // Fixed positioning for overlay mode
   if (config.overlay) {
-    container.style.position = 'fixed';
-    container.style.bottom = config.bottom || '10px';
-    container.style.right = config.right || '10px';
-    container.style.zIndex = config.zIndex || '9999';
-    container.style.background = config.overlayBackground || 'rgba(0,0,0,0.85)';
+    container.style.position = "fixed";
+    container.style.bottom = config.bottom || "10px";
+    container.style.right = config.right || "10px";
+    container.style.zIndex = config.zIndex || "9999";
+    container.style.background = config.overlayBackground || "rgba(0,0,0,0.85)";
   }
 
   // Create title
@@ -39,7 +39,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
   title.textContent = config.title || "System Performance";
   title.style.cssText = `
     margin: 0 0 0.75rem 0;
-    color: ${theme['--primary']};
+    color: ${theme["--primary"]};
     font-size: 14px;
     font-weight: bold;
   `;
@@ -65,10 +65,22 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
       sections.push({
         title: "System Load",
         items: [
-          { label: "Entities", value: metrics.system.entityCount || 0, unit: "" },
-          { label: "Memory", value: formatBytes(metrics.system.memoryUsage || 0), unit: "" },
-          { label: "Cache Hit Rate", value: (metrics.system.cacheHitRate || 0).toFixed(1), unit: "%" }
-        ]
+          {
+            label: "Entities",
+            value: metrics.system.entityCount || 0,
+            unit: "",
+          },
+          {
+            label: "Memory",
+            value: formatBytes(metrics.system.memoryUsage || 0),
+            unit: "",
+          },
+          {
+            label: "Cache Hit Rate",
+            value: (metrics.system.cacheHitRate || 0).toFixed(1),
+            unit: "%",
+          },
+        ],
       });
     }
 
@@ -77,10 +89,22 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
       sections.push({
         title: "Database",
         items: [
-          { label: "Avg Query Time", value: (metrics.database.avgQueryTime || 0).toFixed(2), unit: "ms" },
-          { label: "Active Queries", value: metrics.database.activeQueries || 0, unit: "" },
-          { label: "Optimization Score", value: (metrics.database.optimizationScore || 0).toFixed(1), unit: "/10" }
-        ]
+          {
+            label: "Avg Query Time",
+            value: (metrics.database.avgQueryTime || 0).toFixed(2),
+            unit: "ms",
+          },
+          {
+            label: "Active Queries",
+            value: metrics.database.activeQueries || 0,
+            unit: "",
+          },
+          {
+            label: "Optimization Score",
+            value: (metrics.database.optimizationScore || 0).toFixed(1),
+            unit: "/10",
+          },
+        ],
       });
     }
 
@@ -89,10 +113,22 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
       sections.push({
         title: "Rendering",
         items: [
-          { label: "Avg Render Time", value: (metrics.rendering.averageRenderTime || 0).toFixed(2), unit: "ms" },
-          { label: "Components", value: metrics.rendering.activeComponents || 0, unit: "" },
-          { label: "Cache Hits", value: metrics.rendering.cacheHits || 0, unit: "" }
-        ]
+          {
+            label: "Avg Render Time",
+            value: (metrics.rendering.averageRenderTime || 0).toFixed(2),
+            unit: "ms",
+          },
+          {
+            label: "Components",
+            value: metrics.rendering.activeComponents || 0,
+            unit: "",
+          },
+          {
+            label: "Cache Hits",
+            value: metrics.rendering.cacheHits || 0,
+            unit: "",
+          },
+        ],
       });
     }
 
@@ -101,10 +137,22 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
       sections.push({
         title: "State Manager",
         items: [
-          { label: "Undo Stack", value: metrics.state.undoStackSize || 0, unit: "" },
-          { label: "Pending Ops", value: metrics.state.pendingOperations || 0, unit: "" },
-          { label: "Offline Ops", value: metrics.state.offlineOperations || 0, unit: "" }
-        ]
+          {
+            label: "Undo Stack",
+            value: metrics.state.undoStackSize || 0,
+            unit: "",
+          },
+          {
+            label: "Pending Ops",
+            value: metrics.state.pendingOperations || 0,
+            unit: "",
+          },
+          {
+            label: "Offline Ops",
+            value: metrics.state.offlineOperations || 0,
+            unit: "",
+          },
+        ],
       });
     }
 
@@ -113,10 +161,22 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
       sections.push({
         title: "Network",
         items: [
-          { label: "Latency", value: (metrics.network.latency || 0).toFixed(0), unit: "ms" },
-          { label: "Connection", value: metrics.network.type || "unknown", unit: "" },
-          { label: "Online", value: metrics.network.online ? "Yes" : "No", unit: "" }
-        ]
+          {
+            label: "Latency",
+            value: (metrics.network.latency || 0).toFixed(0),
+            unit: "ms",
+          },
+          {
+            label: "Connection",
+            value: metrics.network.type || "unknown",
+            unit: "",
+          },
+          {
+            label: "Online",
+            value: metrics.network.online ? "Yes" : "No",
+            unit: "",
+          },
+        ],
       });
     }
 
@@ -127,11 +187,11 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
    * Format bytes to human readable
    */
   function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
+    if (bytes === 0) return "0 B";
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const sizes = ["B", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
   }
 
   /**
@@ -143,7 +203,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
     sectionDiv.style.cssText = `
       margin-bottom: 1rem;
       padding-bottom: 0.5rem;
-      border-bottom: 1px solid ${theme['--border']};
+      border-bottom: 1px solid ${theme["--border"]};
     `;
 
     // Section title
@@ -151,7 +211,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
     sectionTitle.textContent = section.title;
     sectionTitle.style.cssText = `
       font-weight: bold;
-      color: ${theme['--text']};
+      color: ${theme["--text"]};
       margin-bottom: 0.25rem;
       font-size: 11px;
       text-transform: uppercase;
@@ -160,7 +220,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
     sectionDiv.appendChild(sectionTitle);
 
     // Section items
-    section.items.forEach(item => {
+    section.items.forEach((item) => {
       const itemDiv = document.createElement("div");
       itemDiv.style.cssText = `
         display: flex;
@@ -171,7 +231,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 
       const label = document.createElement("span");
       label.textContent = item.label + ":";
-      label.style.color = theme['--text-muted'];
+      label.style.color = theme["--text-muted"];
 
       const value = document.createElement("span");
       value.textContent = item.value + (item.unit || "");
@@ -193,24 +253,24 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
    */
   function getValueColor(label, value) {
     const numValue = parseFloat(value);
-    
+
     if (label.includes("Error") || label.includes("Failed")) {
-      return numValue > 0 ? theme['--error'] : theme['--success'];
+      return numValue > 0 ? theme["--error"] : theme["--success"];
     }
-    
+
     if (label.includes("Time") || label.includes("Latency")) {
-      if (numValue > 100) return theme['--error'];
-      if (numValue > 50) return theme['--warning'];
-      return theme['--success'];
+      if (numValue > 100) return theme["--error"];
+      if (numValue > 50) return theme["--warning"];
+      return theme["--success"];
     }
-    
+
     if (label.includes("Hit Rate") || label.includes("Score")) {
-      if (numValue > 80) return theme['--success'];
-      if (numValue > 60) return theme['--warning'];
-      return theme['--error'];
+      if (numValue > 80) return theme["--success"];
+      if (numValue > 60) return theme["--warning"];
+      return theme["--error"];
     }
-    
-    return theme['--text'];
+
+    return theme["--text"];
   }
 
   /**
@@ -222,13 +282,13 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
     try {
       // Get metrics from various sources
       const metrics = gatherMetrics();
-      
+
       // Clear previous content
-      metricsContainer.innerHTML = '';
-      
+      metricsContainer.innerHTML = "";
+
       // Format and display metrics
       const sections = formatMetrics(metrics);
-      sections.forEach(section => {
+      sections.forEach((section) => {
         metricsContainer.appendChild(createMetricSection(section));
       });
 
@@ -237,19 +297,18 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
       timestamp.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
       timestamp.style.cssText = `
         font-size: 10px;
-        color: ${theme['--text-muted']};
+        color: ${theme["--text-muted"]};
         text-align: right;
         margin-top: 0.5rem;
         opacity: 0.7;
       `;
       metricsContainer.appendChild(timestamp);
-
     } catch (error) {
-      console.error('PerformanceOverlayBlock: Update error:', error);
-      
+      console.error("PerformanceOverlayBlock: Update error:", error);
+
       // Show error state
       metricsContainer.innerHTML = `
-        <div style="color: ${theme['--error']}; font-size: 11px;">
+        <div style="color: ${theme["--error"]}; font-size: 11px;">
           ⚠️ Error loading metrics: ${error.message}
         </div>
       `;
@@ -263,31 +322,37 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
     const metrics = {};
 
     // State Manager metrics
-    if (context.stateManager && typeof context.stateManager.getPerformanceMetrics === 'function') {
+    if (
+      context.stateManager &&
+      typeof context.stateManager.getPerformanceMetrics === "function"
+    ) {
       const stateMetrics = context.stateManager.getPerformanceMetrics();
       metrics.system = {
         entityCount: stateMetrics.entityCount || 0,
         memoryUsage: stateMetrics.memoryUsage || 0,
-        cacheHitRate: stateMetrics.cacheHitRate || 0
+        cacheHitRate: stateMetrics.cacheHitRate || 0,
       };
       metrics.state = {
         undoStackSize: stateMetrics.undoStackSize || 0,
         pendingOperations: stateMetrics.pendingOperations || 0,
-        offlineOperations: stateMetrics.offlineOperations || 0
+        offlineOperations: stateMetrics.offlineOperations || 0,
       };
       metrics.rendering = stateMetrics.rendering || {};
     }
 
     // Database metrics (if available)
-    if (context.databaseOptimizer && typeof context.databaseOptimizer.getPerformanceMetrics === 'function') {
+    if (
+      context.databaseOptimizer &&
+      typeof context.databaseOptimizer.getPerformanceMetrics === "function"
+    ) {
       metrics.database = context.databaseOptimizer.getPerformanceMetrics();
     }
 
     // Network metrics
     metrics.network = {
       online: navigator.onLine,
-      type: navigator.connection?.effectiveType || 'unknown',
-      latency: context.networkLatency || 0
+      type: navigator.connection?.effectiveType || "unknown",
+      latency: context.networkLatency || 0,
     };
 
     // Browser performance metrics
@@ -295,7 +360,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
       metrics.browser = {
         heapUsed: performance.memory.usedJSHeapSize,
         heapTotal: performance.memory.totalJSHeapSize,
-        heapLimit: performance.memory.jsHeapSizeLimit
+        heapLimit: performance.memory.jsHeapSizeLimit,
       };
     }
 
@@ -310,7 +375,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 
     const refreshRate = config.refreshRate || 2000; // Default 2 seconds
     updateInterval = setInterval(updateMetrics, refreshRate);
-    
+
     // Initial update
     updateMetrics();
   }
@@ -330,13 +395,13 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
    */
   function toggleMonitoring() {
     isActive = !isActive;
-    
+
     if (isActive) {
       startMonitoring();
-      container.style.opacity = '1';
+      container.style.opacity = "1";
     } else {
       stopMonitoring();
-      container.style.opacity = '0.5';
+      container.style.opacity = "0.5";
     }
 
     // Update title to show state
@@ -345,9 +410,9 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 
   // Add click to toggle (if enabled)
   if (config.clickToToggle !== false) {
-    title.style.cursor = 'pointer';
-    title.addEventListener('click', toggleMonitoring);
-    title.title = 'Click to pause/resume monitoring';
+    title.style.cursor = "pointer";
+    title.addEventListener("click", toggleMonitoring);
+    title.title = "Click to pause/resume monitoring";
   }
 
   // Cleanup on removal
@@ -378,7 +443,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
     stop: stopMonitoring,
     toggle: toggleMonitoring,
     update: updateMetrics,
-    isActive: () => isActive
+    isActive: () => isActive,
   };
 
   return container;
@@ -397,9 +462,9 @@ export function registerPerformanceOverlayBlock(renderer) {
       clickToToggle: true,
       overlay: false,
       fontSize: "12px",
-      padding: "1rem"
+      padding: "1rem",
     },
-    dependencies: ["stateManager"]
+    dependencies: ["stateManager"],
   });
 }
 
@@ -413,8 +478,8 @@ export function createPerformanceOverlay(config = {}) {
       title: "Performance Monitor",
       overlay: true,
       refreshRate: 1000,
-      ...config
-    }
+      ...config,
+    },
   };
 }
 

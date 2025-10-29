@@ -6,41 +6,41 @@ export class RenderContext {
   constructor(options = {}) {
     // Environment context
     this.viewport = options.viewport || this.getViewportInfo();
-    this.theme = options.theme || 'dark';
-    this.locale = options.locale || 'en';
+    this.theme = options.theme || "dark";
+    this.locale = options.locale || "en";
     this.inputMethod = options.inputMethod || this.detectInputMethod();
-    
+
     // Runtime dependencies
     this.stateManager = options.stateManager || null;
     this.eventFlow = options.eventFlow || null;
     this.policies = options.policies || {};
-    
+
     // User context
     this.userId = options.userId || null;
-    this.userRole = options.userRole || 'guest';
+    this.userRole = options.userRole || "guest";
     this.userPermissions = options.userPermissions || [];
-    
+
     // Device capabilities
     this.device = this.getDeviceCapabilities();
     this.networkLatency = options.networkLatency || null;
-    
+
     // Component context (for current render)
     this.componentId = options.componentId || null;
     this.data = options.data || {};
     this.config = options.config || {};
-    
+
     // Container context
     this.containerWidth = options.containerWidth || window.innerWidth;
     this.containerHeight = options.containerHeight || window.innerHeight;
     this.containerArea = this.containerWidth * this.containerHeight;
-    
+
     // Adaptive context
     this.intent = options.intent || null;
     this.purpose = options.purpose || null;
     this.entityType = options.entityType || null;
     this.entityId = options.entityId || null;
     this.entity = options.entity || null;
-    
+
     // Render metadata
     this.adaptationName = options.adaptationName || null;
     this.timestamp = Date.now();
@@ -53,7 +53,7 @@ export class RenderContext {
   extend(additionalContext = {}) {
     return new RenderContext({
       ...this.toObject(),
-      ...additionalContext
+      ...additionalContext,
     });
   }
 
@@ -87,7 +87,7 @@ export class RenderContext {
       entity: this.entity,
       adaptationName: this.adaptationName,
       timestamp: this.timestamp,
-      priority: this.priority
+      priority: this.priority,
     };
   }
 
@@ -99,7 +99,7 @@ export class RenderContext {
       width: window.innerWidth,
       height: window.innerHeight,
       pixelRatio: window.devicePixelRatio || 1,
-      orientation: window.screen?.orientation?.type || 'unknown'
+      orientation: window.screen?.orientation?.type || "unknown",
     };
   }
 
@@ -108,9 +108,9 @@ export class RenderContext {
    */
   detectInputMethod() {
     // Simple detection - can be enhanced
-    if ('ontouchstart' in window) return 'touch';
-    if (navigator.maxTouchPoints > 0) return 'touch';
-    return 'mouse';
+    if ("ontouchstart" in window) return "touch";
+    if (navigator.maxTouchPoints > 0) return "touch";
+    return "mouse";
   }
 
   /**
@@ -118,14 +118,15 @@ export class RenderContext {
    */
   getDeviceCapabilities() {
     return {
-      hasTouch: 'ontouchstart' in window,
-      hasHover: window.matchMedia('(hover: hover)').matches,
-      reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-      highContrast: window.matchMedia('(prefers-contrast: high)').matches,
-      darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches,
-      connectionType: navigator.connection?.effectiveType || 'unknown',
+      hasTouch: "ontouchstart" in window,
+      hasHover: window.matchMedia("(hover: hover)").matches,
+      reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)")
+        .matches,
+      highContrast: window.matchMedia("(prefers-contrast: high)").matches,
+      darkMode: window.matchMedia("(prefers-color-scheme: dark)").matches,
+      connectionType: navigator.connection?.effectiveType || "unknown",
       memoryLimit: navigator.deviceMemory || null,
-      concurrency: navigator.hardwareConcurrency || 1
+      concurrency: navigator.hardwareConcurrency || 1,
     };
   }
 
@@ -134,16 +135,16 @@ export class RenderContext {
    */
   validate(requiredProperties = []) {
     const missing = [];
-    
+
     for (const prop of requiredProperties) {
       if (this[prop] === undefined || this[prop] === null) {
         missing.push(prop);
       }
     }
-    
+
     return {
       valid: missing.length === 0,
-      missing
+      missing,
     };
   }
 
@@ -151,8 +152,10 @@ export class RenderContext {
    * Check if user has specific permission
    */
   hasPermission(permission) {
-    return this.userPermissions.includes(permission) || 
-           this.userRole === 'super_admin';
+    return (
+      this.userPermissions.includes(permission) ||
+      this.userRole === "super_admin"
+    );
   }
 
   /**
@@ -160,13 +163,13 @@ export class RenderContext {
    */
   canAccessDomain(domain) {
     // This will integrate with OptimizationAccessControl
-    if (this.userRole === 'super_admin') return true;
-    
+    if (this.userRole === "super_admin") return true;
+
     const rolePermissions = {
-      db_admin: ['system', 'ui', 'events'],
-      developer: ['ui', 'events'],
-      analyst: ['user', 'meta'],
-      monitor: ['meta']
+      db_admin: ["system", "ui", "events"],
+      developer: ["ui", "events"],
+      analyst: ["user", "meta"],
+      monitor: ["meta"],
     };
 
     return rolePermissions[this.userRole]?.includes(domain) || false;
@@ -178,29 +181,29 @@ export class RenderContext {
   getThemeVariables() {
     const themes = {
       dark: {
-        '--surface': '#1e1e1e',
-        '--surface-elevated': '#2d2d2d',
-        '--text': '#f5f5f5',
-        '--text-muted': '#b0b0b0',
-        '--primary': '#007acc',
-        '--secondary': '#6c757d',
-        '--success': '#28a745',
-        '--warning': '#ffc107',
-        '--error': '#dc3545',
-        '--border': '#404040'
+        "--surface": "#1e1e1e",
+        "--surface-elevated": "#2d2d2d",
+        "--text": "#f5f5f5",
+        "--text-muted": "#b0b0b0",
+        "--primary": "#007acc",
+        "--secondary": "#6c757d",
+        "--success": "#28a745",
+        "--warning": "#ffc107",
+        "--error": "#dc3545",
+        "--border": "#404040",
       },
       light: {
-        '--surface': '#ffffff',
-        '--surface-elevated': '#f8f9fa',
-        '--text': '#212529',
-        '--text-muted': '#6c757d',
-        '--primary': '#007acc',
-        '--secondary': '#6c757d',
-        '--success': '#28a745',
-        '--warning': '#ffc107',
-        '--error': '#dc3545',
-        '--border': '#dee2e6'
-      }
+        "--surface": "#ffffff",
+        "--surface-elevated": "#f8f9fa",
+        "--text": "#212529",
+        "--text-muted": "#6c757d",
+        "--primary": "#007acc",
+        "--secondary": "#6c757d",
+        "--success": "#28a745",
+        "--warning": "#ffc107",
+        "--error": "#dc3545",
+        "--border": "#dee2e6",
+      },
     };
 
     return themes[this.theme] || themes.dark;
@@ -212,7 +215,7 @@ export class RenderContext {
   applyTheme() {
     const variables = this.getThemeVariables();
     const root = document.documentElement;
-    
+
     Object.entries(variables).forEach(([property, value]) => {
       root.style.setProperty(property, value);
     });
@@ -228,7 +231,7 @@ export class RenderContext {
       md: 768,
       lg: 992,
       xl: 1200,
-      xxl: 1400
+      xxl: 1400,
     };
   }
 
@@ -238,13 +241,13 @@ export class RenderContext {
   getCurrentBreakpoint() {
     const breakpoints = this.getBreakpoints();
     const width = this.containerWidth;
-    
-    if (width >= breakpoints.xxl) return 'xxl';
-    if (width >= breakpoints.xl) return 'xl';
-    if (width >= breakpoints.lg) return 'lg';
-    if (width >= breakpoints.md) return 'md';
-    if (width >= breakpoints.sm) return 'sm';
-    return 'xs';
+
+    if (width >= breakpoints.xxl) return "xxl";
+    if (width >= breakpoints.xl) return "xl";
+    if (width >= breakpoints.lg) return "lg";
+    if (width >= breakpoints.md) return "md";
+    if (width >= breakpoints.sm) return "sm";
+    return "xs";
   }
 
   /**
@@ -266,23 +269,48 @@ export class ContextMatcher {
     if (!trigger) return true;
 
     // Ensure context is a RenderContext instance
-    const ctx = context instanceof RenderContext ? context : new RenderContext(context);
+    const ctx =
+      context instanceof RenderContext ? context : new RenderContext(context);
 
     // Container size matching
     if (trigger.containerWidth) {
-      if (trigger.containerWidth.min && ctx.containerWidth < trigger.containerWidth.min) return false;
-      if (trigger.containerWidth.max && ctx.containerWidth > trigger.containerWidth.max) return false;
+      if (
+        trigger.containerWidth.min &&
+        ctx.containerWidth < trigger.containerWidth.min
+      )
+        return false;
+      if (
+        trigger.containerWidth.max &&
+        ctx.containerWidth > trigger.containerWidth.max
+      )
+        return false;
     }
 
     if (trigger.containerHeight) {
-      if (trigger.containerHeight.min && ctx.containerHeight < trigger.containerHeight.min) return false;
-      if (trigger.containerHeight.max && ctx.containerHeight > trigger.containerHeight.max) return false;
+      if (
+        trigger.containerHeight.min &&
+        ctx.containerHeight < trigger.containerHeight.min
+      )
+        return false;
+      if (
+        trigger.containerHeight.max &&
+        ctx.containerHeight > trigger.containerHeight.max
+      )
+        return false;
     }
 
     // Container area matching
     if (trigger.containerArea) {
-      if (trigger.containerArea.min && ctx.containerArea < trigger.containerArea.min) return false;
-      if (trigger.containerArea.max && ctx.containerArea > trigger.containerArea.max) return false;
+      if (
+        trigger.containerArea.min &&
+        ctx.containerArea < trigger.containerArea.min
+      )
+        return false;
+      if (
+        trigger.containerArea.max &&
+        ctx.containerArea > trigger.containerArea.max
+      )
+        return false;
     }
 
     // Purpose/intent matching
@@ -290,8 +318,16 @@ export class ContextMatcher {
     if (trigger.intent && ctx.intent !== trigger.intent) return false;
 
     // Device capability matching
-    if (trigger.hasTouch !== undefined && ctx.device.hasTouch !== trigger.hasTouch) return false;
-    if (trigger.hasHover !== undefined && ctx.device.hasHover !== trigger.hasHover) return false;
+    if (
+      trigger.hasTouch !== undefined &&
+      ctx.device.hasTouch !== trigger.hasTouch
+    )
+      return false;
+    if (
+      trigger.hasHover !== undefined &&
+      ctx.device.hasHover !== trigger.hasHover
+    )
+      return false;
 
     // Theme matching
     if (trigger.theme && ctx.theme !== trigger.theme) return false;
@@ -300,7 +336,8 @@ export class ContextMatcher {
     if (trigger.userRole && ctx.userRole !== trigger.userRole) return false;
 
     // Permission matching
-    if (trigger.permission && !ctx.hasPermission(trigger.permission)) return false;
+    if (trigger.permission && !ctx.hasPermission(trigger.permission))
+      return false;
 
     // Breakpoint matching
     if (trigger.breakpoint) {
@@ -313,10 +350,11 @@ export class ContextMatcher {
     }
 
     // Entity type matching
-    if (trigger.entityType && ctx.entityType !== trigger.entityType) return false;
+    if (trigger.entityType && ctx.entityType !== trigger.entityType)
+      return false;
 
     // Custom predicate matching
-    if (trigger.predicate && typeof trigger.predicate === 'function') {
+    if (trigger.predicate && typeof trigger.predicate === "function") {
       if (!trigger.predicate(ctx)) return false;
     }
 
@@ -327,7 +365,7 @@ export class ContextMatcher {
    * Find best matching adaptation from component adaptations
    */
   static findBestMatch(adaptations, context) {
-    if (!adaptations || typeof adaptations !== 'object') return null;
+    if (!adaptations || typeof adaptations !== "object") return null;
 
     let bestMatch = null;
     let bestScore = -1;

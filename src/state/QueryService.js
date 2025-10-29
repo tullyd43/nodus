@@ -24,17 +24,13 @@ export class QueryService {
    */
   async search(query, options = {}) {
     if (!query || typeof query !== "string") return [];
-    
+
     const cacheKey = `${query}:${JSON.stringify(options)}`;
     const cached = this.getFromCache(cacheKey);
     if (cached) return cached;
 
     const results = [];
-    const {
-      domains = [],
-      limit = 50,
-      includeAI = true
-    } = options;
+    const { domains = [], limit = 50, includeAI = true } = options;
 
     try {
       // 1️⃣ Local entities from HybridStateManager
@@ -53,14 +49,13 @@ export class QueryService {
 
       // Rank and limit results
       const rankedResults = this.rankResults(results).slice(0, limit);
-      
+
       // Cache the results
       this.setCache(cacheKey, rankedResults);
-      
-      return rankedResults;
 
+      return rankedResults;
     } catch (error) {
-      console.error('[QueryService] Search failed:', error);
+      console.error("[QueryService] Search failed:", error);
       return [];
     }
   }
@@ -75,17 +70,18 @@ export class QueryService {
 
     try {
       const results = await this.stateManager.queryLocalEntities(query);
-      
+
       // Filter by domains if specified
       if (domains.length > 0) {
-        return results.filter(result => 
-          domains.includes(result.domain) || domains.includes(result.type)
+        return results.filter(
+          (result) =>
+            domains.includes(result.domain) || domains.includes(result.type),
         );
       }
-      
+
       return results;
     } catch (error) {
-      console.warn('[QueryService] Local entity search failed:', error);
+      console.warn("[QueryService] Local entity search failed:", error);
       return [];
     }
   }
@@ -99,27 +95,30 @@ export class QueryService {
     }
 
     const results = [];
-    
+
     for (const plugin of this.pluginSystem.activePlugins) {
       if (typeof plugin.search === "function") {
         try {
           const pluginResults = await plugin.search(query, options);
-          
+
           // Add plugin metadata to results
-          const enrichedResults = pluginResults.map(result => ({
+          const enrichedResults = pluginResults.map((result) => ({
             ...result,
-            source: 'plugin',
+            source: "plugin",
             pluginId: plugin.id,
-            pluginName: plugin.name || plugin.id
+            pluginName: plugin.name || plugin.id,
           }));
-          
+
           results.push(...enrichedResults);
         } catch (err) {
-          console.warn(`[QueryService] Plugin search failed: ${plugin.id}`, err);
+          console.warn(
+            `[QueryService] Plugin search failed: ${plugin.id}`,
+            err,
+          );
         }
       }
     }
-    
+
     return results;
   }
 
@@ -134,17 +133,17 @@ export class QueryService {
     try {
       const aiResults = await this.embeddingManager.semanticSearch(query, {
         topK: options.limit || 10,
-        threshold: 0.7 // Minimum similarity threshold
+        threshold: 0.7, // Minimum similarity threshold
       });
-      
+
       // Add AI metadata to results
-      return aiResults.map(result => ({
+      return aiResults.map((result) => ({
         ...result,
-        source: 'ai',
-        searchType: 'semantic'
+        source: "ai",
+        searchType: "semantic",
       }));
     } catch (error) {
-      console.warn('[QueryService] AI search failed:', error);
+      console.warn("[QueryService] AI search failed:", error);
       return [];
     }
   }
@@ -157,24 +156,24 @@ export class QueryService {
       // Primary sort by relevance score
       const relevanceA = a.relevance || 0;
       const relevanceB = b.relevance || 0;
-      
+
       if (relevanceA !== relevanceB) {
         return relevanceB - relevanceA;
       }
-      
+
       // Secondary sort by source priority (local > plugin > ai)
       const sourcePriority = { local: 3, plugin: 2, ai: 1 };
       const priorityA = sourcePriority[a.source] || 0;
       const priorityB = sourcePriority[b.source] || 0;
-      
+
       if (priorityA !== priorityB) {
         return priorityB - priorityA;
       }
-      
+
       // Tertiary sort by recency
       const timeA = new Date(a.timestamp || a.created || 0).getTime();
       const timeB = new Date(b.timestamp || b.created || 0).getTime();
-      
+
       return timeB - timeA;
     });
   }
@@ -184,14 +183,14 @@ export class QueryService {
    */
   async getSuggestions(partialQuery, limit = 5) {
     if (!partialQuery || partialQuery.length < 2) return [];
-    
+
     try {
       const results = await this.search(partialQuery, { limit: limit * 2 });
-      
+
       // Extract unique suggestion terms
       const suggestions = new Set();
-      
-      results.forEach(result => {
+
+      results.forEach((result) => {
         if (result.title) {
           suggestions.add(result.title);
         }
@@ -199,18 +198,17 @@ export class QueryService {
           suggestions.add(result.name);
         }
         if (result.tags) {
-          result.tags.forEach(tag => suggestions.add(tag));
+          result.tags.forEach((tag) => suggestions.add(tag));
         }
       });
-      
+
       return Array.from(suggestions)
-        .filter(suggestion => 
-          suggestion.toLowerCase().includes(partialQuery.toLowerCase())
+        .filter((suggestion) =>
+          suggestion.toLowerCase().includes(partialQuery.toLowerCase()),
         )
         .slice(0, limit);
-        
     } catch (error) {
-      console.warn('[QueryService] Suggestions failed:', error);
+      console.warn("[QueryService] Suggestions failed:", error);
       return [];
     }
   }
@@ -230,9 +228,9 @@ export class QueryService {
   setCache(key, results) {
     this.cache.set(key, {
       results,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
-    
+
     // Cleanup old cache entries
     if (this.cache.size > 100) {
       const oldestKey = this.cache.keys().next().value;
@@ -256,7 +254,7 @@ export class QueryService {
       cacheTTL: this.cacheTTL,
       localSearchAvailable: !!this.stateManager?.queryLocalEntities,
       pluginSearchAvailable: !!this.pluginSystem?.activePlugins?.length,
-      aiSearchAvailable: !!this.embeddingManager?.semanticSearch
+      aiSearchAvailable: !!this.embeddingManager?.semanticSearch,
     };
   }
 }

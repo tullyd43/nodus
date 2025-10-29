@@ -5,67 +5,61 @@ export class OptimizationAccessControl {
   constructor() {
     this.roles = {
       // Super admin - full access
-      'super_admin': {
+      super_admin: {
         permissions: [
-          'optimization:view',
-          'optimization:apply',
-          'optimization:rollback',
-          'optimization:configure',
-          'system:view_sensitive',
-          'system:configure',
-          'audit:view',
-          'audit:export',
-          'metrics:view',
-          'metrics:export'
+          "optimization:view",
+          "optimization:apply",
+          "optimization:rollback",
+          "optimization:configure",
+          "system:view_sensitive",
+          "system:configure",
+          "audit:view",
+          "audit:export",
+          "metrics:view",
+          "metrics:export",
         ],
-        description: 'Full system access including sensitive operations'
+        description: "Full system access including sensitive operations",
       },
 
       // Database admin - optimization focused
-      'db_admin': {
+      db_admin: {
         permissions: [
-          'optimization:view',
-          'optimization:apply',
-          'optimization:rollback',
-          'metrics:view',
-          'audit:view'
+          "optimization:view",
+          "optimization:apply",
+          "optimization:rollback",
+          "metrics:view",
+          "audit:view",
         ],
-        description: 'Database optimization and monitoring access'
+        description: "Database optimization and monitoring access",
       },
 
       // Developer - read-only with limited actions
-      'developer': {
-        permissions: [
-          'optimization:view',
-          'metrics:view'
-        ],
-        description: 'Read-only access to optimization data'
+      developer: {
+        permissions: ["optimization:view", "metrics:view"],
+        description: "Read-only access to optimization data",
       },
 
       // Monitor - metrics and health only
-      'monitor': {
-        permissions: [
-          'metrics:view',
-          'health:view'
-        ],
-        description: 'System monitoring and metrics access'
+      monitor: {
+        permissions: ["metrics:view", "health:view"],
+        description: "System monitoring and metrics access",
       },
 
       // Analyst - export and reporting
-      'analyst': {
+      analyst: {
         permissions: [
-          'optimization:view',
-          'metrics:view',
-          'metrics:export',
-          'audit:view',
-          'audit:export'
+          "optimization:view",
+          "metrics:view",
+          "metrics:export",
+          "audit:view",
+          "audit:export",
         ],
-        description: 'Analytics and reporting access'
-      }
+        description: "Analytics and reporting access",
+      },
     };
 
     this.userRoles = new Map(); // userId -> Set of roles
-    this.sessions = new Map();  // sessionId -> { userId, permissions, expires }
+    this.sessions = new Map(); // sessionId -> { userId, permissions, expires }
   }
 
   /**
@@ -93,11 +87,11 @@ export class OptimizationAccessControl {
     if (!userRoles) return [];
 
     const permissions = new Set();
-    
+
     for (const roleName of userRoles) {
       const role = this.roles[roleName];
       if (role) {
-        role.permissions.forEach(perm => permissions.add(perm));
+        role.permissions.forEach((perm) => permissions.add(perm));
       }
     }
 
@@ -142,7 +136,7 @@ export class OptimizationAccessControl {
       roles: Array.from(this.userRoles.get(userId) || []),
       created: new Date(),
       expires: new Date(Date.now() + 8 * 60 * 60 * 1000), // 8 hours
-      lastActivity: new Date()
+      lastActivity: new Date(),
     };
 
     this.sessions.set(sessionId, session);
@@ -154,24 +148,24 @@ export class OptimizationAccessControl {
    */
   checkSessionPermission(sessionId, permission) {
     const session = this.sessions.get(sessionId);
-    
+
     if (!session) {
-      return { valid: false, reason: 'Session not found' };
+      return { valid: false, reason: "Session not found" };
     }
 
     if (session.expires < new Date()) {
       this.sessions.delete(sessionId);
-      return { valid: false, reason: 'Session expired' };
+      return { valid: false, reason: "Session expired" };
     }
 
     // Update last activity
     session.lastActivity = new Date();
 
     if (!session.permissions.includes(permission)) {
-      return { 
-        valid: false, 
+      return {
+        valid: false,
         reason: `Permission '${permission}' denied`,
-        requiredRoles: this.getRolesWithPermission(permission)
+        requiredRoles: this.getRolesWithPermission(permission),
       };
     }
 
@@ -183,7 +177,7 @@ export class OptimizationAccessControl {
    */
   getRolesWithPermission(permission) {
     const rolesWithPermission = [];
-    
+
     for (const [roleName, role] of Object.entries(this.roles)) {
       if (role.permissions.includes(permission)) {
         rolesWithPermission.push(roleName);
@@ -228,7 +222,7 @@ export class OptimizationAccessControl {
       created: session.created,
       expires: session.expires,
       lastActivity: session.lastActivity,
-      timeRemaining: Math.max(0, session.expires.getTime() - Date.now())
+      timeRemaining: Math.max(0, session.expires.getTime() - Date.now()),
     };
   }
 
@@ -267,7 +261,7 @@ export class OptimizationAccessControl {
           roles: session.roles,
           created: session.created,
           expires: session.expires,
-          lastActivity: session.lastActivity
+          lastActivity: session.lastActivity,
         });
       }
     }
@@ -288,12 +282,12 @@ export class OptimizationAccessControl {
       userRoles: Array.from(this.userRoles.get(userId) || []),
       metadata,
       ip: metadata.ip,
-      userAgent: metadata.userAgent
+      userAgent: metadata.userAgent,
     };
 
     // In production, store in audit table
-    console.log('📋 Audit log:', auditLog);
-    
+    console.log("📋 Audit log:", auditLog);
+
     return auditLog;
   }
 }
@@ -302,33 +296,34 @@ export class OptimizationAccessControl {
 export function createAccessControlMiddleware(accessControl) {
   return function accessControlMiddleware(req, res, next) {
     req.accessControl = accessControl;
-    
+
     // Extract session ID from auth header or cookie
     const authHeader = req.headers.authorization;
-    const sessionId = authHeader?.replace('Bearer ', '') || req.cookies?.sessionId;
-    
+    const sessionId =
+      authHeader?.replace("Bearer ", "") || req.cookies?.sessionId;
+
     req.sessionId = sessionId;
-    
+
     // Helper function to check permissions
-    req.checkPermission = function(permission) {
+    req.checkPermission = function (permission) {
       if (!sessionId) {
-        return { valid: false, reason: 'No session' };
+        return { valid: false, reason: "No session" };
       }
-      
+
       return accessControl.checkSessionPermission(sessionId, permission);
     };
 
     // Helper function to require permission
-    req.requirePermission = function(permission) {
+    req.requirePermission = function (permission) {
       const check = req.checkPermission(permission);
-      
+
       if (!check.valid) {
-        const error = new Error(check.reason || 'Access denied');
-        error.statusCode = check.reason?.includes('expired') ? 401 : 403;
+        const error = new Error(check.reason || "Access denied");
+        error.statusCode = check.reason?.includes("expired") ? 401 : 403;
         error.requiredRoles = check.requiredRoles;
         throw error;
       }
-      
+
       return check.session;
     };
 
@@ -343,11 +338,11 @@ export function createPermissionRoutes(accessControl) {
     getUserPermissions: (req, res) => {
       try {
         const sessionInfo = accessControl.getSessionInfo(req.sessionId);
-        
+
         if (!sessionInfo) {
           return res.status(401).json({
             success: false,
-            error: 'Invalid or expired session'
+            error: "Invalid or expired session",
           });
         }
 
@@ -357,14 +352,13 @@ export function createPermissionRoutes(accessControl) {
           roles: sessionInfo.roles,
           session: {
             expires: sessionInfo.expires,
-            timeRemaining: sessionInfo.timeRemaining
-          }
+            timeRemaining: sessionInfo.timeRemaining,
+          },
         });
-
       } catch (error) {
         res.status(500).json({
           success: false,
-          error: error.message
+          error: error.message,
         });
       }
     },
@@ -379,13 +373,12 @@ export function createPermissionRoutes(accessControl) {
           success: true,
           hasPermission: check.valid,
           reason: check.reason,
-          requiredRoles: check.requiredRoles
+          requiredRoles: check.requiredRoles,
         });
-
       } catch (error) {
         res.status(500).json({
           success: false,
-          error: error.message
+          error: error.message,
         });
       }
     },
@@ -399,19 +392,18 @@ export function createPermissionRoutes(accessControl) {
         if (extended) {
           res.json({
             success: true,
-            message: `Session extended by ${hours} hours`
+            message: `Session extended by ${hours} hours`,
           });
         } else {
           res.status(404).json({
             success: false,
-            error: 'Session not found'
+            error: "Session not found",
           });
         }
-
       } catch (error) {
         res.status(500).json({
           success: false,
-          error: error.message
+          error: error.message,
         });
       }
     },
@@ -419,21 +411,20 @@ export function createPermissionRoutes(accessControl) {
     // Admin: Get all sessions (requires admin permission)
     getAllSessions: (req, res) => {
       try {
-        req.requirePermission('system:configure');
-        
+        req.requirePermission("system:configure");
+
         const sessions = accessControl.getActiveSessions();
         res.json({
           success: true,
           sessions: sessions,
-          count: sessions.length
+          count: sessions.length,
         });
-
       } catch (error) {
         const statusCode = error.statusCode || 500;
         res.status(statusCode).json({
           success: false,
           error: error.message,
-          requiredRoles: error.requiredRoles
+          requiredRoles: error.requiredRoles,
         });
       }
     },
@@ -441,26 +432,25 @@ export function createPermissionRoutes(accessControl) {
     // Admin: Revoke session
     revokeSession: (req, res) => {
       try {
-        req.requirePermission('system:configure');
-        
+        req.requirePermission("system:configure");
+
         const { sessionId } = req.params;
         const revoked = accessControl.revokeSession(sessionId);
 
         res.json({
           success: true,
           revoked: revoked,
-          message: revoked ? 'Session revoked' : 'Session not found'
+          message: revoked ? "Session revoked" : "Session not found",
         });
-
       } catch (error) {
         const statusCode = error.statusCode || 500;
         res.status(statusCode).json({
           success: false,
           error: error.message,
-          requiredRoles: error.requiredRoles
+          requiredRoles: error.requiredRoles,
         });
       }
-    }
+    },
   };
 }
 
@@ -470,14 +460,14 @@ export function createOptimizationMiddleware(accessControl) {
     // Require optimization view permission
     requireOptimizationView: (req, res, next) => {
       try {
-        req.requirePermission('optimization:view');
+        req.requirePermission("optimization:view");
         next();
       } catch (error) {
         const statusCode = error.statusCode || 403;
         res.status(statusCode).json({
           success: false,
           error: error.message,
-          requiredRoles: error.requiredRoles
+          requiredRoles: error.requiredRoles,
         });
       }
     },
@@ -485,28 +475,28 @@ export function createOptimizationMiddleware(accessControl) {
     // Require optimization apply permission
     requireOptimizationApply: (req, res, next) => {
       try {
-        const session = req.requirePermission('optimization:apply');
-        
+        const session = req.requirePermission("optimization:apply");
+
         // Audit the attempt
         accessControl.auditUserAction(
           session.userId,
-          'optimization:apply',
+          "optimization:apply",
           req.originalUrl,
-          'attempted',
+          "attempted",
           {
             ip: req.ip,
-            userAgent: req.headers['user-agent'],
-            body: req.body
-          }
+            userAgent: req.headers["user-agent"],
+            body: req.body,
+          },
         );
-        
+
         next();
       } catch (error) {
         const statusCode = error.statusCode || 403;
         res.status(statusCode).json({
           success: false,
           error: error.message,
-          requiredRoles: error.requiredRoles
+          requiredRoles: error.requiredRoles,
         });
       }
     },
@@ -514,35 +504,38 @@ export function createOptimizationMiddleware(accessControl) {
     // Require system configuration permission
     requireSystemConfig: (req, res, next) => {
       try {
-        req.requirePermission('system:configure');
+        req.requirePermission("system:configure");
         next();
       } catch (error) {
         const statusCode = error.statusCode || 403;
         res.status(statusCode).json({
           success: false,
           error: error.message,
-          requiredRoles: error.requiredRoles
+          requiredRoles: error.requiredRoles,
         });
       }
-    }
+    },
   };
 }
 
 // Initialize default users and roles (for demo/development)
 export function initializeDefaultAccess(accessControl) {
   // Create demo users
-  accessControl.assignRole('admin_user', 'super_admin');
-  accessControl.assignRole('db_admin_user', 'db_admin');
-  accessControl.assignRole('dev_user', 'developer');
-  accessControl.assignRole('monitor_user', 'monitor');
-  accessControl.assignRole('analyst_user', 'analyst');
+  accessControl.assignRole("admin_user", "super_admin");
+  accessControl.assignRole("db_admin_user", "db_admin");
+  accessControl.assignRole("dev_user", "developer");
+  accessControl.assignRole("monitor_user", "monitor");
+  accessControl.assignRole("analyst_user", "analyst");
 
-  console.log('👥 Initialized default access control roles');
-  
+  console.log("👥 Initialized default access control roles");
+
   // Clean expired sessions every hour
-  setInterval(() => {
-    accessControl.cleanExpiredSessions();
-  }, 60 * 60 * 1000);
+  setInterval(
+    () => {
+      accessControl.cleanExpiredSessions();
+    },
+    60 * 60 * 1000,
+  );
 }
 
 export default OptimizationAccessControl;

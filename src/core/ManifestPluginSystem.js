@@ -11,21 +11,21 @@ export class ManifestPluginSystem {
     this.widgetRegistry = new Map();
     this.fieldRendererRegistry = new Map();
     this.commandHandlerRegistry = new Map();
-    
+
     // Plugin runtime environments
     this.runtimeEnvironments = new Map();
-    
+
     // Plugin loading state
     this.loadingPromises = new Map();
     this.dependencyGraph = new Map();
-    
+
     // Plugin lifecycle hooks
     this.hooks = {
       beforeLoad: [],
       afterLoad: [],
       beforeUnload: [],
       afterUnload: [],
-      onError: []
+      onError: [],
     };
 
     // Performance metrics
@@ -35,7 +35,7 @@ export class ManifestPluginSystem {
       averageLoadTime: 0,
       failedLoads: 0,
       registeredComponents: 0,
-      registeredActions: 0
+      registeredActions: 0,
     };
   }
 
@@ -46,14 +46,15 @@ export class ManifestPluginSystem {
     try {
       // Load plugin manifests from stored entities
       await this.loadPluginManifests();
-      
+
       // Load enabled plugins
       await this.loadEnabledPlugins();
-      
-      console.log(`ManifestPluginSystem initialized with ${this.loadedPlugins.size} plugins`);
-      
+
+      console.log(
+        `ManifestPluginSystem initialized with ${this.loadedPlugins.size} plugins`,
+      );
     } catch (error) {
-      console.error('Failed to initialize plugin system:', error);
+      console.error("Failed to initialize plugin system:", error);
       throw error;
     }
   }
@@ -63,14 +64,14 @@ export class ManifestPluginSystem {
    */
   async loadPluginManifests() {
     try {
-      const manifestEntities = await this.stateManager.getEntitiesByType('plugin_manifest');
-      
+      const manifestEntities =
+        await this.stateManager.getEntitiesByType("plugin_manifest");
+
       for (const entity of manifestEntities) {
         this.registerManifest(entity.data);
       }
-      
     } catch (error) {
-      console.error('Failed to load plugin manifests:', error);
+      console.error("Failed to load plugin manifests:", error);
     }
   }
 
@@ -81,33 +82,33 @@ export class ManifestPluginSystem {
     const manifest = {
       id: manifestData.id || manifestData.name,
       name: manifestData.name,
-      version: manifestData.version || '1.0.0',
-      description: manifestData.description || '',
-      author: manifestData.author || '',
-      
+      version: manifestData.version || "1.0.0",
+      description: manifestData.description || "",
+      author: manifestData.author || "",
+
       // Plugin capabilities
       components: manifestData.components || {},
       dependencies: manifestData.dependencies || {},
       runtime: manifestData.runtime || {},
-      
+
       // Plugin metadata
       enabled: manifestData.enabled !== false,
       autoload: manifestData.autoload !== false,
-      priority: manifestData.priority || 'normal',
-      
+      priority: manifestData.priority || "normal",
+
       // Security and permissions
       permissions: manifestData.permissions || [],
       sandbox: manifestData.sandbox !== false,
-      
+
       // Original manifest data
-      rawManifest: manifestData
+      rawManifest: manifestData,
     };
 
     this.pluginManifests.set(manifest.id, manifest);
-    
+
     // Build dependency graph
     this.updateDependencyGraph(manifest);
-    
+
     return manifest;
   }
 
@@ -116,7 +117,7 @@ export class ManifestPluginSystem {
    */
   async loadPlugin(pluginId, options = {}) {
     const startTime = performance.now();
-    
+
     try {
       // Check if already loaded
       if (this.loadedPlugins.has(pluginId)) {
@@ -139,16 +140,15 @@ export class ManifestPluginSystem {
       this.loadingPromises.set(pluginId, loadingPromise);
 
       const plugin = await loadingPromise;
-      
+
       // Record metrics
       const loadTime = performance.now() - startTime;
       this.recordLoadTime(loadTime);
-      
-      return plugin;
 
+      return plugin;
     } catch (error) {
       this.metrics.failedLoads++;
-      this.runHooks('onError', { pluginId, error });
+      this.runHooks("onError", { pluginId, error });
       console.error(`Failed to load plugin ${pluginId}:`, error);
       throw error;
     } finally {
@@ -161,9 +161,9 @@ export class ManifestPluginSystem {
    */
   async doLoadPlugin(manifest, options) {
     const pluginId = manifest.id;
-    
+
     // Run before load hooks
-    this.runHooks('beforeLoad', { manifest, options });
+    this.runHooks("beforeLoad", { manifest, options });
 
     // Load dependencies first
     await this.loadDependencies(manifest);
@@ -184,17 +184,17 @@ export class ManifestPluginSystem {
       runtime,
       context: pluginContext,
       loadedAt: Date.now(),
-      status: 'loaded'
+      status: "loaded",
     };
 
     this.loadedPlugins.set(pluginId, plugin);
     this.metrics.pluginsLoaded++;
 
     // Run after load hooks
-    this.runHooks('afterLoad', { plugin });
+    this.runHooks("afterLoad", { plugin });
 
     // Emit plugin loaded event
-    this.stateManager.emit?.('pluginLoaded', { pluginId, plugin });
+    this.stateManager.emit?.("pluginLoaded", { pluginId, plugin });
 
     return plugin;
   }
@@ -204,7 +204,7 @@ export class ManifestPluginSystem {
    */
   async loadDependencies(manifest) {
     const dependencies = manifest.dependencies.plugins || [];
-    
+
     for (const depId of dependencies) {
       if (!this.loadedPlugins.has(depId)) {
         await this.loadPlugin(depId);
@@ -220,24 +220,31 @@ export class ManifestPluginSystem {
       pluginId: manifest.id,
       manifest,
       stateManager: this.stateManager,
-      
+
       // Registration methods
-      registerComponent: (id, definition) => this.registerComponent(manifest.id, id, definition),
-      registerAction: (id, definition) => this.registerAction(manifest.id, id, definition),
-      registerWidget: (id, definition) => this.registerWidget(manifest.id, id, definition),
-      registerFieldRenderer: (id, definition) => this.registerFieldRenderer(manifest.id, id, definition),
-      registerCommandHandler: (id, definition) => this.registerCommandHandler(manifest.id, id, definition),
-      
+      registerComponent: (id, definition) =>
+        this.registerComponent(manifest.id, id, definition),
+      registerAction: (id, definition) =>
+        this.registerAction(manifest.id, id, definition),
+      registerWidget: (id, definition) =>
+        this.registerWidget(manifest.id, id, definition),
+      registerFieldRenderer: (id, definition) =>
+        this.registerFieldRenderer(manifest.id, id, definition),
+      registerCommandHandler: (id, definition) =>
+        this.registerCommandHandler(manifest.id, id, definition),
+
       // Utility methods
-      emit: (event, data) => this.stateManager.emit?.(`plugin:${manifest.id}:${event}`, data),
-      log: (level, message, data) => console[level](`[Plugin:${manifest.id}] ${message}`, data),
-      
+      emit: (event, data) =>
+        this.stateManager.emit?.(`plugin:${manifest.id}:${event}`, data),
+      log: (level, message, data) =>
+        console[level](`[Plugin:${manifest.id}] ${message}`, data),
+
       // Access to other plugins (with permission check)
       getPlugin: (pluginId) => this.getPluginForContext(manifest.id, pluginId),
-      
+
       // Configuration access
       getConfig: (key) => manifest.rawManifest.config?.[key],
-      setConfig: (key, value) => this.setPluginConfig(manifest.id, key, value)
+      setConfig: (key, value) => this.setPluginConfig(manifest.id, key, value),
     };
 
     return context;
@@ -248,7 +255,7 @@ export class ManifestPluginSystem {
    */
   async loadPluginRuntime(manifest, context) {
     const runtimeConfig = manifest.runtime;
-    
+
     if (runtimeConfig.frontend) {
       // Load frontend runtime (JavaScript module)
       return await this.loadFrontendRuntime(runtimeConfig.frontend, context);
@@ -268,18 +275,17 @@ export class ManifestPluginSystem {
     try {
       // Dynamic import of the plugin module
       const module = await import(runtimeUrl);
-      
+
       // Initialize plugin with context
-      if (module.default && typeof module.default.initialize === 'function') {
+      if (module.default && typeof module.default.initialize === "function") {
         await module.default.initialize(context);
         return module.default;
-      } else if (typeof module.initialize === 'function') {
+      } else if (typeof module.initialize === "function") {
         await module.initialize(context);
         return module;
       } else {
-        throw new Error('Plugin runtime must export initialize function');
+        throw new Error("Plugin runtime must export initialize function");
       }
-      
     } catch (error) {
       console.error(`Failed to load plugin runtime from ${runtimeUrl}:`, error);
       throw error;
@@ -294,26 +300,32 @@ export class ManifestPluginSystem {
       initialize: async () => {
         // Register components defined in manifest
         if (inlineDefinition.components) {
-          for (const [id, componentDef] of Object.entries(inlineDefinition.components)) {
+          for (const [id, componentDef] of Object.entries(
+            inlineDefinition.components,
+          )) {
             context.registerComponent(id, componentDef);
           }
         }
-        
+
         // Register actions
         if (inlineDefinition.actions) {
-          for (const [id, actionDef] of Object.entries(inlineDefinition.actions)) {
+          for (const [id, actionDef] of Object.entries(
+            inlineDefinition.actions,
+          )) {
             context.registerAction(id, actionDef);
           }
         }
-        
+
         // Register widgets
         if (inlineDefinition.widgets) {
-          for (const [id, widgetDef] of Object.entries(inlineDefinition.widgets)) {
+          for (const [id, widgetDef] of Object.entries(
+            inlineDefinition.widgets,
+          )) {
             context.registerWidget(id, widgetDef);
           }
         }
       },
-      
+
       render: (componentId, renderContext) => {
         const component = inlineDefinition.components?.[componentId];
         if (component && component.render) {
@@ -321,13 +333,13 @@ export class ManifestPluginSystem {
         }
         return null;
       },
-      
+
       executeAction: (actionId, actionContext) => {
         const action = inlineDefinition.actions?.[actionId];
         if (action && action.execute) {
           return action.execute(actionContext);
         }
-      }
+      },
     };
 
     return runtime;
@@ -339,18 +351,18 @@ export class ManifestPluginSystem {
   createDefaultRuntime(context) {
     return {
       initialize: async () => {
-        context.log('info', 'Plugin initialized with default runtime');
+        context.log("info", "Plugin initialized with default runtime");
       },
-      
+
       render: (componentId, renderContext) => {
-        const div = document.createElement('div');
+        const div = document.createElement("div");
         div.textContent = `Plugin component: ${componentId}`;
         return div;
       },
-      
+
       executeAction: (actionId, actionContext) => {
-        context.log('info', `Executing action: ${actionId}`, actionContext);
-      }
+        context.log("info", `Executing action: ${actionId}`, actionContext);
+      },
     };
   }
 
@@ -359,14 +371,15 @@ export class ManifestPluginSystem {
    */
   async registerPluginComponents(manifest, runtime, context) {
     const components = manifest.components;
-    
+
     // Register widgets
     if (components.widgets) {
       for (const widgetDef of components.widgets) {
         context.registerWidget(widgetDef.id, {
           ...widgetDef,
           pluginId: manifest.id,
-          render: (renderContext) => runtime.render(widgetDef.id, renderContext)
+          render: (renderContext) =>
+            runtime.render(widgetDef.id, renderContext),
         });
       }
     }
@@ -377,7 +390,8 @@ export class ManifestPluginSystem {
         context.registerAction(actionDef.id, {
           ...actionDef,
           pluginId: manifest.id,
-          execute: (actionContext) => runtime.executeAction(actionDef.id, actionContext)
+          execute: (actionContext) =>
+            runtime.executeAction(actionDef.id, actionContext),
         });
       }
     }
@@ -388,7 +402,8 @@ export class ManifestPluginSystem {
         context.registerFieldRenderer(rendererDef.field, {
           ...rendererDef,
           pluginId: manifest.id,
-          render: (renderContext) => runtime.renderField(rendererDef.field, renderContext)
+          render: (renderContext) =>
+            runtime.renderField(rendererDef.field, renderContext),
         });
       }
     }
@@ -399,7 +414,8 @@ export class ManifestPluginSystem {
         context.registerCommandHandler(handlerDef.command, {
           ...handlerDef,
           pluginId: manifest.id,
-          handle: (command) => runtime.handleCommand(handlerDef.command, command)
+          handle: (command) =>
+            runtime.handleCommand(handlerDef.command, command),
         });
       }
     }
@@ -410,7 +426,11 @@ export class ManifestPluginSystem {
    */
   registerComponent(pluginId, componentId, definition) {
     const fullId = `${pluginId}.${componentId}`;
-    this.componentRegistry.set(fullId, { ...definition, pluginId, componentId });
+    this.componentRegistry.set(fullId, {
+      ...definition,
+      pluginId,
+      componentId,
+    });
     this.metrics.registeredComponents++;
   }
 
@@ -440,25 +460,25 @@ export class ManifestPluginSystem {
    */
   getWidgetsForEntityType(entityType) {
     const widgets = [];
-    
+
     for (const [id, widget] of this.widgetRegistry) {
       if (widget.entity_types && widget.entity_types.includes(entityType)) {
         widgets.push({ id, ...widget });
       }
     }
-    
+
     return widgets;
   }
 
   getActionsForEntityType(entityType) {
     const actions = [];
-    
+
     for (const [id, action] of this.actionRegistry) {
       if (action.entity_types && action.entity_types.includes(entityType)) {
         actions.push({ id, ...action });
       }
     }
-    
+
     return actions;
   }
 
@@ -468,7 +488,7 @@ export class ManifestPluginSystem {
   async render(widgetConfig) {
     const widgetId = widgetConfig.component || widgetConfig.widget;
     const widget = this.widgetRegistry.get(widgetId);
-    
+
     if (!widget) {
       console.warn(`Widget not found: ${widgetId}`);
       return this.renderMissingWidget(widgetId);
@@ -478,11 +498,10 @@ export class ManifestPluginSystem {
       const renderContext = {
         config: widgetConfig.config || {},
         data: widgetConfig.data || {},
-        pluginContext: this.getPluginContext(widget.pluginId)
+        pluginContext: this.getPluginContext(widget.pluginId),
       };
-      
+
       return await widget.render(renderContext);
-      
     } catch (error) {
       console.error(`Error rendering widget ${widgetId}:`, error);
       return this.renderErrorWidget(widgetId, error);
@@ -494,7 +513,7 @@ export class ManifestPluginSystem {
    */
   async executeAction(actionId, context) {
     const action = this.actionRegistry.get(actionId);
-    
+
     if (!action) {
       throw new Error(`Action not found: ${actionId}`);
     }
@@ -502,11 +521,10 @@ export class ManifestPluginSystem {
     try {
       const actionContext = {
         ...context,
-        pluginContext: this.getPluginContext(action.pluginId)
+        pluginContext: this.getPluginContext(action.pluginId),
       };
-      
+
       return await action.execute(actionContext);
-      
     } catch (error) {
       console.error(`Error executing action ${actionId}:`, error);
       throw error;
@@ -517,12 +535,13 @@ export class ManifestPluginSystem {
    * Load enabled plugins
    */
   async loadEnabledPlugins() {
-    const enabledManifests = Array.from(this.pluginManifests.values())
-      .filter(manifest => manifest.enabled && manifest.autoload);
-    
+    const enabledManifests = Array.from(this.pluginManifests.values()).filter(
+      (manifest) => manifest.enabled && manifest.autoload,
+    );
+
     // Sort by priority and dependencies
     const sortedManifests = this.sortManifestsByDependencies(enabledManifests);
-    
+
     for (const manifest of sortedManifests) {
       try {
         await this.loadPlugin(manifest.id);
@@ -544,7 +563,7 @@ export class ManifestPluginSystem {
       if (visiting.has(manifest.id)) {
         throw new Error(`Circular dependency detected: ${manifest.id}`);
       }
-      
+
       if (visited.has(manifest.id)) {
         return;
       }
@@ -591,7 +610,7 @@ export class ManifestPluginSystem {
 
     try {
       // Run before unload hooks
-      this.runHooks('beforeUnload', { plugin });
+      this.runHooks("beforeUnload", { plugin });
 
       // Remove all components registered by this plugin
       this.removePluginComponents(pluginId);
@@ -605,13 +624,12 @@ export class ManifestPluginSystem {
       this.loadedPlugins.delete(pluginId);
 
       // Run after unload hooks
-      this.runHooks('afterUnload', { pluginId });
+      this.runHooks("afterUnload", { pluginId });
 
       // Emit plugin unloaded event
-      this.stateManager.emit?.('pluginUnloaded', { pluginId });
+      this.stateManager.emit?.("pluginUnloaded", { pluginId });
 
       return true;
-
     } catch (error) {
       console.error(`Error unloading plugin ${pluginId}:`, error);
       throw error;
@@ -628,7 +646,7 @@ export class ManifestPluginSystem {
       this.actionRegistry,
       this.widgetRegistry,
       this.fieldRendererRegistry,
-      this.commandHandlerRegistry
+      this.commandHandlerRegistry,
     ]) {
       for (const [key, value] of registry) {
         if (value.pluginId === pluginId) {
@@ -642,15 +660,15 @@ export class ManifestPluginSystem {
    * Helper methods
    */
   renderMissingWidget(widgetId) {
-    const div = document.createElement('div');
-    div.className = 'plugin-widget-missing';
+    const div = document.createElement("div");
+    div.className = "plugin-widget-missing";
     div.innerHTML = `<p>Widget not found: ${widgetId}</p>`;
     return div;
   }
 
   renderErrorWidget(widgetId, error) {
-    const div = document.createElement('div');
-    div.className = 'plugin-widget-error';
+    const div = document.createElement("div");
+    div.className = "plugin-widget-error";
     div.innerHTML = `
       <p><strong>Widget Error: ${widgetId}</strong></p>
       <p>${error.message}</p>
@@ -684,14 +702,14 @@ export class ManifestPluginSystem {
     if (this.metrics.loadingTimes.length > 100) {
       this.metrics.loadingTimes.shift();
     }
-    this.metrics.averageLoadTime = 
-      this.metrics.loadingTimes.reduce((sum, time) => sum + time, 0) / 
+    this.metrics.averageLoadTime =
+      this.metrics.loadingTimes.reduce((sum, time) => sum + time, 0) /
       this.metrics.loadingTimes.length;
   }
 
   runHooks(hookName, data) {
     const hooks = this.hooks[hookName] || [];
-    hooks.forEach(hook => {
+    hooks.forEach((hook) => {
       try {
         hook(data);
       } catch (error) {
@@ -710,7 +728,7 @@ export class ManifestPluginSystem {
       availableManifests: this.pluginManifests.size,
       registeredWidgets: this.widgetRegistry.size,
       registeredFieldRenderers: this.fieldRendererRegistry.size,
-      registeredCommandHandlers: this.commandHandlerRegistry.size
+      registeredCommandHandlers: this.commandHandlerRegistry.size,
     };
   }
 
@@ -723,7 +741,7 @@ export class ManifestPluginSystem {
       loadedPlugins: Array.from(this.loadedPlugins.keys()),
       components: Array.from(this.componentRegistry.keys()),
       actions: Array.from(this.actionRegistry.keys()),
-      widgets: Array.from(this.widgetRegistry.keys())
+      widgets: Array.from(this.widgetRegistry.keys()),
     };
   }
 }

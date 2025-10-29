@@ -1,7 +1,7 @@
 /**
  * BoundedStack
  * Memory-efficient stack with automatic eviction
- * 
+ *
  * Used for undo/redo operations per level with configurable bounds
  * Maintains O(1) push/pop operations while preventing memory bloat
  */
@@ -22,7 +22,7 @@ export class BoundedStack {
     const stackItem = {
       data: item,
       timestamp: Date.now(),
-      id: this.generateItemId()
+      id: this.generateItemId(),
     };
 
     this.items.push(stackItem);
@@ -31,7 +31,7 @@ export class BoundedStack {
     while (this.items.length > this.maxSize) {
       const evicted = this.items.shift();
       this.evictionCount++;
-      
+
       // Optional: notify about eviction for cleanup
       this.onEvict?.(evicted);
     }
@@ -115,7 +115,10 @@ export class BoundedStack {
    * Convert to array (newest first)
    */
   toArray() {
-    return this.items.slice().reverse().map(item => item.data);
+    return this.items
+      .slice()
+      .reverse()
+      .map((item) => item.data);
   }
 
   /**
@@ -152,13 +155,13 @@ export class BoundedStack {
       maxSize: this.maxSize,
       utilizationPercent: Math.round((this.items.length / this.maxSize) * 100),
       evictionCount: this.evictionCount,
-      oldestItemAge: this.items.length > 0 
-        ? Date.now() - this.items[0].timestamp 
-        : 0,
-      newestItemAge: this.items.length > 0 
-        ? Date.now() - this.items[this.items.length - 1].timestamp 
-        : 0,
-      memoryEstimate: this.estimateMemoryUsage()
+      oldestItemAge:
+        this.items.length > 0 ? Date.now() - this.items[0].timestamp : 0,
+      newestItemAge:
+        this.items.length > 0
+          ? Date.now() - this.items[this.items.length - 1].timestamp
+          : 0,
+      memoryEstimate: this.estimateMemoryUsage(),
     };
   }
 
@@ -168,11 +171,11 @@ export class BoundedStack {
   estimateMemoryUsage() {
     if (this.items.length === 0) return 0;
 
-    // Rough estimate: 
+    // Rough estimate:
     // - Each item wrapper: ~100 bytes
     // - Each data object: variable (try to estimate)
     const wrapperOverhead = this.items.length * 100;
-    
+
     let dataSize = 0;
     for (const item of this.items) {
       dataSize += this.estimateObjectSize(item.data);
@@ -186,24 +189,24 @@ export class BoundedStack {
    */
   estimateObjectSize(obj) {
     if (obj === null || obj === undefined) return 0;
-    
-    if (typeof obj === 'string') {
+
+    if (typeof obj === "string") {
       return obj.length * 2; // 2 bytes per character for UTF-16
     }
-    
-    if (typeof obj === 'number') {
+
+    if (typeof obj === "number") {
       return 8; // 64-bit number
     }
-    
-    if (typeof obj === 'boolean') {
+
+    if (typeof obj === "boolean") {
       return 4;
     }
-    
+
     if (Array.isArray(obj)) {
       return obj.reduce((sum, item) => sum + this.estimateObjectSize(item), 0);
     }
-    
-    if (typeof obj === 'object') {
+
+    if (typeof obj === "object") {
       let size = 0;
       for (const [key, value] of Object.entries(obj)) {
         size += key.length * 2; // Key size
@@ -211,7 +214,7 @@ export class BoundedStack {
       }
       return size;
     }
-    
+
     return 100; // Default estimate for unknown types
   }
 
@@ -256,11 +259,11 @@ export class BoundedStack {
    */
   trimTo(newSize) {
     if (newSize >= this.items.length) return 0;
-    
+
     const removeCount = this.items.length - newSize;
     const removed = this.items.splice(0, removeCount);
     this.evictionCount += removed.length;
-    
+
     return removed.length;
   }
 
@@ -269,8 +272,10 @@ export class BoundedStack {
    */
   getItemsInTimeRange(startTime, endTime) {
     return this.items
-      .filter(item => item.timestamp >= startTime && item.timestamp <= endTime)
-      .map(item => item.data)
+      .filter(
+        (item) => item.timestamp >= startTime && item.timestamp <= endTime,
+      )
+      .map((item) => item.data)
       .reverse(); // Newest first
   }
 
@@ -280,13 +285,13 @@ export class BoundedStack {
   removeItemsOlderThan(maxAge) {
     const cutoffTime = Date.now() - maxAge;
     let removeCount = 0;
-    
+
     while (this.items.length > 0 && this.items[0].timestamp < cutoffTime) {
       this.items.shift();
       removeCount++;
       this.evictionCount++;
     }
-    
+
     return removeCount;
   }
 }

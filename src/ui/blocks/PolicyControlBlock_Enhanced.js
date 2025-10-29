@@ -10,27 +10,29 @@ import { OptimizationAccessControl } from "../../core/OptimizationAccessControl.
 export function PolicyControlBlock({ context, config = {} }) {
   const container = document.createElement("div");
   container.className = "policy-control-block";
-  
+
   // Apply theme-aware styling
   const theme = context.getThemeVariables();
   container.style.cssText = `
-    padding: ${config.padding || '1rem'};
-    border-radius: ${config.borderRadius || '8px'};
-    background: ${config.background || theme['--surface']};
-    color: ${config.color || theme['--text']};
+    padding: ${config.padding || "1rem"};
+    border-radius: ${config.borderRadius || "8px"};
+    background: ${config.background || theme["--surface"]};
+    color: ${config.color || theme["--text"]};
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    border: 1px solid ${theme['--border']};
-    min-width: ${config.minWidth || '300px'};
+    border: 1px solid ${theme["--border"]};
+    min-width: ${config.minWidth || "300px"};
     position: relative;
   `;
 
   // Get current user session and permissions
   const session = OptimizationAccessControl.currentSession || {};
-  const userRole = session.role || context.userRole || 'guest';
-  const allowedDomains = OptimizationAccessControl.getAllowedDomainsForRole(userRole);
-  const canEditGlobal = OptimizationAccessControl.checkSessionPermission("manage_policies");
+  const userRole = session.role || context.userRole || "guest";
+  const allowedDomains =
+    OptimizationAccessControl.getAllowedDomainsForRole(userRole);
+  const canEditGlobal =
+    OptimizationAccessControl.checkSessionPermission("manage_policies");
 
   // Create header
   const header = createHeader();
@@ -67,7 +69,7 @@ export function PolicyControlBlock({ context, config = {} }) {
     title.textContent = config.title || "System Policy Control";
     title.style.cssText = `
       margin: 0;
-      color: ${theme['--text']};
+      color: ${theme["--text"]};
       font-size: 1.1rem;
       font-weight: 600;
     `;
@@ -100,15 +102,16 @@ export function PolicyControlBlock({ context, config = {} }) {
     const statusDiv = document.createElement("div");
     statusDiv.style.cssText = `
       padding: 0.5rem;
-      background: ${theme['--surface-elevated']};
+      background: ${theme["--surface-elevated"]};
       border-radius: 4px;
-      border: 1px solid ${theme['--border']};
+      border: 1px solid ${theme["--border"]};
       font-size: 0.85rem;
     `;
 
-    const accessLevel = canEditGlobal ? 'Full Control' : 'Read Only';
-    const accessColor = canEditGlobal ? theme['--success'] : theme['--warning'];
-    const domainList = allowedDomains.length > 0 ? allowedDomains.join(', ') : 'None';
+    const accessLevel = canEditGlobal ? "Full Control" : "Read Only";
+    const accessColor = canEditGlobal ? theme["--success"] : theme["--warning"];
+    const domainList =
+      allowedDomains.length > 0 ? allowedDomains.join(", ") : "None";
 
     const accessInfo = document.createElement("div");
     accessInfo.innerHTML = `
@@ -118,10 +121,10 @@ export function PolicyControlBlock({ context, config = {} }) {
       </div>
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <strong>Allowed Domains:</strong> 
-        <span style="color: ${theme['--text-muted']};">${domainList}</span>
+        <span style="color: ${theme["--text-muted"]};">${domainList}</span>
       </div>
     `;
-    accessInfo.style.color = theme['--text-muted'];
+    accessInfo.style.color = theme["--text-muted"];
 
     // Add help text for restricted access
     if (!canEditGlobal || allowedDomains.length < 5) {
@@ -129,19 +132,20 @@ export function PolicyControlBlock({ context, config = {} }) {
       helpText.style.cssText = `
         margin-top: 0.5rem;
         padding: 0.25rem;
-        background: ${theme['--warning']}20;
-        border-left: 3px solid ${theme['--warning']};
+        background: ${theme["--warning"]}20;
+        border-left: 3px solid ${theme["--warning"]};
         font-size: 0.8rem;
-        color: ${theme['--text-muted']};
+        color: ${theme["--text-muted"]};
       `;
-      
-      let helpMessage = '';
+
+      let helpMessage = "";
       if (!canEditGlobal) {
-        helpMessage = '💡 You have read-only access. Contact an administrator to modify policies.';
+        helpMessage =
+          "💡 You have read-only access. Contact an administrator to modify policies.";
       } else if (allowedDomains.length < 5) {
         helpMessage = `💡 You can only modify policies in: ${domainList}`;
       }
-      
+
       helpText.textContent = helpMessage;
       statusDiv.appendChild(accessInfo);
       statusDiv.appendChild(helpText);
@@ -162,46 +166,46 @@ export function PolicyControlBlock({ context, config = {} }) {
       display: flex;
       flex-direction: column;
       gap: 1rem;
-      max-height: ${config.maxHeight || '400px'};
+      max-height: ${config.maxHeight || "400px"};
       overflow-y: auto;
     `;
 
     // Define policy sections with their display names and descriptions
     const sections = {
-      system: { 
-        name: 'System Policies', 
-        icon: '⚙️',
-        description: 'Core system behavior and optimization settings'
+      system: {
+        name: "System Policies",
+        icon: "⚙️",
+        description: "Core system behavior and optimization settings",
       },
-      ui: { 
-        name: 'UI Policies', 
-        icon: '🎨',
-        description: 'User interface behavior and appearance settings'
+      ui: {
+        name: "UI Policies",
+        icon: "🎨",
+        description: "User interface behavior and appearance settings",
       },
-      events: { 
-        name: 'Event Policies', 
-        icon: '⚡',
-        description: 'Event processing and flow management settings'
+      events: {
+        name: "Event Policies",
+        icon: "⚡",
+        description: "Event processing and flow management settings",
       },
-      user: { 
-        name: 'User Policies', 
-        icon: '👤',
-        description: 'User data and privacy management settings'
+      user: {
+        name: "User Policies",
+        icon: "👤",
+        description: "User data and privacy management settings",
       },
-      meta: { 
-        name: 'Meta Policies', 
-        icon: '📊',
-        description: 'Analytics, monitoring, and system metadata settings'
-      }
+      meta: {
+        name: "Meta Policies",
+        icon: "📊",
+        description: "Analytics, monitoring, and system metadata settings",
+      },
     };
 
     // Create each policy section
     Object.entries(sections).forEach(([sectionKey, sectionInfo]) => {
       const sectionPolicies = policies[sectionKey] || {};
       const sectionElement = createPolicySection(
-        sectionKey, 
-        sectionInfo, 
-        sectionPolicies
+        sectionKey,
+        sectionInfo,
+        sectionPolicies,
       );
       policyDiv.appendChild(sectionElement);
     });
@@ -215,24 +219,24 @@ export function PolicyControlBlock({ context, config = {} }) {
   function createPolicySection(sectionKey, sectionInfo, sectionPolicies) {
     const sectionDiv = document.createElement("div");
     sectionDiv.className = `policy-section-${sectionKey}`;
-    
+
     const isDomainAllowed = allowedDomains.includes(sectionKey.toLowerCase());
     const canEditSection = canEditGlobal && isDomainAllowed;
-    
+
     // Calculate restriction reason
-    let restrictionReason = '';
+    let restrictionReason = "";
     if (!canEditGlobal) {
-      restrictionReason = 'Insufficient permissions to manage policies';
+      restrictionReason = "Insufficient permissions to manage policies";
     } else if (!isDomainAllowed) {
       restrictionReason = `Role "${userRole}" cannot access "${sectionKey}" domain`;
     }
-    
+
     sectionDiv.style.cssText = `
-      border: 1px solid ${theme['--border']};
+      border: 1px solid ${theme["--border"]};
       border-radius: 6px;
       overflow: hidden;
-      background: ${theme['--surface-elevated']};
-      opacity: ${canEditSection ? '1' : '0.7'};
+      background: ${theme["--surface-elevated"]};
+      opacity: ${canEditSection ? "1" : "0.7"};
       transition: opacity 0.2s ease;
     `;
 
@@ -240,26 +244,26 @@ export function PolicyControlBlock({ context, config = {} }) {
     const header = document.createElement("div");
     header.style.cssText = `
       padding: 0.75rem;
-      background: ${theme['--surface']};
-      border-bottom: 1px solid ${theme['--border']};
+      background: ${theme["--surface"]};
+      border-bottom: 1px solid ${theme["--border"]};
       display: flex;
       justify-content: space-between;
       align-items: center;
-      cursor: ${restrictionReason ? 'help' : 'default'};
+      cursor: ${restrictionReason ? "help" : "default"};
     `;
 
     const headerTitle = document.createElement("div");
     headerTitle.innerHTML = `${sectionInfo.icon} <strong>${sectionInfo.name}</strong>`;
     headerTitle.style.cssText = `
       font-size: 0.9rem;
-      color: ${theme['--text']};
+      color: ${theme["--text"]};
     `;
 
     const accessBadge = document.createElement("span");
     accessBadge.textContent = canEditSection ? "Edit" : "Read Only";
     accessBadge.style.cssText = `
       padding: 0.25rem 0.5rem;
-      background: ${canEditSection ? theme['--success'] : theme['--warning']};
+      background: ${canEditSection ? theme["--success"] : theme["--warning"]};
       color: white;
       border-radius: 3px;
       font-size: 0.7rem;
@@ -273,7 +277,7 @@ export function PolicyControlBlock({ context, config = {} }) {
       addTooltip(accessBadge, restrictionReason);
     } else {
       addTooltip(headerTitle, sectionInfo.description);
-      addTooltip(accessBadge, 'You can modify policies in this domain');
+      addTooltip(accessBadge, "You can modify policies in this domain");
     }
 
     header.appendChild(headerTitle);
@@ -292,34 +296,34 @@ export function PolicyControlBlock({ context, config = {} }) {
       noAccess.style.cssText = `
         text-align: center;
         padding: 1rem;
-        background: ${theme['--warning']}10;
+        background: ${theme["--warning"]}10;
         border-radius: 4px;
-        border: 1px dashed ${theme['--warning']};
+        border: 1px dashed ${theme["--warning"]};
       `;
-      
+
       const icon = document.createElement("div");
       icon.textContent = "🔒";
       icon.style.cssText = `
         font-size: 2rem;
         margin-bottom: 0.5rem;
       `;
-      
+
       const message = document.createElement("div");
       message.textContent = "Access Restricted";
       message.style.cssText = `
         font-weight: bold;
-        color: ${theme['--text']};
+        color: ${theme["--text"]};
         margin-bottom: 0.25rem;
       `;
-      
+
       const reason = document.createElement("div");
       reason.textContent = restrictionReason;
       reason.style.cssText = `
-        color: ${theme['--text-muted']};
+        color: ${theme["--text-muted"]};
         font-size: 0.85rem;
         font-style: italic;
       `;
-      
+
       noAccess.appendChild(icon);
       noAccess.appendChild(message);
       noAccess.appendChild(reason);
@@ -330,23 +334,23 @@ export function PolicyControlBlock({ context, config = {} }) {
         const noPolicies = document.createElement("div");
         noPolicies.textContent = "No policies configured for this domain";
         noPolicies.style.cssText = `
-          color: ${theme['--text-muted']};
+          color: ${theme["--text-muted"]};
           font-style: italic;
           text-align: center;
           padding: 1rem;
-          background: ${theme['--surface']};
+          background: ${theme["--surface"]};
           border-radius: 4px;
-          border: 1px dashed ${theme['--border']};
+          border: 1px dashed ${theme["--border"]};
         `;
         content.appendChild(noPolicies);
       } else {
         Object.entries(sectionPolicies).forEach(([policyKey, policyValue]) => {
           const toggle = createPolicyToggle(
-            sectionKey, 
-            policyKey, 
-            policyValue, 
+            sectionKey,
+            policyKey,
+            policyValue,
             canEditSection,
-            restrictionReason
+            restrictionReason,
           );
           content.appendChild(toggle);
         });
@@ -360,30 +364,36 @@ export function PolicyControlBlock({ context, config = {} }) {
   /**
    * Create individual policy toggle with enhanced tooltips
    */
-  function createPolicyToggle(section, key, value, editable, restrictionReason) {
+  function createPolicyToggle(
+    section,
+    key,
+    value,
+    editable,
+    restrictionReason,
+  ) {
     const row = document.createElement("label");
     row.style.cssText = `
       display: flex;
       justify-content: space-between;
       align-items: center;
       padding: 0.5rem 0;
-      border-bottom: 1px solid ${theme['--border']};
-      cursor: ${editable ? 'pointer' : 'help'};
+      border-bottom: 1px solid ${theme["--border"]};
+      cursor: ${editable ? "pointer" : "help"};
       font-size: 0.85rem;
       transition: background-color 0.2s ease;
     `;
 
     if (!editable) {
-      row.style.opacity = '0.6';
+      row.style.opacity = "0.6";
     }
 
     // Add hover effect for interactive rows
     if (editable) {
-      row.addEventListener('mouseenter', () => {
-        row.style.backgroundColor = theme['--surface-elevated'];
+      row.addEventListener("mouseenter", () => {
+        row.style.backgroundColor = theme["--surface-elevated"];
       });
-      row.addEventListener('mouseleave', () => {
-        row.style.backgroundColor = 'transparent';
+      row.addEventListener("mouseleave", () => {
+        row.style.backgroundColor = "transparent";
       });
     }
 
@@ -400,13 +410,13 @@ export function PolicyControlBlock({ context, config = {} }) {
     name.textContent = formatPolicyName(key);
     name.style.cssText = `
       font-weight: 500;
-      color: ${theme['--text']};
+      color: ${theme["--text"]};
     `;
 
     const description = document.createElement("small");
     description.textContent = getPolicyDescription(key);
     description.style.cssText = `
-      color: ${theme['--text-muted']};
+      color: ${theme["--text-muted"]};
       font-size: 0.75rem;
       line-height: 1.3;
     `;
@@ -430,7 +440,7 @@ export function PolicyControlBlock({ context, config = {} }) {
     toggle.style.cssText = `
       width: 18px;
       height: 18px;
-      cursor: ${editable ? 'pointer' : 'not-allowed'};
+      cursor: ${editable ? "pointer" : "not-allowed"};
     `;
 
     const statusText = document.createElement("span");
@@ -438,7 +448,7 @@ export function PolicyControlBlock({ context, config = {} }) {
     statusText.style.cssText = `
       font-size: 0.75rem;
       font-weight: bold;
-      color: ${value ? theme['--success'] : theme['--error']};
+      color: ${value ? theme["--success"] : theme["--error"]};
       min-width: 25px;
     `;
 
@@ -451,8 +461,11 @@ export function PolicyControlBlock({ context, config = {} }) {
         opacity: 0.7;
         cursor: help;
       `;
-      
-      addTooltip(restrictionIcon, restrictionReason || 'Policy cannot be modified');
+
+      addTooltip(
+        restrictionIcon,
+        restrictionReason || "Policy cannot be modified",
+      );
       toggleContainer.appendChild(restrictionIcon);
     }
 
@@ -467,8 +480,8 @@ export function PolicyControlBlock({ context, config = {} }) {
         cursor: help;
         margin-left: 0.25rem;
       `;
-      
-      const depText = `Depends on: ${dependencies.map(dep => formatPolicyName(dep.split('.')[1])).join(', ')}`;
+
+      const depText = `Depends on: ${dependencies.map((dep) => formatPolicyName(dep.split(".")[1])).join(", ")}`;
       addTooltip(depIcon, depText);
       toggleContainer.appendChild(depIcon);
     }
@@ -477,11 +490,16 @@ export function PolicyControlBlock({ context, config = {} }) {
       toggle.addEventListener("change", async () => {
         await handlePolicyToggle(section, key, toggle.checked);
         statusText.textContent = toggle.checked ? "ON" : "OFF";
-        statusText.style.color = toggle.checked ? theme['--success'] : theme['--error'];
+        statusText.style.color = toggle.checked
+          ? theme["--success"]
+          : theme["--error"];
       });
     } else {
       // Add tooltip explaining why toggle is disabled
-      addTooltip(toggle, restrictionReason || 'You do not have permission to modify this policy');
+      addTooltip(
+        toggle,
+        restrictionReason || "You do not have permission to modify this policy",
+      );
     }
 
     toggleContainer.appendChild(toggle);
@@ -499,27 +517,27 @@ export function PolicyControlBlock({ context, config = {} }) {
   function addTooltip(element, text) {
     if (!text) return;
 
-    element.addEventListener('mouseenter', (e) => {
+    element.addEventListener("mouseenter", (e) => {
       const tooltip = createTooltip(text);
       document.body.appendChild(tooltip);
-      
+
       const rect = element.getBoundingClientRect();
       tooltip.style.left = `${rect.left + rect.width / 2}px`;
       tooltip.style.top = `${rect.top - tooltip.offsetHeight - 8}px`;
-      
+
       // Adjust if tooltip goes off screen
       const tooltipRect = tooltip.getBoundingClientRect();
       if (tooltipRect.left < 10) {
-        tooltip.style.left = '10px';
+        tooltip.style.left = "10px";
       }
       if (tooltipRect.right > window.innerWidth - 10) {
         tooltip.style.left = `${window.innerWidth - tooltipRect.width - 10}px`;
       }
-      
+
       element._tooltip = tooltip;
     });
 
-    element.addEventListener('mouseleave', () => {
+    element.addEventListener("mouseleave", () => {
       if (element._tooltip) {
         element._tooltip.remove();
         element._tooltip = null;
@@ -531,15 +549,15 @@ export function PolicyControlBlock({ context, config = {} }) {
    * Create tooltip element
    */
   function createTooltip(text) {
-    const tooltip = document.createElement('div');
+    const tooltip = document.createElement("div");
     tooltip.textContent = text;
     tooltip.style.cssText = `
       position: absolute;
-      background: ${theme['--surface-elevated']};
-      color: ${theme['--text']};
+      background: ${theme["--surface-elevated"]};
+      color: ${theme["--text"]};
       padding: 0.5rem;
       border-radius: 4px;
-      border: 1px solid ${theme['--border']};
+      border: 1px solid ${theme["--border"]};
       font-size: 0.8rem;
       max-width: 200px;
       z-index: 10000;
@@ -547,9 +565,9 @@ export function PolicyControlBlock({ context, config = {} }) {
       pointer-events: none;
       transform: translateX(-50%);
     `;
-    
+
     // Add arrow
-    const arrow = document.createElement('div');
+    const arrow = document.createElement("div");
     arrow.style.cssText = `
       position: absolute;
       top: 100%;
@@ -559,10 +577,10 @@ export function PolicyControlBlock({ context, config = {} }) {
       height: 0;
       border-left: 5px solid transparent;
       border-right: 5px solid transparent;
-      border-top: 5px solid ${theme['--border']};
+      border-top: 5px solid ${theme["--border"]};
     `;
     tooltip.appendChild(arrow);
-    
+
     return tooltip;
   }
 
@@ -575,25 +593,40 @@ export function PolicyControlBlock({ context, config = {} }) {
       display: flex;
       gap: 0.5rem;
       padding-top: 0.5rem;
-      border-top: 1px solid ${theme['--border']};
+      border-top: 1px solid ${theme["--border"]};
       margin-top: 0.5rem;
     `;
 
     // Refresh button
-    const refreshBtn = createButton("Refresh", "🔄", () => {
-      window.location.reload();
-    }, "Reload the page to refresh policy states");
+    const refreshBtn = createButton(
+      "Refresh",
+      "🔄",
+      () => {
+        window.location.reload();
+      },
+      "Reload the page to refresh policy states",
+    );
 
     // Export button
-    const exportBtn = createButton("Export", "📤", () => {
-      exportPolicies();
-    }, "Export current policy configuration as JSON");
+    const exportBtn = createButton(
+      "Export",
+      "📤",
+      () => {
+        exportPolicies();
+      },
+      "Export current policy configuration as JSON",
+    );
 
     // Import button (if super admin)
-    if (userRole === 'super_admin') {
-      const importBtn = createButton("Import", "📥", () => {
-        importPolicies();
-      }, "Import policy configuration from JSON file");
+    if (userRole === "super_admin") {
+      const importBtn = createButton(
+        "Import",
+        "📥",
+        () => {
+          importPolicies();
+        },
+        "Import policy configuration from JSON file",
+      );
       actionsDiv.appendChild(importBtn);
     }
 
@@ -611,7 +644,7 @@ export function PolicyControlBlock({ context, config = {} }) {
     button.innerHTML = `${icon} ${text}`;
     button.style.cssText = `
       padding: 0.5rem 1rem;
-      background: ${theme['--primary']};
+      background: ${theme["--primary"]};
       color: white;
       border: none;
       border-radius: 4px;
@@ -623,10 +656,10 @@ export function PolicyControlBlock({ context, config = {} }) {
 
     button.addEventListener("click", onClick);
     button.addEventListener("mouseenter", () => {
-      button.style.background = theme['--primary-dark'] || theme['--primary'];
+      button.style.background = theme["--primary-dark"] || theme["--primary"];
     });
     button.addEventListener("mouseleave", () => {
-      button.style.background = theme['--primary'];
+      button.style.background = theme["--primary"];
     });
 
     if (tooltipText) {
@@ -645,10 +678,12 @@ export function PolicyControlBlock({ context, config = {} }) {
       if (enabled) {
         const dependencies = SystemPolicies.getPolicyDependencies(section, key);
         for (const dep of dependencies) {
-          const [depDomain, depKey] = dep.split('.');
+          const [depDomain, depKey] = dep.split(".");
           const depValue = context.getPolicy(depDomain, depKey);
           if (!depValue) {
-            throw new Error(`Cannot enable ${key}: dependency ${dep} is not enabled`);
+            throw new Error(
+              `Cannot enable ${key}: dependency ${dep} is not enabled`,
+            );
           }
         }
       }
@@ -669,7 +704,7 @@ export function PolicyControlBlock({ context, config = {} }) {
           key,
           enabled,
           role: userRole,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
 
@@ -677,16 +712,17 @@ export function PolicyControlBlock({ context, config = {} }) {
       OptimizationAccessControl.auditUserAction(
         userRole,
         `policy_update:${section}.${key}`,
-        { enabled, domain: section }
+        { enabled, domain: section },
       );
 
       console.log(`Policy updated: ${section}.${key} = ${enabled}`);
-
     } catch (error) {
       console.error(`Failed to update policy ${section}.${key}:`, error);
-      
+
       // Revert UI state on error
-      const toggle = container.querySelector(`input[data-policy="${section}.${key}"]`);
+      const toggle = container.querySelector(
+        `input[data-policy="${section}.${key}"]`,
+      );
       if (toggle) {
         toggle.checked = !enabled;
       }
@@ -696,7 +732,7 @@ export function PolicyControlBlock({ context, config = {} }) {
         context.eventFlow.emit("error", {
           message: `Failed to update policy: ${error.message}`,
           level: "medium",
-          context: { section, key, enabled }
+          context: { section, key, enabled },
         });
       }
     }
@@ -709,12 +745,12 @@ export function PolicyControlBlock({ context, config = {} }) {
    */
   function getRoleColor(role) {
     const colors = {
-      super_admin: '#dc3545',
-      db_admin: '#fd7e14',
-      developer: '#20c997',
-      analyst: '#6f42c1',
-      monitor: '#6c757d',
-      guest: '#adb5bd'
+      super_admin: "#dc3545",
+      db_admin: "#fd7e14",
+      developer: "#20c997",
+      analyst: "#6f42c1",
+      monitor: "#6c757d",
+      guest: "#adb5bd",
     };
     return colors[role] || colors.guest;
   }
@@ -724,14 +760,14 @@ export function PolicyControlBlock({ context, config = {} }) {
    */
   function getRoleDescription(role) {
     const descriptions = {
-      super_admin: 'Full system access across all domains and operations',
-      db_admin: 'Database and system optimization access (system, ui, events)',
-      developer: 'Development and UI component access (ui, events)',
-      analyst: 'Analytics and reporting access (user, meta)',
-      monitor: 'Read-only monitoring access (meta)',
-      guest: 'No access - read-only guest user'
+      super_admin: "Full system access across all domains and operations",
+      db_admin: "Database and system optimization access (system, ui, events)",
+      developer: "Development and UI component access (ui, events)",
+      analyst: "Analytics and reporting access (user, meta)",
+      monitor: "Read-only monitoring access (meta)",
+      guest: "No access - read-only guest user",
     };
-    return descriptions[role] || 'Unknown role';
+    return descriptions[role] || "Unknown role";
   }
 
   /**
@@ -739,9 +775,9 @@ export function PolicyControlBlock({ context, config = {} }) {
    */
   function formatPolicyName(key) {
     return key
-      .replace(/_/g, ' ')
-      .replace(/([A-Z])/g, ' $1')
-      .replace(/^./, str => str.toUpperCase())
+      .replace(/_/g, " ")
+      .replace(/([A-Z])/g, " $1")
+      .replace(/^./, (str) => str.toUpperCase())
       .trim();
   }
 
@@ -773,9 +809,9 @@ export function PolicyControlBlock({ context, config = {} }) {
       privacy_mode: "Enhanced privacy protection",
       enable_performance_tracking: "Track system performance",
       enable_error_reporting: "Report errors to monitoring",
-      enable_health_checks: "System health monitoring"
+      enable_health_checks: "System health monitoring",
     };
-    
+
     return descriptions[key] || "Policy configuration option";
   }
 
@@ -787,26 +823,26 @@ export function PolicyControlBlock({ context, config = {} }) {
       policies: context.policies,
       metadata: {
         version: "1.0",
-        domains: allowedDomains
-      }
+        domains: allowedDomains,
+      },
     };
 
     const blob = new Blob([JSON.stringify(export_data, null, 2)], {
-      type: 'application/json'
+      type: "application/json",
     });
-    
+
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = `policies-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `policies-${new Date().toISOString().split("T")[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
   function importPolicies() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
     input.onchange = (e) => {
       const file = e.target.files[0];
       if (file) {
@@ -814,10 +850,10 @@ export function PolicyControlBlock({ context, config = {} }) {
         reader.onload = (e) => {
           try {
             const imported = JSON.parse(e.target.result);
-            console.log('Imported policies:', imported);
+            console.log("Imported policies:", imported);
             // Implementation would update policies here
           } catch (error) {
-            console.error('Invalid policy file:', error);
+            console.error("Invalid policy file:", error);
           }
         };
         reader.readAsText(file);
@@ -837,9 +873,9 @@ export function registerPolicyControlBlock(renderer) {
       title: "System Policy Control",
       padding: "1rem",
       minWidth: "300px",
-      maxHeight: "500px"
+      maxHeight: "500px",
     },
-    dependencies: ["policies", "eventFlow"]
+    dependencies: ["policies", "eventFlow"],
   });
 }
 
@@ -848,8 +884,8 @@ export function createPolicyControl(config = {}) {
     type: "policy_control",
     config: {
       title: "Policy Management",
-      ...config
-    }
+      ...config,
+    },
   };
 }
 

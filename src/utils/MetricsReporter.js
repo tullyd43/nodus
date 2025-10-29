@@ -4,7 +4,7 @@
  * Connects RenderMetrics to HybridStateManager and provides continuous reporting
  */
 
-import RenderMetrics from './RenderMetrics.js';
+import RenderMetrics from "./RenderMetrics.js";
 
 export class MetricsReporter {
   /**
@@ -18,24 +18,24 @@ export class MetricsReporter {
       sampleSize: 60,
       reportInterval: 1000,
       trackLatency: true,
-      trackMemory: true
+      trackMemory: true,
     });
-    
+
     // Cache statistics tracking
     this.cacheStats = {
       hits: 0,
       misses: 0,
       operations: 0,
-      lastReset: Date.now()
+      lastReset: Date.now(),
     };
-    
+
     // Performance thresholds
     this.thresholds = {
       fps: { target: 60, warning: 30, critical: 15 },
       latency: { target: 16, warning: 50, critical: 100 },
-      cacheHitRate: { target: 95, warning: 80, critical: 60 }
+      cacheHitRate: { target: 95, warning: 80, critical: 60 },
     };
-    
+
     this.timer = null;
     this.isRunning = false;
     this.reportCount = 0;
@@ -46,7 +46,7 @@ export class MetricsReporter {
    */
   start() {
     if (this.isRunning) {
-      console.warn('[MetricsReporter] Already running');
+      console.warn("[MetricsReporter] Already running");
       return;
     }
 
@@ -91,7 +91,7 @@ export class MetricsReporter {
     }
 
     this.isRunning = false;
-    console.log('[MetricsReporter] Stopped reporting');
+    console.log("[MetricsReporter] Stopped reporting");
   }
 
   /**
@@ -107,7 +107,7 @@ export class MetricsReporter {
           avgRenderLatency: renderMetrics.avgRenderLatency,
           avgLayoutLatency: renderMetrics.avgLayoutLatency,
           avgInteractionLatency: renderMetrics.avgInteractionLatency,
-          lastUpdated: Date.now()
+          lastUpdated: Date.now(),
         };
 
         // Update memory metrics if available
@@ -116,12 +116,15 @@ export class MetricsReporter {
             ...this.context.stateManager.metrics.memory,
             jsHeapUsed: renderMetrics.memory.usedJSHeapSize,
             jsHeapTotal: renderMetrics.memory.totalJSHeapSize,
-            jsHeapLimit: renderMetrics.memory.jsHeapSizeLimit
+            jsHeapLimit: renderMetrics.memory.jsHeapSizeLimit,
           };
         }
       }
     } catch (error) {
-      console.warn('[MetricsReporter] Failed to update state manager metrics:', error);
+      console.warn(
+        "[MetricsReporter] Failed to update state manager metrics:",
+        error,
+      );
     }
   }
 
@@ -134,21 +137,21 @@ export class MetricsReporter {
     // Check FPS
     if (renderMetrics.fps <= this.thresholds.fps.critical) {
       alerts.push({
-        type: 'fps_critical',
-        metric: 'fps',
+        type: "fps_critical",
+        metric: "fps",
         value: renderMetrics.fps,
         threshold: this.thresholds.fps.critical,
-        severity: 'critical',
-        message: `Critical FPS: ${renderMetrics.fps} (target: ${this.thresholds.fps.target})`
+        severity: "critical",
+        message: `Critical FPS: ${renderMetrics.fps} (target: ${this.thresholds.fps.target})`,
       });
     } else if (renderMetrics.fps <= this.thresholds.fps.warning) {
       alerts.push({
-        type: 'fps_warning',
-        metric: 'fps', 
+        type: "fps_warning",
+        metric: "fps",
         value: renderMetrics.fps,
         threshold: this.thresholds.fps.warning,
-        severity: 'warning',
-        message: `Low FPS: ${renderMetrics.fps} (target: ${this.thresholds.fps.target})`
+        severity: "warning",
+        message: `Low FPS: ${renderMetrics.fps} (target: ${this.thresholds.fps.target})`,
       });
     }
 
@@ -156,32 +159,32 @@ export class MetricsReporter {
     const maxLatency = Math.max(
       renderMetrics.avgRenderLatency,
       renderMetrics.avgLayoutLatency,
-      renderMetrics.avgInteractionLatency
+      renderMetrics.avgInteractionLatency,
     );
 
     if (maxLatency >= this.thresholds.latency.critical) {
       alerts.push({
-        type: 'latency_critical',
-        metric: 'latency',
+        type: "latency_critical",
+        metric: "latency",
         value: maxLatency,
         threshold: this.thresholds.latency.critical,
-        severity: 'critical',
-        message: `Critical latency: ${maxLatency}ms (target: ${this.thresholds.latency.target}ms)`
+        severity: "critical",
+        message: `Critical latency: ${maxLatency}ms (target: ${this.thresholds.latency.target}ms)`,
       });
     } else if (maxLatency >= this.thresholds.latency.warning) {
       alerts.push({
-        type: 'latency_warning',
-        metric: 'latency',
+        type: "latency_warning",
+        metric: "latency",
         value: maxLatency,
         threshold: this.thresholds.latency.warning,
-        severity: 'warning',
-        message: `High latency: ${maxLatency}ms (target: ${this.thresholds.latency.target}ms)`
+        severity: "warning",
+        message: `High latency: ${maxLatency}ms (target: ${this.thresholds.latency.target}ms)`,
       });
     }
 
     // Emit alerts
-    alerts.forEach(alert => {
-      this.context?.eventFlow?.emit('performance_alert', alert);
+    alerts.forEach((alert) => {
+      this.context?.eventFlow?.emit("performance_alert", alert);
     });
   }
 
@@ -204,35 +207,41 @@ export class MetricsReporter {
           latency: {
             render: renderMetrics.avgRenderLatency,
             layout: renderMetrics.avgLayoutLatency,
-            interaction: renderMetrics.avgInteractionLatency
+            interaction: renderMetrics.avgInteractionLatency,
           },
           memory: renderMetrics.memory,
           cumulativeLayoutShift: renderMetrics.cumulativeLayoutShift,
-          firstContentfulPaint: renderMetrics.firstContentfulPaint
+          firstContentfulPaint: renderMetrics.firstContentfulPaint,
         },
         cache: {
           hitRate: cacheHitRate,
           hits: this.cacheStats.hits,
           misses: this.cacheStats.misses,
-          operations: this.cacheStats.operations
+          operations: this.cacheStats.operations,
         },
         system: {
           userAgent: navigator.userAgent,
           viewport: {
             width: window.innerWidth,
-            height: window.innerHeight
+            height: window.innerHeight,
           },
           connection: this.getConnectionInfo(),
-          battery: this.getBatteryInfo()
+          battery: this.getBatteryInfo(),
         },
         thresholds: this.thresholds,
-        alerts: this.detectIssues(renderMetrics, cacheHitRate)
+        alerts: this.detectIssues(renderMetrics, cacheHitRate),
       };
 
       // Record metric in HybridStateManager
       if (this.context?.stateManager?.recordMetric) {
-        this.context.stateManager.recordMetric('ui_performance', report.performance);
-        this.context.stateManager.recordMetric('cache_performance', report.cache);
+        this.context.stateManager.recordMetric(
+          "ui_performance",
+          report.performance,
+        );
+        this.context.stateManager.recordMetric(
+          "cache_performance",
+          report.cache,
+        );
       }
 
       // Emit analytics event
@@ -243,7 +252,7 @@ export class MetricsReporter {
 
       return report;
     } catch (error) {
-      console.error('[MetricsReporter] Error generating report:', error);
+      console.error("[MetricsReporter] Error generating report:", error);
       return null;
     }
   }
@@ -261,13 +270,13 @@ export class MetricsReporter {
    * Get connection information
    */
   getConnectionInfo() {
-    if ('connection' in navigator) {
+    if ("connection" in navigator) {
       const conn = navigator.connection;
       return {
         effectiveType: conn.effectiveType,
         downlink: conn.downlink,
         rtt: conn.rtt,
-        saveData: conn.saveData
+        saveData: conn.saveData,
       };
     }
     return null;
@@ -278,15 +287,18 @@ export class MetricsReporter {
    */
   getBatteryInfo() {
     // Note: Battery API is deprecated in most browsers
-    if ('getBattery' in navigator) {
-      navigator.getBattery().then(battery => {
-        return {
-          charging: battery.charging,
-          level: battery.level,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
-        };
-      }).catch(() => null);
+    if ("getBattery" in navigator) {
+      navigator
+        .getBattery()
+        .then((battery) => {
+          return {
+            charging: battery.charging,
+            level: battery.level,
+            chargingTime: battery.chargingTime,
+            dischargingTime: battery.dischargingTime,
+          };
+        })
+        .catch(() => null);
     }
     return null;
   }
@@ -304,17 +316,17 @@ export class MetricsReporter {
     // Add cache-specific issues
     if (cacheHitRate < this.thresholds.cacheHitRate.critical) {
       issues.push({
-        type: 'low_cache_hit_rate',
-        severity: 'critical',
+        type: "low_cache_hit_rate",
+        severity: "critical",
         message: `Very low cache hit rate: ${cacheHitRate}%`,
-        suggestion: 'Review caching strategy and cache size limits'
+        suggestion: "Review caching strategy and cache size limits",
       });
     } else if (cacheHitRate < this.thresholds.cacheHitRate.warning) {
       issues.push({
-        type: 'suboptimal_cache_hit_rate',
-        severity: 'warning',
+        type: "suboptimal_cache_hit_rate",
+        severity: "warning",
         message: `Suboptimal cache hit rate: ${cacheHitRate}%`,
-        suggestion: 'Consider increasing cache size or improving cache keys'
+        suggestion: "Consider increasing cache size or improving cache keys",
       });
     }
 
@@ -327,14 +339,14 @@ export class MetricsReporter {
   emitAnalyticsEvent(report) {
     try {
       if (this.context?.eventFlow?.emit) {
-        this.context.eventFlow.emit('metrics_update', {
-          type: 'performance_metrics',
+        this.context.eventFlow.emit("metrics_update", {
+          type: "performance_metrics",
           data: report,
-          policies: this.getRelevantPolicies()
+          policies: this.getRelevantPolicies(),
         });
       }
     } catch (error) {
-      console.warn('[MetricsReporter] Failed to emit analytics event:', error);
+      console.warn("[MetricsReporter] Failed to emit analytics event:", error);
     }
   }
 
@@ -347,11 +359,11 @@ export class MetricsReporter {
         return {
           analytics: this.context.policies.system?.enable_analytics || false,
           monitoring: this.context.policies.system?.enable_monitoring || false,
-          debug: this.context.policies.system?.enable_debug_mode || false
+          debug: this.context.policies.system?.enable_debug_mode || false,
         };
       }
     } catch (error) {
-      console.warn('[MetricsReporter] Failed to get policies:', error);
+      console.warn("[MetricsReporter] Failed to get policies:", error);
     }
     return { analytics: false, monitoring: false, debug: false };
   }
@@ -362,23 +374,23 @@ export class MetricsReporter {
   logReport(report) {
     try {
       const policies = this.getRelevantPolicies();
-      
+
       if (policies.debug || policies.monitoring) {
-        console.log('[MetricsReporter] Performance Report:', {
+        console.log("[MetricsReporter] Performance Report:", {
           fps: report.performance.fps,
           latency: report.performance.latency,
           cacheHitRate: report.cache.hitRate,
           issues: report.alerts.length,
-          timestamp: report.timestamp
+          timestamp: report.timestamp,
         });
       }
-      
+
       // Log issues regardless of policy for debugging
       if (report.alerts.length > 0) {
-        console.warn('[MetricsReporter] Performance Issues:', report.alerts);
+        console.warn("[MetricsReporter] Performance Issues:", report.alerts);
       }
     } catch (error) {
-      console.warn('[MetricsReporter] Failed to log report:', error);
+      console.warn("[MetricsReporter] Failed to log report:", error);
     }
   }
 
@@ -403,14 +415,14 @@ export class MetricsReporter {
       hits: 0,
       misses: 0,
       operations: 0,
-      lastReset: Date.now()
+      lastReset: Date.now(),
     };
   }
 
   /**
    * Record custom latency measurement
    */
-  recordLatency(category, latency, operation = 'unknown') {
+  recordLatency(category, latency, operation = "unknown") {
     this.metrics.recordCustomLatency(category, latency);
   }
 
@@ -420,22 +432,22 @@ export class MetricsReporter {
   getCurrentSummary() {
     const renderMetrics = this.metrics.getCurrentMetrics();
     const cacheHitRate = this.calculateCacheHitRate();
-    
+
     return {
       fps: renderMetrics.fps,
       latency: {
         render: renderMetrics.avgRenderLatency,
         layout: renderMetrics.avgLayoutLatency,
-        interaction: renderMetrics.avgInteractionLatency
+        interaction: renderMetrics.avgInteractionLatency,
       },
       cache: {
         hitRate: cacheHitRate,
-        operations: this.cacheStats.operations
+        operations: this.cacheStats.operations,
       },
       memory: renderMetrics.memory,
       issues: this.detectIssues(renderMetrics, cacheHitRate),
       isRunning: this.isRunning,
-      reportCount: this.reportCount
+      reportCount: this.reportCount,
     };
   }
 
@@ -450,9 +462,9 @@ export class MetricsReporter {
       config: {
         interval: this.interval,
         isRunning: this.isRunning,
-        reportCount: this.reportCount
+        reportCount: this.reportCount,
       },
-      summary: this.getCurrentSummary()
+      summary: this.getCurrentSummary(),
     };
   }
 
@@ -462,9 +474,12 @@ export class MetricsReporter {
   updateThresholds(newThresholds) {
     this.thresholds = {
       ...this.thresholds,
-      ...newThresholds
+      ...newThresholds,
     };
-    console.log('[MetricsReporter] Updated performance thresholds:', this.thresholds);
+    console.log(
+      "[MetricsReporter] Updated performance thresholds:",
+      this.thresholds,
+    );
   }
 }
 

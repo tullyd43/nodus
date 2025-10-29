@@ -21,8 +21,8 @@ export class MetricsRegistry {
           target: 60,
           maxExpected: 120,
           format: (value) => `${Math.round(value)} FPS`,
-          policy: { analytics: true, audit: false, ai: true }
-        }
+          policy: { analytics: true, audit: false, ai: true },
+        },
       ],
       [
         "ui_render_latency",
@@ -36,8 +36,8 @@ export class MetricsRegistry {
           target: 16,
           maxExpected: 100,
           format: (value) => `${value.toFixed(1)}ms`,
-          policy: { analytics: true, audit: true, ai: true }
-        }
+          policy: { analytics: true, audit: true, ai: true },
+        },
       ],
       [
         "ui_layout_latency",
@@ -51,13 +51,13 @@ export class MetricsRegistry {
           target: 16,
           maxExpected: 50,
           format: (value) => `${value.toFixed(1)}ms`,
-          policy: { analytics: true, audit: true, ai: true }
-        }
+          policy: { analytics: true, audit: true, ai: true },
+        },
       ],
       [
         "ui_interaction_latency",
         {
-          name: "Interaction Latency", 
+          name: "Interaction Latency",
           unit: "ms",
           description: "Response time between user input and UI update",
           domain: "ui",
@@ -66,8 +66,8 @@ export class MetricsRegistry {
           target: 50,
           maxExpected: 200,
           format: (value) => `${value.toFixed(1)}ms`,
-          policy: { analytics: true, audit: true, ai: true }
-        }
+          policy: { analytics: true, audit: true, ai: true },
+        },
       ],
       [
         "ui_cumulative_layout_shift",
@@ -81,8 +81,8 @@ export class MetricsRegistry {
           target: 0.1,
           maxExpected: 0.5,
           format: (value) => value.toFixed(3),
-          policy: { analytics: true, audit: false, ai: true }
-        }
+          policy: { analytics: true, audit: false, ai: true },
+        },
       ],
 
       // System Performance Metrics
@@ -98,8 +98,8 @@ export class MetricsRegistry {
           target: 95,
           maxExpected: 100,
           format: (value) => `${Math.round(value)}%`,
-          policy: { analytics: true, audit: false, ai: true }
-        }
+          policy: { analytics: true, audit: false, ai: true },
+        },
       ],
       [
         "system_memory_usage",
@@ -113,23 +113,24 @@ export class MetricsRegistry {
           target: 50,
           maxExpected: 200,
           format: (value) => `${(value / (1024 * 1024)).toFixed(1)}MB`,
-          policy: { analytics: true, audit: false, ai: false }
-        }
+          policy: { analytics: true, audit: false, ai: false },
+        },
       ],
       [
         "system_database_query_latency",
         {
           name: "Database Query Latency",
           unit: "ms",
-          description: "Average query execution time from DatabaseOptimizer logs",
+          description:
+            "Average query execution time from DatabaseOptimizer logs",
           domain: "system",
           category: "latency",
           minAcceptable: 0,
           target: 30,
           maxExpected: 500,
           format: (value) => `${value.toFixed(1)}ms`,
-          policy: { analytics: true, audit: true, ai: true }
-        }
+          policy: { analytics: true, audit: true, ai: true },
+        },
       ],
       [
         "system_network_latency",
@@ -143,8 +144,8 @@ export class MetricsRegistry {
           target: 100,
           maxExpected: 2000,
           format: (value) => `${value.toFixed(0)}ms`,
-          policy: { analytics: true, audit: false, ai: true }
-        }
+          policy: { analytics: true, audit: false, ai: true },
+        },
       ],
 
       // Grid-Specific Metrics
@@ -160,8 +161,8 @@ export class MetricsRegistry {
           target: 16,
           maxExpected: 50,
           format: (value) => `${value.toFixed(1)}ms`,
-          policy: { analytics: true, audit: true, ai: true }
-        }
+          policy: { analytics: true, audit: true, ai: true },
+        },
       ],
       [
         "grid_resize_latency",
@@ -175,8 +176,8 @@ export class MetricsRegistry {
           target: 16,
           maxExpected: 50,
           format: (value) => `${value.toFixed(1)}ms`,
-          policy: { analytics: true, audit: true, ai: true }
-        }
+          policy: { analytics: true, audit: true, ai: true },
+        },
       ],
       [
         "grid_layout_save_latency",
@@ -190,8 +191,8 @@ export class MetricsRegistry {
           target: 50,
           maxExpected: 200,
           format: (value) => `${value.toFixed(1)}ms`,
-          policy: { analytics: true, audit: true, ai: false }
-        }
+          policy: { analytics: true, audit: true, ai: false },
+        },
       ],
 
       // Error and Reliability Metrics
@@ -207,8 +208,8 @@ export class MetricsRegistry {
           target: 0,
           maxExpected: 10,
           format: (value) => `${Math.round(value)} errors`,
-          policy: { analytics: true, audit: true, ai: true }
-        }
+          policy: { analytics: true, audit: true, ai: true },
+        },
       ],
       [
         "system_error_rate",
@@ -222,8 +223,8 @@ export class MetricsRegistry {
           target: 0,
           maxExpected: 5,
           format: (value) => `${value.toFixed(2)}%`,
-          policy: { analytics: true, audit: true, ai: true }
-        }
+          policy: { analytics: true, audit: true, ai: true },
+        },
       ],
 
       // User Experience Metrics
@@ -239,8 +240,8 @@ export class MetricsRegistry {
           target: 3000,
           maxExpected: 10000,
           format: (value) => `${(value / 1000).toFixed(1)}s`,
-          policy: { analytics: true, audit: false, ai: true }
-        }
+          policy: { analytics: true, audit: false, ai: true },
+        },
       ],
       [
         "ux_first_contentful_paint",
@@ -254,8 +255,8 @@ export class MetricsRegistry {
           target: 1000,
           maxExpected: 4000,
           format: (value) => `${(value / 1000).toFixed(1)}s`,
-          policy: { analytics: true, audit: false, ai: true }
-        }
+          policy: { analytics: true, audit: false, ai: true },
+        },
       ],
 
       // Business Metrics
@@ -271,8 +272,8 @@ export class MetricsRegistry {
           target: 10,
           maxExpected: 100,
           format: (value) => `${value.toFixed(1)} actions/min`,
-          policy: { analytics: true, audit: false, ai: true }
-        }
+          policy: { analytics: true, audit: false, ai: true },
+        },
       ],
       [
         "business_session_duration",
@@ -281,14 +282,14 @@ export class MetricsRegistry {
           unit: "minutes",
           description: "Average user session length",
           domain: "business",
-          category: "engagement", 
+          category: "engagement",
           minAcceptable: 0,
           target: 15,
           maxExpected: 120,
           format: (value) => `${Math.round(value)} min`,
-          policy: { analytics: true, audit: false, ai: true }
-        }
-      ]
+          policy: { analytics: true, audit: false, ai: true },
+        },
+      ],
     ]);
 
     // Performance tiers for quick classification
@@ -296,7 +297,7 @@ export class MetricsRegistry {
       excellent: { fps: 60, latency: 16, cacheHit: 95 },
       good: { fps: 45, latency: 33, cacheHit: 85 },
       fair: { fps: 30, latency: 50, cacheHit: 75 },
-      poor: { fps: 15, latency: 100, cacheHit: 60 }
+      poor: { fps: 15, latency: 100, cacheHit: 60 },
     };
   }
 
@@ -316,15 +317,17 @@ export class MetricsRegistry {
    */
   register(key, meta) {
     if (!key || !meta) {
-      console.warn('[MetricsRegistry] Invalid metric registration:', key, meta);
+      console.warn("[MetricsRegistry] Invalid metric registration:", key, meta);
       return false;
     }
 
     // Validate required fields
-    const required = ['name', 'unit', 'description', 'domain', 'category'];
+    const required = ["name", "unit", "description", "domain", "category"];
     for (const field of required) {
       if (!meta[field]) {
-        console.warn(`[MetricsRegistry] Missing required field '${field}' for metric '${key}'`);
+        console.warn(
+          `[MetricsRegistry] Missing required field '${field}' for metric '${key}'`,
+        );
         return false;
       }
     }
@@ -335,12 +338,12 @@ export class MetricsRegistry {
       target: 1,
       maxExpected: 100,
       format: (value) => String(value),
-      policy: { analytics: false, audit: false, ai: false }
+      policy: { analytics: false, audit: false, ai: false },
     };
 
     const fullMeta = { ...defaults, ...meta };
     this.registry.set(key, fullMeta);
-    
+
     console.log(`[MetricsRegistry] Registered new metric: ${key}`);
     return true;
   }
@@ -366,11 +369,11 @@ export class MetricsRegistry {
   validate(key, value) {
     const meta = this.get(key);
     if (!meta) {
-      return { valid: false, reason: 'Metric not found' };
+      return { valid: false, reason: "Metric not found" };
     }
 
-    if (typeof value !== 'number' || !isFinite(value)) {
-      return { valid: false, reason: 'Invalid value type' };
+    if (typeof value !== "number" || !isFinite(value)) {
+      return { valid: false, reason: "Invalid value type" };
     }
 
     const result = {
@@ -378,7 +381,7 @@ export class MetricsRegistry {
       value,
       meta,
       status: this.getPerformanceStatus(key, value),
-      formatted: meta.format(value)
+      formatted: meta.format(value),
     };
 
     if (!result.valid) {
@@ -390,42 +393,42 @@ export class MetricsRegistry {
 
   /**
    * Get performance status for a metric value
-   * @param {string} key - Metric identifier  
+   * @param {string} key - Metric identifier
    * @param {number} value - Metric value
    * @returns {string} Performance status
    */
   getPerformanceStatus(key, value) {
     const meta = this.get(key);
-    if (!meta) return 'unknown';
+    if (!meta) return "unknown";
 
     // For latency metrics, lower is better
-    if (meta.category === 'latency') {
-      if (value <= meta.target) return 'excellent';
-      if (value <= meta.target * 2) return 'good';
-      if (value <= meta.target * 3) return 'fair';
-      return 'poor';
+    if (meta.category === "latency") {
+      if (value <= meta.target) return "excellent";
+      if (value <= meta.target * 2) return "good";
+      if (value <= meta.target * 3) return "fair";
+      return "poor";
     }
 
     // For rate/percentage metrics, higher is better
-    if (meta.unit === '%' || meta.unit === 'fps') {
-      if (value >= meta.target) return 'excellent';
-      if (value >= meta.target * 0.8) return 'good';
-      if (value >= meta.target * 0.6) return 'fair';
-      return 'poor';
+    if (meta.unit === "%" || meta.unit === "fps") {
+      if (value >= meta.target) return "excellent";
+      if (value >= meta.target * 0.8) return "good";
+      if (value >= meta.target * 0.6) return "fair";
+      return "poor";
     }
 
     // For count metrics, lower is usually better
-    if (meta.category === 'reliability') {
-      if (value <= meta.target) return 'excellent';
-      if (value <= meta.target * 2) return 'good';
-      if (value <= meta.target * 5) return 'fair';
-      return 'poor';
+    if (meta.category === "reliability") {
+      if (value <= meta.target) return "excellent";
+      if (value <= meta.target * 2) return "good";
+      if (value <= meta.target * 5) return "fair";
+      return "poor";
     }
 
     // Default comparison
-    if (value >= meta.target) return 'excellent';
-    if (value >= meta.minAcceptable) return 'good';
-    return 'poor';
+    if (value >= meta.target) return "excellent";
+    if (value >= meta.minAcceptable) return "good";
+    return "poor";
   }
 
   /**
@@ -516,10 +519,10 @@ export class MetricsRegistry {
    */
   calculatePerformanceScore(metrics) {
     const keyMetrics = [
-      'ui_performance_fps',
-      'ui_render_latency', 
-      'system_cache_hit_rate',
-      'system_error_count'
+      "ui_performance_fps",
+      "ui_render_latency",
+      "system_cache_hit_rate",
+      "system_error_count",
     ];
 
     let totalWeight = 0;
@@ -532,21 +535,22 @@ export class MetricsRegistry {
         const status = this.getPerformanceStatus(metricKey, value);
         const weight = this.getMetricWeight(metricKey);
         const score = this.statusToScore(status);
-        
+
         weightedScore += score * weight;
         totalWeight += weight;
-        
+
         breakdown[metricKey] = {
           value,
           status,
           score,
           weight,
-          formatted: this.get(metricKey)?.format(value) || String(value)
+          formatted: this.get(metricKey)?.format(value) || String(value),
         };
       }
     }
 
-    const overallScore = totalWeight > 0 ? Math.round(weightedScore / totalWeight) : 0;
+    const overallScore =
+      totalWeight > 0 ? Math.round(weightedScore / totalWeight) : 0;
     const overallStatus = this.scoreToStatus(overallScore);
 
     return {
@@ -554,7 +558,7 @@ export class MetricsRegistry {
       status: overallStatus,
       breakdown,
       keyMetrics,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
   }
 
@@ -563,12 +567,12 @@ export class MetricsRegistry {
    */
   getMetricWeight(metricKey) {
     const weights = {
-      'ui_performance_fps': 3,
-      'ui_render_latency': 3,
-      'system_cache_hit_rate': 2,
-      'system_error_count': 2,
-      'grid_drag_latency': 1,
-      'grid_resize_latency': 1
+      ui_performance_fps: 3,
+      ui_render_latency: 3,
+      system_cache_hit_rate: 2,
+      system_error_count: 2,
+      grid_drag_latency: 1,
+      grid_resize_latency: 1,
     };
     return weights[metricKey] || 1;
   }
@@ -582,7 +586,7 @@ export class MetricsRegistry {
       good: 75,
       fair: 50,
       poor: 25,
-      unknown: 0
+      unknown: 0,
     };
     return scores[status] || 0;
   }
@@ -591,10 +595,10 @@ export class MetricsRegistry {
    * Convert numeric score to status
    */
   scoreToStatus(score) {
-    if (score >= 90) return 'excellent';
-    if (score >= 70) return 'good';
-    if (score >= 50) return 'fair';
-    return 'poor';
+    if (score >= 90) return "excellent";
+    if (score >= 70) return "good";
+    if (score >= 50) return "fair";
+    return "poor";
   }
 
   /**
@@ -610,20 +614,20 @@ export class MetricsRegistry {
       if (!meta) continue;
 
       const status = this.getPerformanceStatus(key, value);
-      
-      if (status === 'poor') {
+
+      if (status === "poor") {
         suggestions.push({
           metric: key,
           issue: `Poor ${meta.name}: ${meta.format(value)}`,
           suggestion: this.getImprovementSuggestion(key, meta),
-          priority: 'high'
+          priority: "high",
         });
-      } else if (status === 'fair') {
+      } else if (status === "fair") {
         suggestions.push({
           metric: key,
           issue: `Suboptimal ${meta.name}: ${meta.format(value)}`,
           suggestion: this.getImprovementSuggestion(key, meta),
-          priority: 'medium'
+          priority: "medium",
         });
       }
     }
@@ -639,16 +643,21 @@ export class MetricsRegistry {
    */
   getImprovementSuggestion(key, meta) {
     const suggestions = {
-      'ui_performance_fps': 'Enable performance mode or reduce visual effects',
-      'ui_render_latency': 'Optimize component rendering or reduce DOM complexity',
-      'ui_layout_latency': 'Minimize layout operations during interactions',
-      'system_cache_hit_rate': 'Increase cache size or improve cache key strategy',
-      'system_error_count': 'Review error logs and fix recurring issues',
-      'grid_drag_latency': 'Optimize grid drag handlers or enable performance mode',
-      'grid_resize_latency': 'Simplify resize calculations or debounce updates'
+      ui_performance_fps: "Enable performance mode or reduce visual effects",
+      ui_render_latency:
+        "Optimize component rendering or reduce DOM complexity",
+      ui_layout_latency: "Minimize layout operations during interactions",
+      system_cache_hit_rate:
+        "Increase cache size or improve cache key strategy",
+      system_error_count: "Review error logs and fix recurring issues",
+      grid_drag_latency:
+        "Optimize grid drag handlers or enable performance mode",
+      grid_resize_latency: "Simplify resize calculations or debounce updates",
     };
 
-    return suggestions[key] || `Optimize ${meta.name.toLowerCase()} performance`;
+    return (
+      suggestions[key] || `Optimize ${meta.name.toLowerCase()} performance`
+    );
   }
 
   /**
@@ -658,24 +667,24 @@ export class MetricsRegistry {
   getStats() {
     const domains = this.getDomains();
     const categories = this.getCategories();
-    
+
     return {
       totalMetrics: this.registry.size,
       domains: domains.length,
       categories: categories.length,
-      domainBreakdown: domains.map(domain => ({
+      domainBreakdown: domains.map((domain) => ({
         domain,
-        count: this.getByDomain(domain).length
+        count: this.getByDomain(domain).length,
       })),
-      categoryBreakdown: categories.map(category => ({
+      categoryBreakdown: categories.map((category) => ({
         category,
-        count: this.getByCategory(category).length
+        count: this.getByCategory(category).length,
       })),
       policyBreakdown: {
-        analytics: this.getByPolicy('analytics').length,
-        audit: this.getByPolicy('audit').length,
-        ai: this.getByPolicy('ai').length
-      }
+        analytics: this.getByPolicy("analytics").length,
+        audit: this.getByPolicy("audit").length,
+        ai: this.getByPolicy("ai").length,
+      },
     };
   }
 }
