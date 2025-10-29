@@ -47,7 +47,7 @@ export class StorageLoader {
   /**
    * Create storage instance with dynamic module loading
    */
-  async createStorage(stateManager, authContext, options = {}) {
+  async createStorage(authContext, options = {}) {
     if (!this.#ready) await this.init();
 
     // 1. Determine required modules based on context
@@ -57,7 +57,7 @@ export class StorageLoader {
     const modules = await this.#loadRequiredModules(requiredModules);
     
     // 3. Create lightweight storage instance
-    const storage = new ModularOfflineStorage(stateManager, modules, options);
+    const storage = new ModularOfflineStorage(modules);
     
     await storage.init();
     return storage;
@@ -319,14 +319,10 @@ export class StorageLoader {
  */
 class ModularOfflineStorage {
   #modules;
-  #stateManager;
-  #config;
   #ready = false;
 
-  constructor(stateManager, modules, options = {}) {
-    this.#stateManager = stateManager;
+  constructor(modules) {
     this.#modules = modules;
-    this.#config = options;
   }
 
   async init() {
