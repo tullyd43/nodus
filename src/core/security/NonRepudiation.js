@@ -147,4 +147,63 @@ export class NonRepudiation {
 			return false;
 		}
 	}
+
+	/**
+	 * Creates a digital signature for an action using a key associated with a user certificate.
+	 * This simulates a PKI-based signing process where the key is tied to a user's verified identity.
+	 *
+	 * @param {object} params - The parameters for the signing action.
+	 * @param {object} params.action - An object describing the action being performed.
+	 * @param {object} params.userCert - A mock user certificate object.
+	 * @param {string} params.userCert.subject - The subject of the certificate (e.g., the user's ID).
+	 * @param {string} params.userCert.domain - The security domain associated with the certificate.
+	 * @returns {Promise<{signature: string, certFingerprint: string, algorithm: string, timestamp: string}>} A promise that resolves with the signature and certificate info.
+	 */
+	async signWithCertificate({ action, userCert }) {
+		if (!userCert || !userCert.subject || !userCert.domain) {
+			throw new Error("A valid user certificate object is required.");
+		}
+
+		// 1. Derive a user-specific signing key from the keyring using the cert's domain.
+		// In a real system, this might involve interacting with a hardware token or OS keystore.
+		const userKeyPair = await this.#crypto.keyring.derive(
+			"signing",
+			userCert.domain
+		);
+
+		if (!userKeyPair?.privateKey) {
+			throw new Error(
+				`Could not derive signing key for certificate domain: ${userCert.domain}`
+			);
+		}
+
+		// 2. Create the payload to be signed.
+		const payload = JSON.stringify({
+			subject: userCert.subject,
+			action,
+			ts: Date.now(),
+		});
+
+		// 3. Sign the payload with the user-specific private key.
+		const encodedPayload = new TextEncoder().encode(payload);
+		const signatureBuffer = await crypto.subtle.sign(
+			{ name: "ECDSA", hash: { name: "SHA-256" } },
+			userKeyPair.privateKey,
+			encodedPayload
+		);
+
+		const signature = btoa(
+			String.fromCharCode(...new Uint8Array(signatureBuffer))
+		);
+
+		// 4. Generate a mock fingerprint for the certificate.
+		const certFingerprint = `sha256:${(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(userCert)))).toString()}`;
+
+		return {
+			signature,
+			certFingerprint,
+			algorithm: "ECDSA-P256-SHA256",
+			timestamp: new Date().toISOString(),
+		};
+	}
 }
