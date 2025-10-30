@@ -11,6 +11,7 @@
  * - Client-side access control with cryptographic proof
  */
 export class ComposableSecurity {
+	#mac;
 	#crypto;
 	#context = null;
 	#accessCache = new Map();
@@ -21,12 +22,11 @@ export class ComposableSecurity {
 	#eventListeners;
 	stateManager = null;
 
-	bindStateManager(manager) {
+	constructor(crypto, options = {}, mac) {
+		const manager = options.stateManager;
 		this.stateManager = manager;
-	}
-
-	constructor(crypto, options = {}) {
 		this.#crypto = crypto;
+		this.#mac = mac; // <— inject MAC
 		this.#config = {
 			auditLevel: options.auditLevel || "standard",
 			cacheSize: options.cacheSize || 1000,
@@ -143,6 +143,36 @@ export class ComposableSecurity {
 		return hasAccess;
 	}
 
+	async checkAccess(entity, action) {
+		try {
+			// 1) MAC first (non-bypassable)
+			const subj = this.#mac.subject();
+			const obj = this.#mac.label(entity);
+			if (action === "read") {
+				this.#mac.enforceNoReadUp(subj, obj);
+			} else {
+				this.#mac.enforceNoWriteDown(subj, obj);
+			}
+
+			// 2) RBAC next (your existing role/perm evaluation)
+			const ok = await this.evaluateRBAC(entity, action);
+			if (!ok) throw new Error("RBAC_DENY");
+
+			this.stateManager?.emit?.("accessGranted", {
+				reason: "MAC+RBAC",
+				entityId: entity.id,
+				action,
+			});
+			return true;
+		} catch (err) {
+			this.stateManager?.emit?.("accessDenied", {
+				reason: err.message.includes("MAC") ? "MAC" : "RBAC",
+				entityId: entity?.id,
+				action,
+			});
+			throw new Error("ACCESS_DENIED");
+		}
+	}
 	/**
 	 * Check access to classified data
 	 */
@@ -276,6 +306,15 @@ export class ComposableSecurity {
 	}
 
 	// ===== PRIVATE ACCESS CONTROL METHODS =====
+
+	/**
+	 * Perform the RBAC check (after MAC has passed)
+	 */
+	async evaluateRBAC(entity, action) {
+		// This wraps the existing canAccess logic for RBAC evaluation.
+		const label = this.#mac.label(entity);
+		return this.canAccess(label.level, Array.from(label.compartments));
+	}
 
 	/**
 	 * Perform the actual access check

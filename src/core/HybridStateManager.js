@@ -8,6 +8,7 @@ import { MetricsRegistry } from "../utils/MetricsRegistry.js";
 import AdaptiveRenderer from "./AdaptiveRenderer.js";
 import { componentRegistry } from "./ComponentDefinition.js";
 import { StorageLoader } from "./storage/StorageLoader.js";
+import { MACEngine } from "./security/MACEngine.js";
 
 export class HybridStateManager {
 	constructor(config = {}) {
@@ -242,39 +243,61 @@ export class HybridStateManager {
 
 		try {
 			// 1. Initialize storage loader first (so other systems can use it)
-			await this.initializeStorageSystem(authContext);
+			await this.initializeStorageSystem(authContext, {
+				mac: this.mac,
+			});
 
 			// 2. Initialize event system
 			await this.initializeEventSystem();
 
-			// 3. Load schema from database
+			// Instantiate MAC
+			this.mac = new MACEngine({
+				getUserClearance: this.securityContext.getUserClearance,
+				getObjectLabel: this.securityContext.getObjectLabel,
+			});
+
+			// Create storage loader (pass mac + demoMode explicitly)
+			this.storage.loader = new StorageLoader({
+				baseURL: "/src/core/storage/modules/", // ensure absolute path works in dev
+				demoMode: Boolean(this.config.demoMode), // <— top-level
+				preloadModules: this.config.demoMode ? ["demo-crypto"] : [],
+				cacheModules: true,
+				mac: this.mac, // <— pass MAC down
+			});
+
+			await this.storage.loader.init();
+
+			// Create storage instance with user context + demo flag
+			this.storage.instance = await this.storage.loader.createStorage(
+				authContext,
+				{
+					demoMode: Boolean(this.config.demoMode),
+					enableSync: this.config?.sync?.enableSync === true, // load sync stack only if explicitly true
+					realtimeSync: this.config?.sync?.realtime === true,
+				}
+			);
+
+			this.storage.ready = true;
+
+			// Link HybridStateManager ↔ ModularOfflineStorage
+			this.storage.instance.bindStateManager?.(this);
+
+			// Load schema from database
 			await this.loadDatabaseSchema();
 
-			// 4. Load type definitions from database schema
+			// Load type definitions from database schema
 			await this.loadTypeDefinitionsFromSchema();
 
-			// 5. Initialize persistent queue
+			// Initialize persistent queue
 			await this.clientState.pendingOperations.initialize?.();
 
-			// 6. Load essential managers (lazy-loaded to keep bundle small)
+			// Load essential managers (lazy-loaded to keep bundle small)
 			await this.loadManager("offline");
 			await this.loadManager("embedding");
 			await this.loadManager("extension");
 			await this.loadManager("validation");
 
-			// 6. Discover server capabilities from extensions
-			// await this.discoverServerCapabilities();
-
-			// 7. Load active plugins based on configuration
-			// await this.loadActivePlugins();
-
-			// 8. Load component definitions into adaptive renderer
-			// await this.loadComponentDefinitions();
-
-			// 9. Set up MVVM bindings
-			// this.setupViewModelBindings();
-
-			// 10. Start performance monitoring if enabled
+			// Start performance monitoring if enabled
 			if (this.config.performanceMode) {
 				this.startPerformanceMonitoring();
 			}
@@ -373,43 +396,59 @@ export class HybridStateManager {
 
 		const startTime = performance.now();
 
-		try {
-			// Create storage loader
-			this.storage.loader = new StorageLoader({
-				demoMode: this.config.demoMode, // Pass the top-level flag for consistency
-				baseURL: "/src/core/storage/modules/",
-				preloadModules: this.config.storageConfig.demoMode
-					? ["demo-crypto"]
-					: [],
-				cacheModules: true,
-			});
+		// Create or update a security context (top-level config takes precedence)
+		this.securityContext = {
+			getUserClearance: () => {
+				const lvl =
+					this.config?.auth?.clearanceLevel ||
+					authContext?.clearanceLevel ||
+					"unclassified";
+				const comps = new Set(
+					this.config?.auth?.compartments ||
+						authContext?.compartments ||
+						[]
+				);
+				return { level: lvl, compartments: comps };
+			},
+			getObjectLabel: (entityOrLabel) => {
+				if (!entityOrLabel)
+					return { level: "unclassified", compartments: new Set() };
+				// Allow passing either an entity or a pre-made label
+				const e = entityOrLabel;
+				const level = e.classification || e.level || "unclassified";
+				const comps = new Set(e.compartments || e.compartment || []);
+				return { level, compartments: comps };
+			},
+		};
 
-			await this.storage.loader.init();
+		// Instantiate MAC
+		this.mac = new MACEngine({
+			getUserClearance: this.securityContext.getUserClearance,
+			getObjectLabel: this.securityContext.getObjectLabel,
+		});
 
-			// Create storage instance with user context
-			this.storage.instance = await this.storage.loader.createStorage(
-				authContext,
-				this.config.storageConfig
-			);
+		// Create storage loader (pass mac + demoMode explicitly)
+		this.storage.loader = new StorageLoader({
+			baseURL: "/src/core/storage/modules/", // ensure absolute path works in dev
+			demoMode: Boolean(this.config.demoMode), // <— top-level
+			preloadModules: this.config.demoMode ? ["demo-crypto"] : [],
+			cacheModules: true,
+			mac: this.mac, // <— pass MAC down
+		});
 
-			// Link HybridStateManager ↔ ModularOfflineStorage
-			this.storage.instance.bindStateManager?.(this);
+		await this.storage.loader.init();
 
-			this.storage.ready = true;
-			this.storage.config = this.config.storageConfig;
+		// Create storage instance with user context + demo flag
+		this.storage.instance = await this.storage.loader.createStorage(
+			authContext,
+			{
+				demoMode: Boolean(this.config.demoMode),
+				enableSync: this.config?.sync?.enableSync === true,
+				realtimeSync: this.config?.sync?.realtime === true,
+			}
+		);
 
-			this.metrics.storage.loadTime = performance.now() - startTime;
-
-			console.log(
-				`[HybridStateManager] Dynamic storage initialized with modules: ${this.storage.instance.modules.join(", ")}`
-			);
-		} catch (error) {
-			console.error(
-				"[HybridStateManager] Storage initialization failed:",
-				error
-			);
-			throw error;
-		}
+		this.storage.ready = true;
 	}
 
 	/**

@@ -1207,6 +1207,26 @@ BEGIN
 END;
 $$;
 
+
+-- ===============================================================
+-- NODUS SECURITY MODULES (added at the bottom, before final commit)
+-- ===============================================================
+
+\echo 'Installing: 001_security_polyinstantiation.sql'
+\i db/001_security_polyinstantiation.sql
+
+\echo 'Installing: 002_cds_workflow.sql'
+\i db/002_cds_workflow.sql
+
+\echo 'Installing: 003_crypto_domains.sql'
+\i db/003_crypto_domains.sql
+
+COMMIT;
+
+\echo '✅ Nodus Database Initialization Complete.'
+
+
+
 COMMIT;
 
 -- ======================================================================

@@ -1,46 +1,52 @@
-// core/storage/StorageLoader.js
-// Dynamic module loading based on classification and RBAC requirements
+// ============================================================================
+// StorageLoader.js
+// Dynamic module system + transparent cryptographic I/O by classification
+// Demo-mode aware, MAC-aware, event-safe
+// ============================================================================
 
-/**
- * Storage Loader - Dynamic Module System
- *
- * PHILOSOPHY ALIGNMENT:
- * ✅ Performance: Only loads needed security modules (15KB → 3KB initial)
- * ✅ Composability: Modules compose based on runtime requirements
- * ✅ Extensibility: New security modules can be added without core changes
- * ✅ Simplicity: Clean API hides complexity of dynamic loading
- */
+import { ClassificationCrypto } from "@core/security/ClassificationCrypto.js";
+import { InMemoryKeyring } from "@core/security/Keyring.js";
+import { getCryptoDomain } from "@core/security/CryptoDomain.js";
+
 export class StorageLoader {
 	#loadedModules = new Map();
 	#config;
+	#mac = null;
 	#ready = false;
 
 	constructor(options = {}) {
+		// Default to secure-by-default: if demoMode is undefined, encryption is ON.
 		this.#config = {
 			baseURL: options.baseURL ?? "/modules/",
-			demoMode: options.demoMode ?? false,
-			preloadModules: options.preloadModules ?? [],
 			cacheModules: options.cacheModules !== false,
+			preloadModules: options.preloadModules ?? [],
+			demoMode: options.demoMode ?? false, // set true only if explicitly in AppConfig
+			mac: options.mac ?? null,
 			...options,
 		};
+		this.#mac = this.#config.mac;
+
 		console.log(
-			"[StorageLoader] Initialized with demoMode:",
-			this.#config.demoMode
+			`[StorageLoader] Initialized with demoMode: ${this.#config.demoMode}`
 		);
+
+		// Crypto router (keyring can be swapped later to a KMS/HSM-backed one)
+		this.crypto = new ClassificationCrypto({
+			keyring: new InMemoryKeyring(),
+		});
 	}
 
-	/**
-	 * Initialize with minimal footprint
-	 */
 	async init() {
 		if (this.#ready) return this;
-
-		// Only load core validation first (tiny footprint)
 		await this.#loadCoreValidation();
 
-		// Preload specified modules
-		for (const moduleName of this.#config.preloadModules) {
-			await this.#loadModule(moduleName);
+		// Optional preloads (e.g., "demo-crypto" in demo mode)
+		for (const m of this.#config.preloadModules) {
+			try {
+				await this.#loadModule(m);
+			} catch (e) {
+				console.warn(`[StorageLoader] Preload failed for ${m}:`, e);
+			}
 		}
 
 		this.#ready = true;
@@ -48,93 +54,83 @@ export class StorageLoader {
 		return this;
 	}
 
-	/**
-	 * Create storage instance with dynamic module loading
-	 */
-	async createStorage(authContext, options = {}) {
+	async createStorage(authContext = {}, options = {}) {
 		if (!this.#ready) await this.init();
 
-		// 1. Determine required modules based on context
-		const requiredModules = await this.#analyzeRequirements(
+		const requirements = await this.#analyzeRequirements(
 			authContext,
 			options
 		);
+		const modules = await this.#loadRequiredModules(requirements);
 
-		// 2. Load only necessary modules
-		const modules = await this.#loadRequiredModules(requiredModules);
-
-		// 3. Create lightweight storage instance
-		const storage = new ModularOfflineStorage(modules, options);
+		const storage = new ModularOfflineStorage(modules, {
+			demoMode: this.#config.demoMode,
+			mac: this.#mac,
+			crypto: this.crypto,
+		});
 
 		await storage.init();
 		return storage;
 	}
 
-	/**
-	 * Analyze what modules are needed based on user context
-	 */
+	// --------------------------------------------------------------------------
+	// Requirements analysis (keeps your existing logic; honors demoMode)
+	// --------------------------------------------------------------------------
 	async #analyzeRequirements(authContext, options) {
-		const requirements = {
-			core: ["base-validation", "indexeddb-adapter"],
+		// Demo mode forces tiny stack
+		if (this.#config.demoMode) {
+			return {
+				core: ["validation-stack"],
+				security: ["basic-security"],
+				crypto: ["demo-crypto"],
+				sync: [],
+			};
+		}
+
+		const req = {
+			core: ["validation-stack"],
 			security: [],
-			sync: [],
 			crypto: [],
+			sync: [],
 		};
 
-		// Analyze security requirements
-		if (this.#config.demoMode || options.demoMode) {
-			requirements.crypto.push("demo-crypto");
-			requirements.security.push("basic-security");
-		} else if (options.securityEnabled === false) {
+		// Security/crypto selection
+		if (options.securityEnabled === false) {
 			console.log("[StorageLoader] Security modules disabled by config.");
-			// No security module needed, but crypto might still be.
 		} else {
-			const clearanceLevel = authContext.clearanceLevel || "internal";
+			const clearanceLevel = (
+				authContext.clearanceLevel || "internal"
+			).toLowerCase();
 
 			if (this.#isNATOClassification(clearanceLevel)) {
-				requirements.security.push(
-					"nato-security",
-					"compartment-security"
-				);
-				requirements.crypto.push(
-					"zero-knowledge-crypto",
-					"key-rotation"
-				);
+				req.security.push("nato-security", "compartment-security");
+				req.crypto.push("zero-knowledge-crypto", "key-rotation");
 			} else if (this.#isHighSecurity(clearanceLevel)) {
-				requirements.security.push("enterprise-security");
-				requirements.crypto.push("aes-crypto", "key-rotation");
+				req.security.push("enterprise-security");
+				req.crypto.push("aes-crypto", "key-rotation");
 			} else {
-				requirements.security.push("basic-security");
-				requirements.crypto.push("basic-crypto");
+				req.security.push("basic-security");
+				req.crypto.push("basic-crypto");
 			}
 		}
 
-		// Analyze sync requirements
+		// Sync modules, only if explicitly enabled
 		if (options.enableSync === true) {
-			requirements.sync.push("conflict-resolution");
-
-			if (options.realtimeSync) {
-				requirements.sync.push("realtime-sync");
-			} else {
-				requirements.sync.push("batch-sync");
-			}
+			req.sync.push("conflict-resolution");
+			if (options.realtimeSync) req.sync.push("realtime-sync");
 		}
 
-		// Analyze validation requirements
-		if (options.strictValidation) {
-			requirements.core.push("strict-validation");
-		}
+		// Strict/custom validation
+		if (options.strictValidation) req.core.push("strict-validator");
+		if (options.customValidators?.length > 0)
+			req.core.push("custom-validator");
 
-		if (options.customValidators?.length > 0) {
-			requirements.core.push("custom-validators");
-		}
-
-		return requirements;
+		return req;
 	}
 
-	/**
-	 * Load required modules dynamically
-	 */
+	// --------------------------------------------------------------------------
+	// Dynamic loading stacks
+	// --------------------------------------------------------------------------
 	async #loadRequiredModules(requirements) {
 		const modules = {
 			validation: null,
@@ -144,53 +140,37 @@ export class StorageLoader {
 			indexeddb: null,
 		};
 
-		// Load validation modules
 		modules.validation = await this.#loadValidationStack(requirements.core);
-
-		// Load security modules
 		modules.security = await this.#loadSecurityStack(requirements.security);
-
-		// Load crypto modules
 		modules.crypto = await this.#loadCryptoStack(requirements.crypto);
 
-		// Load sync modules
 		if (requirements.sync.length > 0) {
 			modules.sync = await this.#loadSyncStack(requirements.sync);
 		}
 
-		// Load IndexedDB adapter
 		modules.indexeddb = await this.#loadModule("indexeddb-adapter");
-
 		return modules;
 	}
 
-	/**
-	 * Load validation module stack
-	 */
 	async #loadValidationStack(requirements) {
 		const ValidationStack = await this.#loadModule("validation-stack");
-
 		const validators = [];
-		for (const req of requirements) {
-			if (req === "strict-validation") {
-				validators.push(await this.#loadModule("strict-validator"));
-			} else if (req === "custom-validators") {
-				validators.push(await this.#loadModule("custom-validator"));
-			}
-		}
 
+		for (const r of requirements) {
+			if (r === "strict-validator")
+				validators.push(await this.#loadModule("strict-validator"));
+			if (r === "custom-validator")
+				validators.push(await this.#loadModule("custom-validator"));
+		}
 		return new ValidationStack(validators);
 	}
 
-	/**
-	 * Load security module stack
-	 */
 	async #loadSecurityStack(requirements) {
-		let SecurityClass;
+		let SecurityClass = null;
 		const securityModules = [];
 
-		for (const req of requirements) {
-			switch (req) {
+		for (const r of requirements) {
+			switch (r) {
 				case "nato-security":
 					SecurityClass = await this.#loadModule("nato-security");
 					break;
@@ -209,19 +189,15 @@ export class StorageLoader {
 					break;
 			}
 		}
-
-		return new SecurityClass(securityModules);
+		return SecurityClass ? new SecurityClass(securityModules) : null;
 	}
 
-	/**
-	 * Load crypto module stack
-	 */
 	async #loadCryptoStack(requirements) {
-		let CryptoClass;
+		let CryptoClass = null;
 		const cryptoModules = [];
 
-		for (const req of requirements) {
-			switch (req) {
+		for (const r of requirements) {
+			switch (r) {
 				case "zero-knowledge-crypto":
 					CryptoClass = await this.#loadModule(
 						"zero-knowledge-crypto"
@@ -241,106 +217,73 @@ export class StorageLoader {
 					break;
 			}
 		}
-
-		return new CryptoClass(cryptoModules);
+		return CryptoClass ? new CryptoClass(cryptoModules) : null;
 	}
 
-	/**
-	 * Load sync module stack
-	 */
 	async #loadSyncStack(requirements) {
 		const SyncStack = await this.#loadModule("sync-stack");
-
 		const syncModules = [];
-		for (const req of requirements) {
-			syncModules.push(await this.#loadModule(req));
+		for (const r of requirements) {
+			syncModules.push(await this.#loadModule(r));
 		}
-
 		return new SyncStack(syncModules);
 	}
 
-	/**
-	 * Load individual module with caching
-	 */
+	// Single module loader with cache
 	async #loadModule(moduleName) {
 		if (this.#loadedModules.has(moduleName)) {
 			return this.#loadedModules.get(moduleName);
 		}
 
-		try {
-			console.log(`[StorageLoader] Loading module: ${moduleName}`);
+		console.log(`[StorageLoader] Loading module: ${moduleName}`);
+		const moduleURL = `${this.#config.baseURL}${moduleName}.js`;
+		const mod = await import(/* @vite-ignore */ moduleURL);
+		const ModuleClass = mod.default || mod[this.#toPascalCase(moduleName)];
 
-			const moduleURL = `${this.#config.baseURL}${moduleName}.js`;
-			const module = await import(/* @vite-ignore */ moduleURL);
-
-			const ModuleClass =
-				module.default || module[this.#toPascalCase(moduleName)];
-
-			if (this.#config.cacheModules) {
-				this.#loadedModules.set(moduleName, ModuleClass);
-			}
-
-			return ModuleClass;
-		} catch (error) {
-			console.error(
-				`[StorageLoader] Failed to load module ${moduleName}:`,
-				error
-			);
-			throw new Error(`Module loading failed: ${moduleName}`);
-		}
+		if (this.#config.cacheModules)
+			this.#loadedModules.set(moduleName, ModuleClass);
+		return ModuleClass;
 	}
 
-	/**
-	 * Load minimal core validation (always needed)
-	 */
 	async #loadCoreValidation() {
 		if (!this.#loadedModules.has("core-validation")) {
-			// Inline minimal validation for instant startup
-			const CoreValidation = class {
+			// Minimal instant validator for bootstrapping
+			class CoreValidation {
 				validateBasic(entity) {
 					const errors = [];
-					if (!entity.id) errors.push("Missing ID");
-					if (!entity.entity_type) errors.push("Missing entity_type");
+					if (!entity?.id) errors.push("Missing ID");
+					if (!entity?.entity_type)
+						errors.push("Missing entity_type");
 					return { valid: errors.length === 0, errors };
 				}
-			};
-
+			}
 			this.#loadedModules.set("core-validation", CoreValidation);
 		}
 	}
 
-	/**
-	 * Check if classification requires NATO security
-	 */
-	#isNATOClassification(clearanceLevel) {
-		const natoLevels = [
+	// --------------------------------------------------------------------------
+	// Helpers
+	// --------------------------------------------------------------------------
+	#isNATOClassification(level) {
+		const nato = [
 			"nato_restricted",
 			"nato_confidential",
 			"nato_secret",
 			"cosmic_top_secret",
 		];
-		return natoLevels.includes(clearanceLevel);
+		return nato.includes(level);
 	}
-
-	/**
-	 * Check if classification requires high security
-	 */
-	#isHighSecurity(clearanceLevel) {
-		const highSecurityLevels = ["confidential", "secret", "top_secret"];
-		return highSecurityLevels.includes(clearanceLevel);
+	#isHighSecurity(level) {
+		const high = ["confidential", "secret", "top_secret"];
+		return high.includes(level);
 	}
-
-	/**
-	 * Convert kebab-case to PascalCase
-	 */
 	#toPascalCase(str) {
-		return str
+		return String(str)
 			.split("-")
-			.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+			.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
 			.join("");
 	}
 
-	// Getters
 	get isReady() {
 		return this.#ready;
 	}
@@ -349,59 +292,54 @@ export class StorageLoader {
 	}
 }
 
-/**
- * Modular Offline Storage - Lightweight core with dynamic modules
- */
+// ============================================================================
+// ModularOfflineStorage
+// Holds instantiated modules (indexeddb, security, validation, crypto, sync)
+// Adds MAC enforcement + transparent encryption/decryption in put/get.
+// ============================================================================
 class ModularOfflineStorage {
 	#modules;
 	#ready = false;
+	#mac = null;
+	#crypto = null;
+	#demoMode = false;
+
 	stateManager = null;
 
 	constructor(moduleClasses, config) {
+		this.#mac = config.mac || null;
+		this.#crypto = config.crypto || null;
+		this.#demoMode = Boolean(config.demoMode);
+
+		// Instantiate modules (support classes or instances)
 		this.#modules = {};
-		for (const moduleType in moduleClasses) {
-			if (moduleClasses[moduleType]) {
-				if (moduleType === "indexeddb") {
-					this.#modules[moduleType] = new moduleClasses[moduleType](
-						config.dbName,
-						config.version,
-						config
-					);
-				} else if (
-					["validation", "security", "crypto", "sync"].includes(
-						moduleType
-					)
-				) {
-					const MaybeClass = moduleClasses[moduleType];
-					if (typeof MaybeClass === "function") {
-						this.#modules[moduleType] = new MaybeClass(config);
-					} else {
-						this.#modules[moduleType] = MaybeClass;
-					}
-				} else {
-					this.#modules[moduleType] = new moduleClasses[moduleType](
-						config
-					);
-				}
+		for (const type in moduleClasses) {
+			const Cls = moduleClasses[type];
+			if (!Cls) continue;
+
+			if (
+				[
+					"validation",
+					"security",
+					"crypto",
+					"sync",
+					"indexeddb",
+				].includes(type)
+			) {
+				this.#modules[type] =
+					typeof Cls === "function" ? new Cls(config) : Cls;
 			}
 		}
 	}
 
 	async init() {
 		if (this.#ready) return this;
-		const initOrder = [
-			"indexeddb",
-			"crypto",
-			"security",
-			"validation",
-			"sync",
-		];
-		for (const moduleType of initOrder) {
-			if (
-				this.#modules[moduleType] &&
-				typeof this.#modules[moduleType].init === "function"
-			) {
-				await this.#modules[moduleType].init();
+
+		const order = ["indexeddb", "crypto", "security", "validation", "sync"];
+		for (const t of order) {
+			const m = this.#modules[t];
+			if (m && typeof m.init === "function") {
+				await m.init();
 			}
 		}
 		this.#ready = true;
@@ -409,89 +347,164 @@ class ModularOfflineStorage {
 		return this;
 	}
 
-	/**
-	 * Bind the HybridStateManager so modules can emit global events.
-	 */
 	bindStateManager(manager) {
 		this.stateManager = manager;
-		for (const mod of Object.values(this.#modules)) {
-			if (typeof mod.bindStateManager === "function") {
-				mod.bindStateManager(manager);
-			}
+		for (const m of Object.values(this.#modules)) {
+			if (typeof m?.bindStateManager === "function")
+				m.bindStateManager(manager);
 		}
 	}
 
-	/**
-	 * Basic CRUD passthroughs to IndexedDB Adapter
-	 */
-	async put(store, item) {
-		const result = await this.#modules.indexeddb?.put(store, item);
-		this.stateManager?.emit?.("entitySaved", { store, item });
-		return result;
+	// --------------------------------------------------------------------------
+	// MAC helpers
+	// --------------------------------------------------------------------------
+	#subject() {
+		return (
+			this.#mac?.subject?.() || {
+				level: "unclassified",
+				compartments: new Set(),
+			}
+		);
+	}
+	#label(obj) {
+		// Expecting obj.classification (text) and obj.compartments (array)
+		const classification = obj?.classification ?? "unclassified";
+		const compartments = Array.isArray(obj?.compartments)
+			? obj.compartments
+			: [];
+		return { level: classification, compartments: new Set(compartments) };
 	}
 
+	// --------------------------------------------------------------------------
+	// Transparent encrypted writes
+	// --------------------------------------------------------------------------
+	async put(store, item) {
+		if (!this.#modules.indexeddb?.put) {
+			throw new Error("IndexedDB adapter not loaded");
+		}
+
+		// Enforce Bell–LaPadula "no write down"
+		if (this.#mac) {
+			this.#mac.enforceNoWriteDown(this.#subject(), this.#label(item));
+		}
+
+		let record = { ...item };
+
+		// Encrypt when not in demo mode
+		if (!this.#demoMode && this.#crypto) {
+			const label = {
+				classification: record.classification ?? "unclassified",
+				compartments: record.compartments ?? [],
+			};
+			const plaintext = new TextEncoder().encode(JSON.stringify(record));
+			const envelope = await this.#crypto.encrypt(label, plaintext);
+
+			record = {
+				...record,
+				ciphertext: envelope.ciphertext,
+				iv: envelope.iv,
+				alg: envelope.alg,
+				kid: envelope.kid,
+				tag: envelope.tag,
+				encrypted: true,
+			};
+			console.log(
+				`[Storage] Encryption applied for domain: ${getCryptoDomain(label)}`
+			);
+		}
+
+		const res = await this.#modules.indexeddb.put(store, record);
+		this.stateManager?.emit?.("entitySaved", { store, item: record });
+		return res;
+	}
+
+	// --------------------------------------------------------------------------
+	// Transparent decrypted reads
+	// --------------------------------------------------------------------------
 	async get(store, id) {
-		return this.#modules.indexeddb?.get(store, id);
+		const raw = await this.#modules.indexeddb?.get?.(store, id);
+		if (!raw) return null;
+
+		// Enforce No Read Up on the stored label, not decoded payload
+		if (this.#mac) {
+			try {
+				this.#mac.enforceNoReadUp(this.#subject(), this.#label(raw));
+			} catch {
+				return null;
+			}
+		}
+
+		if (!this.#demoMode && this.#crypto && raw.encrypted) {
+			const label = {
+				classification: raw.classification ?? "unclassified",
+				compartments: raw.compartments ?? [],
+			};
+			const plaintext = await this.#crypto.decrypt(label, {
+				ciphertext: raw.ciphertext,
+				iv: raw.iv,
+				alg: raw.alg,
+				kid: raw.kid,
+				tag: raw.tag,
+			});
+			const obj = JSON.parse(new TextDecoder().decode(plaintext));
+			console.log(
+				`[Storage] Decryption OK for domain: ${getCryptoDomain(label)}`
+			);
+			return obj;
+		}
+
+		return raw;
 	}
 
 	async delete(store, id) {
-		const result = await this.#modules.indexeddb?.delete(store, id);
-		this.stateManager?.emit?.("entityDeleted", { store, id });
-		return result;
-	}
+		// Prevent info leak: only delete if subject can read current row
+		const item = await this.get(store, id);
+		if (!item) return;
 
-	async query(store, index, query) {
-		return this.#modules.indexeddb?.queryByIndex(store, index, query);
-	}
-
-	// Delegate to appropriate modules
-	async save() {
-		const validation = this.#modules.validation;
-		const security = this.#modules.security;
-		const indexeddb = this.#modules.indexeddb;
-
-		// Use loaded modules for operation
-		return this.#performSave(validation, security, indexeddb);
-	}
-
-	async load() {
-		const security = this.#modules.security;
-		const crypto = this.#modules.crypto;
-		const indexeddb = this.#modules.indexeddb;
-
-		return this.#performLoad(security, crypto, indexeddb);
-	}
-
-	async sync(options = {}) {
-		if (!this.#modules.sync) {
-			throw new Error("Sync module not loaded");
+		if (!this.#modules.indexeddb?.delete) {
+			throw new Error("IndexedDB adapter not loaded");
 		}
 
-		return this.#modules.sync.performSync(options);
+		// Treat delete as write on the container → enforce no write down
+		if (this.#mac) {
+			this.#mac.enforceNoWriteDown(this.#subject(), this.#label(item));
+		}
+
+		const res = await this.#modules.indexeddb.delete(store, id);
+		this.stateManager?.emit?.("entityDeleted", { store, id });
+		return res;
 	}
 
-	// Private implementation methods
-	async #performSave(validation, security, indexeddb) {
-		// Implementation using loaded modules
-		// This is where the actual save logic goes
-		console.log(
-			"[ModularOfflineStorage] Performing save with loaded modules"
+	async query(store, index, value) {
+		const out = await this.#modules.indexeddb?.queryByIndex?.(
+			store,
+			index,
+			value
 		);
-		return { saved: 0, skipped: 0 };
+		return this.#filterReadable(out || []);
 	}
 
-	async #performLoad(security, crypto, indexeddb) {
-		// Implementation using loaded modules
-		console.log(
-			"[ModularOfflineStorage] Performing load with loaded modules"
-		);
-		return { loaded: 0, skipped: 0 };
+	async getAll(store) {
+		const raw = await this.#modules.indexeddb?.getAll?.(store);
+		return this.#filterReadable(raw || []);
 	}
 
-	// Getters
-	get isReady() {
-		return this.#ready;
+	#filterReadable(list) {
+		if (!Array.isArray(list)) return [];
+		if (!this.#mac) return list; // dev fallback
+		const s = this.#subject();
+		const filtered = [];
+		for (const it of list) {
+			try {
+				this.#mac.enforceNoReadUp(s, this.#label(it));
+				filtered.push(it);
+			} catch {
+				/* skip */
+			}
+		}
+		return filtered;
 	}
+
 	get modules() {
 		return Object.keys(this.#modules);
 	}
