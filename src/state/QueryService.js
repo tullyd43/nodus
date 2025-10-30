@@ -3,6 +3,7 @@
  * @description A unified search service that queries across local state, plugins, and AI embeddings.
  * It provides a single interface for global search, integrating results from multiple sources.
  */
+import { ErrorHelpers } from "../utils/ErrorHelpers.js";
 
 /**
  * @class QueryService
@@ -12,21 +13,39 @@
 export class QueryService {
 	/**
 	 * Creates an instance of QueryService.
-	 * @param {import('../core/HybridStateManager.js').default} stateManager - The main application state manager.
-	 * @param {import('../core/ManifestPluginSystem.js').default} pluginSystem - The plugin management system.
-	 * @param {import('./EmbeddingManager.js').default} embeddingManager - The manager for AI-powered semantic search.
+	 * @param {object} dependencies - The dependencies for the service.
+	 * @param {import('../core/HybridStateManager.js').default} dependencies.stateManager - The main state manager.
+	 * @param {import('../core/ManifestPluginSystem.js').default} dependencies.pluginSystem - The plugin system.
+	 * @param {import('./EmbeddingManager.js').default} dependencies.embeddingManager - The embedding manager.
+	 * @param {import('../managers/CacheManager.js').CacheManager} [dependencies.cacheManager] - The central cache manager.
+	 * @param {import('../utils/MetricsRegistry.js').MetricsRegistry} dependencies.metricsRegistry - The central metrics registry.
 	 */
-	constructor(stateManager, pluginSystem, embeddingManager) {
+	constructor({
+		stateManager,
+		pluginSystem,
+		embeddingManager,
+		cacheManager,
+		metricsRegistry,
+	}) {
 		/** @type {import('../core/HybridStateManager.js').default} */
 		this.stateManager = stateManager;
 		/** @type {import('../core/ManifestPluginSystem.js').default} */
 		this.pluginSystem = pluginSystem;
 		/** @type {import('./EmbeddingManager.js').default} */
 		this.embeddingManager = embeddingManager;
-		/** @private @type {Map<string, {results: any[], timestamp: number}>} */
-		this.cache = new Map(); // Query result cache
-		/** @private @type {number} */
-		this.cacheTTL = 60000; // 1 minute cache
+		/** @type {import('../utils/MetricsRegistry.js').MetricsRegistry|undefined} */
+		this.metrics = metricsRegistry?.namespace("query");
+
+		// Use the central cache manager for integrated caching
+		this.cache = cacheManager?.getCache("queries", 200, { ttl: 60000 }); // 1 min TTL
+		// Create a dedicated error boundary for this service
+		this.errorBoundary = ErrorHelpers.createErrorBoundary(
+			{
+				eventFlow: this.stateManager?.eventFlow,
+				managers: this.stateManager?.managers,
+			},
+			"QueryService"
+		);
 	}
 
 	/**
@@ -34,33 +53,37 @@ export class QueryService {
 	 * @public
 	 * @param {string} query - The search query string.
 	 * @param {object} [options={}] - Search options.
-	 * @param {string[]} [options.domains=[]] - An array of domains to limit the search to (e.g., 'entities', 'plugins').
+	 * @param {string[]} [options.domains=[]] - Domains to limit search to (e.g., 'entities', 'plugins').
 	 * @param {number} [options.limit=50] - The maximum number of results to return.
 	 * @param {boolean} [options.includeAI=true] - Whether to include results from the AI semantic search.
 	 * @returns {Promise<any[]>} A promise that resolves with a sorted list of search results.
 	 */
 	async search(query, options = {}) {
-		if (!query || typeof query !== "string") return [];
+		return this.metrics?.timerAsync("search.duration", async () => {
+			if (!query || typeof query !== "string") return [];
 
-		const cacheKey = `${query}:${JSON.stringify(options)}`;
-		const cached = this.getFromCache(cacheKey);
-		if (cached) return cached;
+			const cacheKey = `${query}:${JSON.stringify(options)}`;
+			const cached = this.cache?.get(cacheKey);
+			if (cached) {
+				this.metrics?.increment("cache_hit");
+				return cached;
+			}
 
-		const results = [];
-		const { domains = [], limit = 50, includeAI = true } = options;
+			this.metrics?.increment("cache_miss");
+			const results = [];
+			const { domains = [], limit = 50, includeAI = true } = options;
 
-		try {
 			// 1️⃣ Local entities from HybridStateManager
 			const localResults = await this.searchLocalEntities(query, domains);
 			results.push(...localResults);
 
 			// 2️⃣ Plugin results
-			const pluginResults = await this.searchPlugins(query, options);
+			const pluginResults = await this.searchPlugins(query, domains);
 			results.push(...pluginResults);
 
 			// 3️⃣ AI Embeddings (if enabled and available)
 			if (includeAI && this.embeddingManager) {
-				const aiResults = await this.searchEmbeddings(query, options);
+				const aiResults = await this.searchEmbeddings(query, { limit });
 				results.push(...aiResults);
 			}
 
@@ -68,13 +91,10 @@ export class QueryService {
 			const rankedResults = this.rankResults(results).slice(0, limit);
 
 			// Cache the results
-			this.setCache(cacheKey, rankedResults);
+			this.cache?.set(cacheKey, rankedResults);
 
 			return rankedResults;
-		} catch (error) {
-			console.error("[QueryService] Search failed:", error);
-			return [];
-		}
+		});
 	}
 
 	/**
@@ -85,16 +105,15 @@ export class QueryService {
 	 * @returns {Promise<any[]>} A promise that resolves with an array of local search results.
 	 */
 	async searchLocalEntities(query, domains = []) {
-		if (!this.stateManager?.queryLocalEntities) {
-			return [];
-		}
-
-		try {
+		return this.errorBoundary.tryAsync(async () => {
+			if (!this.stateManager?.queryLocalEntities) {
+				return [];
+			}
 			const results = await this.stateManager.queryLocalEntities(query);
 
 			// Filter by domains if specified
 			if (domains.length > 0) {
-				return results.filter(
+				return (results || []).filter(
 					(result) =>
 						domains.includes(result.domain) ||
 						domains.includes(result.type)
@@ -102,50 +121,48 @@ export class QueryService {
 			}
 
 			return results;
-		} catch (error) {
-			console.warn("[QueryService] Local entity search failed:", error);
-			return [];
-		}
+		});
 	}
 
 	/**
 	 * Searches for results across all active and searchable plugins.
 	 * @private
 	 * @param {string} query - The search query.
-	 * @param {object} options - The search options to pass to the plugins.
+	 * @param {string[]} domains - The domains to search within.
 	 * @returns {Promise<any[]>} A promise that resolves with an array of results from plugins.
 	 */
-	async searchPlugins(query, options) {
-		if (!this.pluginSystem?.activePlugins) {
-			return [];
-		}
+	async searchPlugins(query, domains) {
+		return this.errorBoundary.tryAsync(async () => {
+			if (!this.pluginSystem?.activePlugins) {
+				return [];
+			}
 
-		const results = [];
+			const searchPromises = [];
 
-		for (const plugin of this.pluginSystem.activePlugins) {
-			if (typeof plugin.search === "function") {
-				try {
-					const pluginResults = await plugin.search(query, options);
-
-					// Add plugin metadata to results
-					const enrichedResults = pluginResults.map((result) => ({
-						...result,
-						source: "plugin",
-						pluginId: plugin.id,
-						pluginName: plugin.name || plugin.id,
-					}));
-
-					results.push(...enrichedResults);
-				} catch (err) {
-					console.warn(
-						`[QueryService] Plugin search failed: ${plugin.id}`,
-						err
-					);
+			for (const plugin of this.pluginSystem.activePlugins) {
+				if (typeof plugin.search === "function") {
+					// Wrap each plugin search in its own error boundary to prevent one failing plugin from stopping others
+					const pluginSearch = ErrorHelpers.captureAsync(
+						() => plugin.search(query, { domains }),
+						this.stateManager?.eventFlow,
+						{ component: `Plugin.${plugin.id}` }
+					).then((pluginResults) => {
+						if (!pluginResults) return [];
+						// Add plugin metadata to results
+						return pluginResults.map((result) => ({
+							...result,
+							source: "plugin",
+							pluginId: plugin.id,
+							pluginName: plugin.name || plugin.id,
+						}));
+					});
+					searchPromises.push(pluginSearch);
 				}
 			}
-		}
 
-		return results;
+			const allPluginResults = await Promise.all(searchPromises);
+			return allPluginResults.flat().filter(Boolean);
+		});
 	}
 
 	/**
@@ -156,11 +173,10 @@ export class QueryService {
 	 * @returns {Promise<any[]>} A promise that resolves with an array of AI-powered search results.
 	 */
 	async searchEmbeddings(query, options) {
-		if (!this.embeddingManager?.semanticSearch) {
-			return [];
-		}
-
-		try {
+		return this.errorBoundary.tryAsync(async () => {
+			if (!this.embeddingManager?.semanticSearch) {
+				return [];
+			}
 			const aiResults = await this.embeddingManager.semanticSearch(
 				query,
 				{
@@ -169,16 +185,15 @@ export class QueryService {
 				}
 			);
 
+			if (!aiResults) return [];
+
 			// Add AI metadata to results
 			return aiResults.map((result) => ({
 				...result,
 				source: "ai",
 				searchType: "semantic",
 			}));
-		} catch (error) {
-			console.warn("[QueryService] AI search failed:", error);
-			return [];
-		}
+		});
 	}
 
 	/**
@@ -222,26 +237,22 @@ export class QueryService {
 	 * @returns {Promise<string[]>} A promise that resolves with an array of suggestion strings.
 	 */
 	async getSuggestions(partialQuery, limit = 5) {
-		if (!partialQuery || partialQuery.length < 2) return [];
-
-		try {
+		return this.errorBoundary.tryAsync(async () => {
+			if (!partialQuery || partialQuery.length < 2) return [];
 			const results = await this.search(partialQuery, {
 				limit: limit * 2,
 			});
+
+			if (!results) return [];
 
 			// Extract unique suggestion terms
 			const suggestions = new Set();
 
 			results.forEach((result) => {
-				if (result.title) {
-					suggestions.add(result.title);
-				}
-				if (result.name) {
-					suggestions.add(result.name);
-				}
-				if (result.tags) {
+				if (result.title) suggestions.add(result.title);
+				if (result.name) suggestions.add(result.name);
+				if (result.tags)
 					result.tags.forEach((tag) => suggestions.add(tag));
-				}
 			});
 
 			return Array.from(suggestions)
@@ -251,44 +262,7 @@ export class QueryService {
 						.includes(partialQuery.toLowerCase())
 				)
 				.slice(0, limit);
-		} catch (error) {
-			console.warn("[QueryService] Suggestions failed:", error);
-			return [];
-		}
-	}
-
-	/**
-	 * Retrieves results from the cache if they are valid and not expired.
-	 * @private
-	 * @param {string} key - The cache key for the query.
-	 * @returns {any[]|null} The cached results, or null if not found or expired.
-	 */
-	getFromCache(key) {
-		const cached = this.cache.get(key);
-		if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
-			return cached.results;
-		}
-		this.cache.delete(key);
-		return null;
-	}
-
-	/**
-	 * Stores a set of query results in the cache.
-	 * @private
-	 * @param {string} key - The cache key for the query.
-	 * @param {any[]} results - The search results to cache.
-	 */
-	setCache(key, results) {
-		this.cache.set(key, {
-			results,
-			timestamp: Date.now(),
 		});
-
-		// Cleanup old cache entries
-		if (this.cache.size > 100) {
-			const oldestKey = this.cache.keys().next().value;
-			this.cache.delete(oldestKey);
-		}
 	}
 
 	/**
@@ -305,10 +279,9 @@ export class QueryService {
 	 * @returns {{cacheSize: number, cacheTTL: number, localSearchAvailable: boolean, pluginSearchAvailable: boolean, aiSearchAvailable: boolean}}
 	 * An object containing analytics data.
 	 */
-	getAnalytics() {
+	getStats() {
 		return {
-			cacheSize: this.cache.size,
-			cacheTTL: this.cacheTTL,
+			cache: this.cache?.getMetrics(),
 			localSearchAvailable: !!this.stateManager?.queryLocalEntities,
 			pluginSearchAvailable: !!this.pluginSystem?.activePlugins?.length,
 			aiSearchAvailable: !!this.embeddingManager?.semanticSearch,

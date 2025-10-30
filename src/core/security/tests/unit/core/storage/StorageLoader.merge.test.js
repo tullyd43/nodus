@@ -1,7 +1,7 @@
 // tests/unit/core/storage/StorageLoader.merge.test.js
 
-import { describe, test, expect, beforeEach, vi } from "vitest";
 import { StorageLoader } from "@core/storage/StorageLoader.js";
+import { describe, test, expect, beforeEach } from "vitest";
 
 describe("StorageLoader - _mergePolyRows", () => {
 	let storageInstance;

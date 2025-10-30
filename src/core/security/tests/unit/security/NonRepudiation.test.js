@@ -1,7 +1,7 @@
 // tests/unit/security/NonRepudiation.test.js
 
-import { describe, test, expect, beforeEach, vi } from "vitest";
 import { NonRepudiation } from "@core/security/NonRepudiation.js";
+import { describe, test, expect, beforeEach, vi } from "vitest";
 
 describe("NonRepudiation", () => {
 	let signer;

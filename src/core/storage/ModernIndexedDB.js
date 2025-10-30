@@ -148,7 +148,9 @@ export class ModernIndexedDB {
 	async put(storeName, value) {
 		if (!this.#isReady) throw new Error("Database not initialized.");
 		return new Promise((resolve, reject) => {
-			const transaction = this.#db.transaction(storeName, "readwrite");
+			const transaction = this.#db.transaction(storeName, "readwrite", {
+				durability: "strict",
+			});
 			const store = transaction.objectStore(storeName);
 			const request = store.put(value);
 			request.onsuccess = () => resolve(request.result);
@@ -165,7 +167,9 @@ export class ModernIndexedDB {
 	async putBulk(storeName, values) {
 		if (!this.#isReady) throw new Error("Database not initialized.");
 		return new Promise((resolve, reject) => {
-			const transaction = this.#db.transaction(storeName, "readwrite");
+			const transaction = this.#db.transaction(storeName, "readwrite", {
+				durability: "strict",
+			});
 			const store = transaction.objectStore(storeName);
 			transaction.oncomplete = () => resolve();
 			transaction.onerror = (event) => reject(event.target.error);
@@ -185,7 +189,9 @@ export class ModernIndexedDB {
 	async delete(storeName, key) {
 		if (!this.#isReady) throw new Error("Database not initialized.");
 		return new Promise((resolve, reject) => {
-			const transaction = this.#db.transaction(storeName, "readwrite");
+			const transaction = this.#db.transaction(storeName, "readwrite", {
+				durability: "strict",
+			});
 			const store = transaction.objectStore(storeName);
 			const request = store.delete(key);
 			request.onsuccess = () => resolve();
@@ -201,7 +207,9 @@ export class ModernIndexedDB {
 	async clear(storeName) {
 		if (!this.#isReady) throw new Error("Database not initialized.");
 		return new Promise((resolve, reject) => {
-			const transaction = this.#db.transaction(storeName, "readwrite");
+			const transaction = this.#db.transaction(storeName, "readwrite", {
+				durability: "strict",
+			});
 			const store = transaction.objectStore(storeName);
 			const request = store.clear();
 			request.onsuccess = () => resolve();

@@ -5,6 +5,8 @@
  * and the `AILayoutAssistant` to provide a fully-featured, modern grid experience.
  */
 
+/* eslint-env browser */
+
 import AILayoutAssistant from "./AILayoutAssistant.js";
 import EnhancedGridRenderer from "./EnhancedGridRenderer.js";
 import GridPolicyHelper, {
@@ -111,7 +113,10 @@ export class CompleteGridSystem {
 	 * @returns {Promise<void>}
 	 */
 	async initializeGridEnhancer() {
-		const container = document.querySelector(this.options.gridContainer);
+		const container =
+			this.options.gridContainer instanceof HTMLElement
+				? this.options.gridContainer
+				: document.querySelector(this.options.gridContainer);
 		if (!container) {
 			throw new Error("Grid container not found");
 		}

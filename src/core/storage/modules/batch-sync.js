@@ -313,7 +313,7 @@ export default class BatchSync {
 			}
 
 			// Send batch to server
-			const response = await this.#sendBatchRequest(payload);
+			await this.#sendBatchRequest(payload);
 
 			// Update metrics
 			const processingTime = performance.now() - startTime;

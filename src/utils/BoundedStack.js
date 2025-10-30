@@ -1,3 +1,6 @@
+import { DateCore } from "./DateUtils.js"; // DateCore is now the lean, integrated version
+import { AppError } from "./ErrorHelpers.js";
+
 /**
  * @class BoundedStack
  * @description A memory-efficient stack with a fixed capacity. When the stack exceeds its maximum size,
@@ -10,11 +13,46 @@ export class BoundedStack {
 	/**
 	 * Creates an instance of BoundedStack.
 	 * @param {number} [maxSize=50] - The maximum number of items the stack can hold before evicting the oldest ones.
+	 * @param {object} [options={}] - Configuration options for the stack.
+	 * @param {string} [options.name=""] - A name for the stack, used for namespacing metrics.
+	 * @param {import('./MetricsRegistry').MetricsRegistry} [options.metricsRegistry=null] - An external metrics registry to report to.
+	 * @param {object} [options.eventFlow=null] - The application's EventFlowEngine instance for emitting audit events.
 	 */
-	constructor(maxSize = 50) {
+	constructor(maxSize = 50, options = {}) {
+		if (
+			typeof maxSize !== "number" ||
+			!Number.isInteger(maxSize) ||
+			maxSize <= 0
+		) {
+			throw new AppError(
+				"BoundedStack maxSize must be a positive integer.",
+				{
+					category: "configuration_error",
+					severity: "high",
+					context: { maxSize },
+				}
+			);
+		}
+
 		this.maxSize = maxSize;
 		this.items = [];
 		this.evictionCount = 0; // Track how many items have been evicted
+
+		this.options = {
+			name: "",
+			metricsRegistry: null,
+			eventFlow: null,
+			...options,
+		};
+
+		// Use a namespaced registry if provided, otherwise use the main one
+		if (this.options.metricsRegistry && this.options.name) {
+			this.registry = this.options.metricsRegistry.namespace(
+				`stack.${this.options.name}`
+			);
+		} else if (this.options.metricsRegistry) {
+			this.registry = this.options.metricsRegistry;
+		}
 	}
 
 	/**
@@ -27,19 +65,21 @@ export class BoundedStack {
 		// Add timestamp for operation tracking
 		const stackItem = {
 			data: item,
-			timestamp: Date.now(),
+			timestamp: DateCore.timestamp(),
 			id: this.generateItemId(),
 		};
 
 		this.items.push(stackItem);
+		this.registry?.increment("pushes");
 
 		// Evict oldest items if over limit
 		while (this.items.length > this.maxSize) {
 			const evicted = this.items.shift();
 			this.evictionCount++;
 
+			this.registry?.increment("evictions");
 			// Notify about eviction for cleanup if a callback is set
-			this._onEvict?.(evicted);
+			this.handleEviction(evicted, "capacity");
 		}
 
 		return stackItem.id;
@@ -54,6 +94,7 @@ export class BoundedStack {
 			return undefined;
 		}
 		const item = this.items.pop();
+		this.registry?.increment("pops");
 		return item.data;
 	}
 
@@ -122,6 +163,7 @@ export class BoundedStack {
 	clear() {
 		const clearedCount = this.items.length;
 		this.items = [];
+		this.registry?.increment("clears", clearedCount);
 		return clearedCount;
 	}
 
@@ -181,11 +223,12 @@ export class BoundedStack {
 			evictionCount: this.evictionCount,
 			oldestItemAge:
 				this.items.length > 0
-					? Date.now() - this.items[0].timestamp
+					? DateCore.timestamp() - this.items[0].timestamp
 					: 0,
 			newestItemAge:
 				this.items.length > 0
-					? Date.now() - this.items[this.items.length - 1].timestamp
+					? DateCore.timestamp() -
+						this.items[this.items.length - 1].timestamp
 					: 0,
 			memoryEstimate: this.estimateMemoryUsage(),
 		};
@@ -253,20 +296,12 @@ export class BoundedStack {
 	}
 
 	/**
-	 * Sets a callback function to be invoked when an item is evicted from the stack.
-	 * @param {function(object): void} callback - The function to call with the evicted stack item.
-	 */
-	set onEvict(callback) {
-		this._onEvict = callback;
-	}
-
-	/**
 	 * Generates a unique ID for a stack item.
 	 * @private
 	 * @returns {string} A unique identifier string.
 	 */
 	generateItemId() {
-		return `stack_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+		return `stack_${DateCore.timestamp()}_${Math.random().toString(36).substr(2, 9)}`;
 	}
 
 	/**
@@ -306,6 +341,8 @@ export class BoundedStack {
 		const removeCount = this.items.length - newSize;
 		const removed = this.items.splice(0, removeCount);
 		this.evictionCount += removed.length;
+		removed.forEach((item) => this.handleEviction(item, "trim"));
+		this.registry?.increment("evictions", removed.length);
 
 		return removed.length;
 	}
@@ -332,15 +369,35 @@ export class BoundedStack {
 	 * @returns {number} The number of items removed.
 	 */
 	removeItemsOlderThan(maxAge) {
-		const cutoffTime = Date.now() - maxAge;
+		const cutoffTime = DateCore.timestamp() - maxAge;
 		let removeCount = 0;
 
 		while (this.items.length > 0 && this.items[0].timestamp < cutoffTime) {
-			this.items.shift();
+			const evicted = this.items.shift();
 			removeCount++;
 			this.evictionCount++;
+			this.handleEviction(evicted, "age");
+			this.registry?.increment("evictions", removeCount);
 		}
 
 		return removeCount;
+	}
+
+	/**
+	 * Handles the eviction of an item, invoking the callback and emitting an event.
+	 * @private
+	 * @param {object} evictedItem - The item that was evicted.
+	 * @param {string} reason - The reason for eviction ('capacity', 'trim', 'age').
+	 */
+	handleEviction(evictedItem, reason) {
+		// Emit to event flow if available
+		if (this.options.eventFlow) {
+			this.options.eventFlow.emit("stack_eviction", {
+				timestamp: DateCore.now(),
+				source: `stack:${this.options.name || "generic"}`,
+				reason,
+				item: evictedItem,
+			});
+		}
 	}
 }

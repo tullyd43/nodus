@@ -1,9 +1,12 @@
+import { DateCore } from "./DateUtils.js";
+
 /**
  * @class RenderMetrics
  * @description A utility class for collecting and analyzing real-time rendering performance metrics.
  * It tracks Frames Per Second (FPS), various latency types (render, layout, interaction),
  * memory usage, and other web vital statistics like Cumulative Layout Shift (CLS).
  *
+ * @borrows DateCore.timestamp as timestamp
  * @property {object} options - Configuration options for the metrics collector.
  * @property {number} fps - The current calculated Frames Per Second.
  * @property {number} frameCount - The total number of frames tracked since the last calculation.
@@ -11,6 +14,11 @@
  * @property {PerformanceObserver|null} performanceObserver - The observer for browser performance entries.
  */
 export class RenderMetrics {
+	/**
+	 * @borrows DateCore.timestamp as timestamp
+	 */
+	static timestamp = DateCore.timestamp;
+
 	/**
 	 * Creates an instance of RenderMetrics.
 	 * @param {object} [options={}] - Configuration options for the metrics collector.
@@ -31,7 +39,7 @@ export class RenderMetrics {
 		// FPS tracking
 		this.fps = 0;
 		this.frameCount = 0;
-		this.lastFrameTime = performance.now();
+		this.lastFrameTime = RenderMetrics.timestamp();
 		this.frameTimes = [];
 
 		// Latency tracking
@@ -146,7 +154,7 @@ export class RenderMetrics {
 		const metrics = this.getCurrentMetrics();
 		this.metricsHistory.push({
 			...metrics,
-			timestamp: Date.now(),
+			timestamp: RenderMetrics.timestamp(),
 		});
 
 		// Keep only last 100 entries
@@ -223,7 +231,7 @@ export class RenderMetrics {
 		this.renderLatencies.push({
 			latency,
 			operation,
-			timestamp: Date.now(),
+			timestamp: RenderMetrics.timestamp(),
 		});
 
 		// Keep only recent latencies
@@ -244,7 +252,7 @@ export class RenderMetrics {
 		this.layoutLatencies.push({
 			latency,
 			operation,
-			timestamp: Date.now(),
+			timestamp: RenderMetrics.timestamp(),
 		});
 
 		if (this.layoutLatencies.length > this.options.sampleSize) {
@@ -265,7 +273,7 @@ export class RenderMetrics {
 		this.interactionLatencies.push({
 			latency,
 			interaction,
-			timestamp: Date.now(),
+			timestamp: RenderMetrics.timestamp(),
 		});
 
 		if (this.interactionLatencies.length > this.options.sampleSize) {
@@ -306,7 +314,7 @@ export class RenderMetrics {
 
 		this.layoutShifts.push({
 			value,
-			timestamp: Date.now(),
+			timestamp: RenderMetrics.timestamp(),
 		});
 
 		// Keep only recent shifts

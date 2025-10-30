@@ -581,7 +581,6 @@ export class EventFlowEngine {
 	registerBuiltinConditions() {
 		// Time-based condition
 		this.conditions.set("time_range", (conditionDef, event) => {
-			const now = Date.now();
 			const eventTime = event.timestamp;
 
 			if (conditionDef.after && eventTime < conditionDef.after)
@@ -641,8 +640,16 @@ export class EventFlowEngine {
 		this.actionHandlers.set("log_error", (action, event, flow) => {
 			const level = action.level || "info";
 			const message = action.message || `Event: ${event.type}`;
-
-			console[level](`[EventFlow:${flow.id}] ${message}`, event.data);
+			const allowedLevels = {
+				log: console.log,
+				warn: console.warn,
+				error: console.error,
+				info: console.info,
+				debug: console.debug,
+			};
+			// Default to console.log if an invalid level is provided
+			const logFn = allowedLevels[level] || console.log;
+			logFn(`[EventFlow:${flow.id}] ${message}`, event.data || "");
 		});
 
 		// Notification action

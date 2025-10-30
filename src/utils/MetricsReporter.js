@@ -1,9 +1,11 @@
 /**
  * MetricsReporter.js
+ * v7.2 - Now fully integrated with MetricsRegistry and rich LRUCache metrics.
  * Bridges runtime metrics to analytics, state manager, and policies for Nodus V7.1
  * Connects RenderMetrics to HybridStateManager and provides continuous reporting
  */
 
+import { DateCore } from "./DateUtils.js";
 import RenderMetrics from "./RenderMetrics.js";
 
 /**
@@ -12,35 +14,26 @@ import RenderMetrics from "./RenderMetrics.js";
  * with the application's state manager, event flow, and analytics systems. It periodically
  * collects, reports, and checks metrics against performance thresholds.
  *
- * @property {object} context - The global system context.
- * @property {number} interval - The reporting interval in milliseconds.
- * @property {RenderMetrics} metrics - The instance of the `RenderMetrics` tracker.
- * @property {object} cacheStats - Statistics for cache performance.
- * @property {object} thresholds - Configurable performance thresholds for alerting.
- * @property {boolean} isRunning - A flag indicating if the reporter is active.
  */
 export class MetricsReporter {
 	/**
 	 * @param {object} context - The global system context containing `stateManager`, `eventFlow`, etc.
+	 * @param {object} context.managers - The collection of system managers (metricsRegistry, cacheManager, etc.).
 	 * @param {number} [intervalMs=5000] - The interval in milliseconds for generating reports.
 	 */
 	constructor(context, intervalMs = 5000) {
 		this.context = context;
 		this.interval = intervalMs;
-		this.metrics = new RenderMetrics({
+
+		// Core metric sources
+		this.renderMetrics = new RenderMetrics({
 			sampleSize: 60,
 			reportInterval: 1000,
 			trackLatency: true,
 			trackMemory: true,
 		});
-
-		// Cache statistics tracking
-		this.cacheStats = {
-			hits: 0,
-			misses: 0,
-			operations: 0,
-			lastReset: Date.now(),
-		};
+		this.metricsRegistry = context.managers?.metricsRegistry || null;
+		this.cacheManager = context.managers?.cacheManager || null;
 
 		// Performance thresholds
 		this.thresholds = {
@@ -65,10 +58,10 @@ export class MetricsReporter {
 		}
 
 		// Start render metrics tracking
-		this.metrics.startTracking();
+		this.renderMetrics.startTracking();
 
 		// Set up FPS updates to state manager
-		this.fpsUnsubscribe = this.metrics.onUpdate((metrics) => {
+		this.fpsUnsubscribe = this.renderMetrics.onUpdate((metrics) => {
 			this.updateStateManagerMetrics(metrics);
 			this.checkPerformanceAlerts(metrics);
 		});
@@ -94,7 +87,7 @@ export class MetricsReporter {
 		}
 
 		// Stop render metrics
-		this.metrics.stopTracking();
+		this.renderMetrics.stopTracking();
 
 		// Unsubscribe from FPS updates
 		if (this.fpsUnsubscribe) {
@@ -127,7 +120,7 @@ export class MetricsReporter {
 					avgRenderLatency: renderMetrics.avgRenderLatency,
 					avgLayoutLatency: renderMetrics.avgLayoutLatency,
 					avgInteractionLatency: renderMetrics.avgInteractionLatency,
-					lastUpdated: Date.now(),
+					lastUpdated: DateCore.timestamp(),
 				};
 
 				// Update memory metrics if available
@@ -207,7 +200,10 @@ export class MetricsReporter {
 
 		// Emit alerts
 		alerts.forEach((alert) => {
-			this.context?.eventFlow?.emit("performance_alert", alert);
+			this.context?.eventFlow?.emit("performance_alert", {
+				...alert,
+				context: this.context, // Pass full context for richer handling
+			});
 		});
 	}
 
@@ -219,13 +215,12 @@ export class MetricsReporter {
 	generateReport() {
 		try {
 			this.reportCount++;
-			const renderMetrics = this.metrics.getCurrentMetrics();
-			const cacheHitRate = this.calculateCacheHitRate();
-			const timestamp = new Date().toISOString();
+			const renderMetrics = this.renderMetrics.getCurrentMetrics();
+			const timestamp = DateCore.now();
 
 			const report = {
 				timestamp,
-				reportId: `metrics_${Date.now()}_${this.reportCount}`,
+				reportId: `metrics_${DateCore.timestamp()}_${this.reportCount}`,
 				performance: {
 					fps: renderMetrics.fps,
 					frameCount: renderMetrics.frameCount,
@@ -238,12 +233,10 @@ export class MetricsReporter {
 					cumulativeLayoutShift: renderMetrics.cumulativeLayoutShift,
 					firstContentfulPaint: renderMetrics.firstContentfulPaint,
 				},
-				cache: {
-					hitRate: cacheHitRate,
-					hits: this.cacheStats.hits,
-					misses: this.cacheStats.misses,
-					operations: this.cacheStats.operations,
-				},
+				core: this.metricsRegistry ? this.metricsRegistry.getAll() : {},
+				caches: this.cacheManager
+					? this.cacheManager.getAllMetrics()
+					: {},
 				system: {
 					userAgent: navigator.userAgent,
 					viewport: {
@@ -254,7 +247,7 @@ export class MetricsReporter {
 					battery: this.getBatteryInfo(),
 				},
 				thresholds: this.thresholds,
-				alerts: this.detectIssues(renderMetrics, cacheHitRate),
+				alerts: this.detectIssues(renderMetrics),
 			};
 
 			// Record metric in HybridStateManager
@@ -262,10 +255,6 @@ export class MetricsReporter {
 				this.context.stateManager.recordMetric(
 					"ui_performance",
 					report.performance
-				);
-				this.context.stateManager.recordMetric(
-					"cache_performance",
-					report.cache
 				);
 			}
 
@@ -280,17 +269,6 @@ export class MetricsReporter {
 			console.error("[MetricsReporter] Error generating report:", error);
 			return null;
 		}
-	}
-
-	/**
-	 * Calculates the cache hit rate as a percentage based on recorded hits and misses.
-	 * @private
-	 * @returns {number} The cache hit rate percentage.
-	 */
-	calculateCacheHitRate() {
-		const { hits, misses } = this.cacheStats;
-		const total = hits + misses;
-		return total > 0 ? Math.round((hits / total) * 100) : 0;
 	}
 
 	/**
@@ -336,30 +314,48 @@ export class MetricsReporter {
 	 * Aggregates performance issues detected by `RenderMetrics` and adds cache-specific warnings.
 	 * @private
 	 * @param {object} renderMetrics - The latest metrics from `RenderMetrics`.
-	 * @param {number} cacheHitRate - The current cache hit rate.
 	 * @returns {object[]} An array of detected issue objects.
 	 */
-	detectIssues(renderMetrics, cacheHitRate) {
+	detectIssues(renderMetrics) {
 		const issues = [];
 
 		// Use RenderMetrics built-in issue detection
 		const renderIssues =
-			this.metrics.detectPerformanceIssues(renderMetrics);
+			this.renderMetrics.detectPerformanceIssues(renderMetrics);
 		issues.push(...renderIssues);
 
+		// Add cache-specific issues by analyzing metrics from CacheManager
+		const cacheMetrics = this.cacheManager?.getAllMetrics() || {};
+		let totalHitRate = 0;
+		const cacheCount = Object.keys(cacheMetrics).length;
+
+		if (cacheCount > 0) {
+			totalHitRate =
+				Object.values(cacheMetrics).reduce(
+					(sum, metrics) => sum + metrics.hitRate,
+					0
+				) / cacheCount;
+		}
+
 		// Add cache-specific issues
-		if (cacheHitRate < this.thresholds.cacheHitRate.critical) {
+		if (
+			cacheCount > 0 &&
+			totalHitRate < this.thresholds.cacheHitRate.critical
+		) {
 			issues.push({
 				type: "low_cache_hit_rate",
 				severity: "critical",
-				message: `Very low cache hit rate: ${cacheHitRate}%`,
+				message: `Very low cache hit rate: ${totalHitRate.toFixed(2)}%`,
 				suggestion: "Review caching strategy and cache size limits",
 			});
-		} else if (cacheHitRate < this.thresholds.cacheHitRate.warning) {
+		} else if (
+			cacheCount > 0 &&
+			totalHitRate < this.thresholds.cacheHitRate.warning
+		) {
 			issues.push({
 				type: "suboptimal_cache_hit_rate",
 				severity: "warning",
-				message: `Suboptimal cache hit rate: ${cacheHitRate}%`,
+				message: `Suboptimal cache hit rate: ${totalHitRate.toFixed(2)}%`,
 				suggestion:
 					"Consider increasing cache size or improving cache keys",
 			});
@@ -427,10 +423,12 @@ export class MetricsReporter {
 
 			if (policies.debug || policies.monitoring) {
 				console.log("[MetricsReporter] Performance Report:", {
-					fps: report.performance.fps,
-					latency: report.performance.latency,
-					cacheHitRate: report.cache.hitRate,
-					issues: report.alerts.length,
+					performance: {
+						fps: report.performance.fps,
+						latency: report.performance.latency,
+					},
+					core_metrics_count: Object.keys(report.core).length,
+					alerts: report.alerts.length,
 					timestamp: report.timestamp,
 				});
 			}
@@ -448,39 +446,13 @@ export class MetricsReporter {
 	}
 
 	/**
-	 * Records a cache access event, incrementing hit or miss counters.
-	 * This should be called by cache implementations (`LRUCache`, etc.) on get operations.
-	 * @param {boolean} hit - `true` if the access was a cache hit, `false` for a miss.
-	 */
-	recordCacheAccess(hit) {
-		this.cacheStats.operations++;
-		if (hit) {
-			this.cacheStats.hits++;
-		} else {
-			this.cacheStats.misses++;
-		}
-	}
-
-	/**
-	 * Resets all collected cache statistics to zero.
-	 */
-	resetCacheStats() {
-		this.cacheStats = {
-			hits: 0,
-			misses: 0,
-			operations: 0,
-			lastReset: Date.now(),
-		};
-	}
-
-	/**
 	 * A proxy method to record a custom latency measurement in the underlying `RenderMetrics` instance.
 	 * @param {string} category - The category of the latency (e.g., 'grid', 'render', 'interaction').
 	 * @param {number} latency - The duration of the operation in milliseconds.
 	 * @param {string} [operation="unknown"] - A more specific name for the operation.
 	 */
 	recordLatency(category, latency, operation = "unknown") {
-		this.metrics.recordCustomLatency(category, latency);
+		this.renderMetrics.recordCustomLatency(category, latency);
 	}
 
 	/**
@@ -488,8 +460,7 @@ export class MetricsReporter {
 	 * @returns {object} An object containing key performance indicators.
 	 */
 	getCurrentSummary() {
-		const renderMetrics = this.metrics.getCurrentMetrics();
-		const cacheHitRate = this.calculateCacheHitRate();
+		const renderMetrics = this.renderMetrics.getCurrentMetrics();
 
 		return {
 			fps: renderMetrics.fps,
@@ -498,12 +469,9 @@ export class MetricsReporter {
 				layout: renderMetrics.avgLayoutLatency,
 				interaction: renderMetrics.avgInteractionLatency,
 			},
-			cache: {
-				hitRate: cacheHitRate,
-				operations: this.cacheStats.operations,
-			},
+			core: this.metricsRegistry ? this.metricsRegistry.getAll() : {},
 			memory: renderMetrics.memory,
-			issues: this.detectIssues(renderMetrics, cacheHitRate),
+			issues: this.detectIssues(renderMetrics),
 			isRunning: this.isRunning,
 			reportCount: this.reportCount,
 		};
@@ -515,8 +483,7 @@ export class MetricsReporter {
 	 */
 	exportData() {
 		return {
-			renderMetrics: this.metrics.exportData(),
-			cacheStats: { ...this.cacheStats },
+			renderMetrics: this.renderMetrics.exportData(),
 			thresholds: { ...this.thresholds },
 			config: {
 				interval: this.interval,
@@ -557,7 +524,10 @@ export class MetricsReporter {
 				this.context.stateManager.metrics[metric] = value;
 			}
 		} catch (error) {
-			// TODO: implement metrics flush logic
+			console.warn(
+				`[MetricsReporter] Failed to log metric '${metric}' to state manager:`,
+				error
+			);
 		}
 	}
 }

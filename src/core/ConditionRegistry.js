@@ -141,6 +141,10 @@ export class ConditionRegistry {
 				"_"
 			);
 		} catch (error) {
+			console.warn(
+				`[ConditionRegistry] Failed to generate cache key for condition type ${conditionDef.type}:`,
+				error
+			);
 			return null; // Don't cache if key generation fails
 		}
 	}

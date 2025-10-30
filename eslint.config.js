@@ -26,7 +26,7 @@ export default [
 				ecmaVersion: "latest",
 				ecmaFeatures: {
 					classFields: true,
-					privateIn: true
+					privateIn: true,
 				},
 			},
 			globals: {
@@ -34,6 +34,7 @@ export default [
 				window: "readonly",
 				document: "readonly",
 				console: "readonly",
+				global: "readonly",
 				process: "readonly",
 				// Web APIs
 				performance: "readonly",
@@ -49,6 +50,7 @@ export default [
 				cancelAnimationFrame: "readonly",
 				MutationObserver: "readonly",
 				ResizeObserver: "readonly",
+				HTMLElement: "readonly",
 				fetch: "readonly",
 				URL: "readonly",
 				Blob: "readonly",
@@ -75,7 +77,22 @@ export default [
 		},
 		rules: {
 			// --- General Quality ---
-			"no-console": ["warn", { allow: ["warn", "error", "info", "debug", "log", "trace", "dir"] }],
+			"no-console": [
+				"warn",
+				{
+					allow: [
+						"warn",
+						"error",
+						"info",
+						"debug",
+						"log",
+						"trace",
+						"dir",
+						"group",
+						"groupEnd",
+					],
+				},
+			],
 			"no-debugger": "error",
 
 			// --- Imports & Organization ---
@@ -106,7 +123,10 @@ export default [
 
 			// --- Cleanup ---
 			"unused-imports/no-unused-imports": "error",
-			"no-unused-vars": ["warn", { args: "none", ignoreRestSiblings: true }],
+			"no-unused-vars": [
+				"warn",
+				{ args: "none", ignoreRestSiblings: true },
+			],
 			"no-case-declarations": "off",
 			"no-control-regex": "off",
 			"no-empty": "warn",

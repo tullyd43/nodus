@@ -5,7 +5,10 @@
  * It integrates with the application's state management and event systems following the Nodus
  * feature development philosophy.
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
+ * @borrows DateCore.timestamp as timestamp
  */
+
+import { DateCore } from "../utils/DateUtils.js";
 
 /**
  * @class EnhancedGridRenderer
@@ -467,11 +470,11 @@ export class EnhancedGridRenderer {
 	setupPerformanceMonitoring() {
 		// Respects existing performance boundaries from the philosophy
 		let frameCount = 0;
-		let lastFrameTime = performance.now();
+		let lastFrameTime = DateCore.timestamp();
 
 		const monitorFrame = () => {
 			frameCount++;
-			const now = performance.now();
+			const now = DateCore.timestamp();
 
 			if (now - lastFrameTime >= 1000) {
 				const fps = frameCount / ((now - lastFrameTime) / 1000);
@@ -769,7 +772,7 @@ export class EnhancedGridRenderer {
 				changeType, // 'drag', 'resize', 'add', 'remove'
 				blockId: blockData.blockId,
 				position: { ...blockData.position },
-				timestamp: Date.now(),
+				timestamp: DateCore.timestamp(),
 				userId: this.appViewModel?.getCurrentUser?.()?.id,
 			};
 

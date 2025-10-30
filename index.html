@@ -4,11 +4,43 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Nodus Adaptive Grid (Data Layer Test)</title>
+    <title>Nodus</title>
+    <!-- Prevent the 404 error for favicon.ico by providing a blank one. -->
+    <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+    <!-- Link to your main stylesheet -->
+    <link rel="stylesheet" href="/src/ui/assets/styles/main.css">
 </head>
 
 <body>
-    <div id="app"></div>
+    <div id="app">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>Nodus</h1>
+            </div>
+            <nav class="main-nav">
+                <a href="#" class="nav-item active" data-view="events-view">Events</a>
+                <a href="#" class="nav-item" data-view="vault-view">Vault</a>
+                <a href="#" class="nav-item" data-view="templates-view">Templates</a>
+            </nav>
+            <div class="sidebar-footer">
+                <div id="status">Initializing...</div>
+            </div>
+        </div>
+        <div class="main-content">
+            <header class="main-header">
+                <div id="search-container">
+                    <!-- The global-search-bar component will be mounted here -->
+                </div>
+            </header>
+            <main id="view-container">
+                <!-- View content will be dynamically inserted here -->
+                <div id="events-view" class="view active">
+                    <h2>Events Workspace</h2>
+                    <p>This is where event lists, filters, and the main timeline/kanban views will live.</p>
+                </div>
+            </main>
+        </div>
+    </div>
     <script type="module" src="/src/main.js"></script>
 </body>
 

@@ -167,7 +167,7 @@ export class SyncLayer {
 				force = false,
 			} = options;
 
-			let result = { up: null, down: null, conflicts: [] };
+			const result = { up: null, down: null, conflicts: [] };
 
 			// Upload changes to server
 			if (direction === "up" || direction === "bidirectional") {
@@ -225,7 +225,7 @@ export class SyncLayer {
 	 */
 	queueEntityForSync(entity, operation = "upsert") {
 		const queueItem = {
-			id: entity.id,
+			id: entity.id, // Not shorthand-able
 			entity,
 			operation, // 'upsert', 'delete'
 			timestamp: Date.now(),
@@ -249,7 +249,7 @@ export class SyncLayer {
 	getPendingConflicts() {
 		return this.#conflictQueue.map((conflict) => ({
 			id: conflict.id,
-			entityType: conflict.entityType,
+			entityType: conflict.entityType, // Not shorthand-able
 			conflictType: conflict.type,
 			local: conflict.localEntity,
 			remote: conflict.remoteEntity,
@@ -314,7 +314,7 @@ export class SyncLayer {
 				? resolvedEntity.logical_id
 				: resolvedEntity.id;
 
-		await this.#storage.put(storeName, resolvedEntity);
+		await this.#storage.put(storeName, resolvedEntity, id);
 
 		// Remove from conflict queue
 		this.#conflictQueue.splice(conflictIndex, 1);
@@ -382,7 +382,7 @@ export class SyncLayer {
 				const response = await this.#sendToServer(item);
 
 				if (response.conflict) {
-					conflicts.push({
+					const newConflict = {
 						id: crypto.randomUUID(),
 						entityId: item.entity.id,
 						entityType: item.entity.entity_type,
@@ -390,7 +390,8 @@ export class SyncLayer {
 						localEntity: item.entity,
 						remoteEntity: response.remoteEntity,
 						timestamp: Date.now(),
-					});
+					};
+					conflicts.push(newConflict);
 				} else {
 					synced++;
 				}
@@ -437,22 +438,24 @@ export class SyncLayer {
 
 			for (const remoteEntity of response.entities) {
 				try {
-					// Check for local version
 					const storeName = remoteEntity.classification_level
 						? "objects_polyinstantiated"
 						: "objects";
-					const id =
+					const entityId =
 						storeName === "objects_polyinstantiated"
 							? remoteEntity.logical_id
 							: remoteEntity.id;
 
-					const localEntity = await this.#storage.get(storeName, id);
+					const localEntity = await this.#storage.get(
+						storeName,
+						entityId
+					);
 
 					if (
 						localEntity &&
 						this.#hasConflict(localEntity, remoteEntity)
 					) {
-						conflicts.push({
+						const newConflict = {
 							id: crypto.randomUUID(),
 							entityId: remoteEntity.id,
 							entityType: remoteEntity.entity_type,
@@ -460,7 +463,8 @@ export class SyncLayer {
 							localEntity,
 							remoteEntity,
 							timestamp: Date.now(),
-						});
+						};
+						conflicts.push(newConflict);
 					} else {
 						// No conflict, apply remote changes
 						await this.#storage.put(storeName, remoteEntity);
@@ -533,7 +537,7 @@ export class SyncLayer {
 
 					resolved.push({
 						conflictId: conflict.id,
-						resolution: strategy,
+						strategy,
 						entity: resolution,
 					});
 				}
@@ -663,9 +667,9 @@ export class SyncLayer {
 				Authorization: `Bearer ${this.#getAuthToken()}`,
 			},
 			body: JSON.stringify({
-				entity: item.entity,
-				operation: item.operation,
-				timestamp: item.timestamp,
+				entity: item.entity, // Not shorthand-able
+				operation: item.operation, // Not shorthand-able
+				timestamp: item.timestamp, // Not shorthand-able
 			}),
 		});
 

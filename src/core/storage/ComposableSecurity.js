@@ -304,8 +304,8 @@ export class ComposableSecurity {
 			});
 			// Emit event through the state manager as per the parity plan
 			this.stateManager?.emit?.("accessDenied", {
-				resource: classification,
-				compartments,
+				classification,
+				compartments, // This was already shorthand, which is great!
 			});
 			this.stateManager?.emit?.("accessDenied", {
 				resource: classification,

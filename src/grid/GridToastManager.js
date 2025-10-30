@@ -5,6 +5,8 @@
  * to react to system events.
  */
 
+import { DateCore } from "../utils/DateUtils.js";
+
 /**
  * @class GridToastManager
  * @classdesc Manages the display of transient, non-intrusive toast notifications.
@@ -87,6 +89,11 @@ export class GridToastManager {
 				"gridPerformanceMode",
 				this.onPerformanceModeChanged.bind(this)
 			);
+			window.eventFlowEngine.on("error", this.onError.bind(this));
+			window.eventFlowEngine.on(
+				"performance_alert",
+				this.onPerformanceAlert.bind(this)
+			);
 		}
 	}
 
@@ -117,7 +124,10 @@ export class GridToastManager {
 				messages[changeEvent.changeType] || "💾 Layout saved";
 			this.showToast(message, "success", 2000);
 		} catch (error) {
-			console.warn("Toast notification error:", error);
+			console.warn(
+				"Toast notification error onLayoutChanged:",
+				error.message
+			);
 		}
 	}
 
@@ -133,6 +143,34 @@ export class GridToastManager {
 				: "✨ Full features enabled";
 			this.showToast(message, "info", 3000);
 		}
+	}
+
+	/**
+	 * Handles `error` events, displaying a toast if the error is user-facing.
+	 * @private
+	 * @param {object} error - The formatted error object from ErrorHelpers.
+	 */
+	onError(error) {
+		if (error.showToUser) {
+			const typeMap = {
+				high: "error",
+				medium: "warning",
+				low: "info",
+			};
+			this.showToast(
+				error.userFriendlyMessage,
+				typeMap[error.severity] || "error"
+			);
+		}
+	}
+
+	/**
+	 * Handles `performance_alert` events, displaying a warning toast.
+	 * @private
+	 * @param {object} alert - The performance alert object from MetricsReporter.
+	 */
+	onPerformanceAlert(alert) {
+		this.showToast(alert.message, "warning", 4000);
 	}
 
 	/**
@@ -152,6 +190,10 @@ export class GridToastManager {
 				) ?? true
 			);
 		} catch (error) {
+			console.warn(
+				"Toast notification error shouldShowSaveFeedback:",
+				error.message
+			);
 			return true; // Default to showing feedback
 		}
 	}
@@ -174,7 +216,7 @@ export class GridToastManager {
 	 * @returns {string} The unique ID of the displayed toast.
 	 */
 	showToast(message, type = "info", duration = null) {
-		const id = Date.now().toString();
+		const id = DateCore.timestamp().toString();
 		const toast = this.createToast(id, message, type);
 
 		// Add to container

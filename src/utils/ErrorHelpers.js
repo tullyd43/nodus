@@ -4,6 +4,78 @@
  * This includes normalizing errors into a standard format, categorizing them,
  * reporting them to various sinks (console, event flow), and attempting recovery actions.
  */
+import { DateCore } from "./DateUtils.js";
+
+/**
+ * @class AppError
+ * @description A base class for all custom application errors, ensuring consistent properties.
+ * @extends Error
+ */
+export class AppError extends Error {
+	constructor(
+		message,
+		{
+			category = "system_error",
+			severity = "medium",
+			recoverable = true,
+			showToUser = true,
+			idManager, // Expect an IdManager instance
+			...context
+		} = {}
+	) {
+		super(message);
+		this.name = this.constructor.name; // Use a simple, non-secure ID for errors
+		this.id = idManager
+			? idManager.generateSimpleId("err")
+			: `err_${DateCore.timestamp()}`;
+		this.timestamp = DateCore.now();
+		this.category = category;
+		this.severity = severity;
+		this.recoverable = recoverable;
+		this.showToUser = showToUser;
+		this.context = context;
+	}
+}
+
+// --- Specific Custom Error Classes ---
+export class UIError extends AppError {
+	constructor(message, context) {
+		super(message, { category: "ui_error", ...context });
+	}
+}
+export class NetworkError extends AppError {
+	constructor(message, context) {
+		super(message, {
+			category: "network_error",
+			severity: "high",
+			...context,
+		});
+	}
+}
+export class StorageError extends AppError {
+	constructor(message, context) {
+		super(message, {
+			category: "storage_error",
+			severity: "high",
+			...context,
+		});
+	}
+}
+export class PolicyError extends AppError {
+	constructor(message, context) {
+		super(message, {
+			category: "policy_error",
+			severity: "high",
+			showToUser: true,
+			...context,
+		});
+	}
+}
+export class PluginError extends AppError {
+	constructor(message, context) {
+		super(message, { category: "plugin_error", ...context });
+	}
+}
 
 export const ErrorHelpers = {
 	/**
@@ -14,157 +86,46 @@ export const ErrorHelpers = {
 	 * @returns {object} A standardized error object with properties like `id`, `message`, `stack`, `category`, `severity`, etc.
 	 */
 	formatError(error, context = {}) {
-		const timestamp = new Date().toISOString();
-		const errorId = this.generateErrorId();
-
-		// Handle different error types
-		let formattedError = {
-			id: errorId,
-			timestamp,
-			severity: "medium",
-			category: "unknown",
-			recoverable: true,
-			showToUser: true,
-			component: context.component || "unknown",
-			userId: context.userId || null,
-			sessionId: context.sessionId || null,
-			...context,
-		};
-
-		if (typeof error === "string") {
-			formattedError.message = error;
-			formattedError.stack = "No stack trace available";
-		} else if (error instanceof Error) {
-			formattedError.message = error.message;
-			formattedError.stack = error.stack || "No stack trace available";
-			formattedError.name = error.name;
-
-			// Categorize based on error type
-			formattedError.category = this.categorizeError(error);
-			formattedError.severity = this.determineSeverity(error);
-		} else if (typeof error === "object" && error !== null) {
-			formattedError = { ...formattedError, ...error };
-			formattedError.message = error.message || "Unknown error occurred";
-			formattedError.stack = error.stack || "No stack trace available";
-		} else {
-			formattedError.message = "Unknown error occurred";
-			formattedError.stack = "No stack trace available";
+		const idManager = context.managers?.idManager;
+		// If it's already one of our custom errors, enrich it
+		if (error instanceof AppError) {
+			const enrichedError = { ...error, ...error.context, ...context };
+			enrichedError.userFriendlyMessage =
+				this.generateUserFriendlyMessage(enrichedError);
+			return enrichedError;
 		}
 
-		// Add user-friendly message
+		// Handle other error types and normalize them
+		const formattedError = new AppError("Unknown error occurred", {
+			category: "unknown",
+			idManager,
+			...context,
+		});
+
+		if (error instanceof Error) {
+			// Standard JavaScript Error
+			formattedError.message = error.message;
+			formattedError.stack = error.stack || "No stack available";
+			formattedError.name = error.name;
+			// Use legacy categorization as a fallback
+			formattedError.category = this.categorizeError(error);
+			formattedError.severity = this.determineSeverity(error);
+		} else if (typeof error === "string") {
+			// Plain string error
+			formattedError.message = error;
+			formattedError.stack = "No stack available";
+		} else if (typeof error === "object" && error !== null) {
+			// Plain object error
+			Object.assign(formattedError, error); // Merge properties
+			formattedError.message = error.message || formattedError.message;
+			formattedError.stack = error.stack || "No stack available";
+		}
+
+		// Generate user-friendly message for the newly formatted error
 		formattedError.userFriendlyMessage =
 			this.generateUserFriendlyMessage(formattedError);
 
 		return formattedError;
-	},
-
-	/**
-	 * Generates a unique identifier for an error instance.
-	 * @private
-	 * @returns {string} A unique error ID string, prefixed with `err_`.
-	 */
-	generateErrorId() {
-		return `err_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-	},
-
-	/**
-	 * Analyzes an error's message and type to assign it a category.
-	 * @private
-	 * @param {Error} error - The error instance to categorize.
-	 * @returns {string} The determined error category (e.g., 'ui_error', 'network_error', 'system_error').
-	 */
-	categorizeError(error) {
-		const message = error.message.toLowerCase();
-		const stack = error.stack.toLowerCase();
-
-		// Grid-specific errors
-		if (
-			message.includes("grid") ||
-			message.includes("layout") ||
-			message.includes("drag") ||
-			message.includes("resize")
-		) {
-			return "ui_error";
-		}
-
-		// Network errors
-		if (
-			message.includes("fetch") ||
-			message.includes("network") ||
-			message.includes("timeout")
-		) {
-			return "network_error";
-		}
-
-		// Database/storage errors
-		if (
-			message.includes("database") ||
-			message.includes("storage") ||
-			message.includes("index")
-		) {
-			return "storage_error";
-		}
-
-		// Permission/policy errors
-		if (
-			message.includes("permission") ||
-			message.includes("access") ||
-			message.includes("unauthorized")
-		) {
-			return "policy_error";
-		}
-
-		// Plugin errors
-		if (
-			message.includes("plugin") ||
-			message.includes("extension") ||
-			message.includes("manifest")
-		) {
-			return "plugin_error";
-		}
-
-		// JavaScript errors
-		if (
-			error.name === "TypeError" ||
-			error.name === "ReferenceError" ||
-			error.name === "SyntaxError"
-		) {
-			return "javascript_error";
-		}
-
-		return "system_error";
-	},
-
-	/**
-	 * Determines the severity of an error based on its type and message content.
-	 * @private
-	 * @param {Error} error - The error instance to assess.
-	 * @returns {string} The determined severity level ('high', 'medium', or 'low').
-	 */
-	determineSeverity(error) {
-		const message = error.message.toLowerCase();
-
-		// Critical errors that break core functionality
-		if (
-			message.includes("cannot read property") ||
-			message.includes("is not a function") ||
-			message.includes("failed to fetch") ||
-			error.name === "ReferenceError"
-		) {
-			return "high";
-		}
-
-		// Medium errors that impact user experience
-		if (
-			message.includes("validation") ||
-			message.includes("permission") ||
-			message.includes("timeout")
-		) {
-			return "medium";
-		}
-
-		// Low errors that are recoverable
-		return "low";
 	},
 
 	/**
@@ -247,38 +208,22 @@ export const ErrorHelpers = {
 	 * @param {object} [context={}] - Additional context for the error event.
 	 */
 	emitToFlow(eventFlow, error, context = {}) {
-		if (!eventFlow || typeof eventFlow.emit !== "function") {
+		if (!eventFlow?.emit) {
 			console.warn(
 				"[ErrorHelpers] EventFlow not available, cannot emit error"
 			);
 			return;
 		}
 
-		const formattedError = this.formatError(error, context);
-
 		try {
-			eventFlow.emit("error", {
-				...formattedError,
-				errorMessage: formattedError.message,
-				stackTrace: formattedError.stack,
-				errorCategory: formattedError.category,
-				userFriendlyMessage: formattedError.userFriendlyMessage,
-				timestamp: formattedError.timestamp,
-				operationId: context.operationId || null,
-				cacheKey: context.cacheKey || null,
-				requiredPermission: context.requiredPermission || null,
-				recentUserActions: context.recentUserActions || [],
-				systemState: context.systemState || {},
-				gridState: context.gridState || null,
-				userAgent: navigator.userAgent,
-				pageUrl: window.location.href,
-			});
+			// The error object is already formatted by handleError, just emit it.
+			eventFlow.emit("error", error);
 		} catch (emitError) {
 			console.error(
 				"[ErrorHelpers] Failed to emit error to EventFlow:",
 				emitError
 			);
-			this.logToConsole(formattedError);
+			this.logToConsole(error);
 		}
 	},
 
@@ -291,6 +236,7 @@ export const ErrorHelpers = {
 	 * @returns {Promise<any|null>} The result of the function, or `null` if an error was caught.
 	 */
 	async captureAsync(fn, eventFlow, context = {}) {
+		// eventFlow is part of context now
 		try {
 			return await fn();
 		} catch (error) {
@@ -308,6 +254,7 @@ export const ErrorHelpers = {
 	 * @returns {any|null} The result of the function, or `null` if an error was caught.
 	 */
 	captureSync(fn, eventFlow, context = {}) {
+		// eventFlow is part of context now
 		try {
 			return fn();
 		} catch (error) {
@@ -325,17 +272,65 @@ export const ErrorHelpers = {
 	 * @returns {object} The formatted error object.
 	 */
 	handleError(error, eventFlow, context = {}) {
+		// Ensure managers from context are available for integrations
 		const formattedError = this.formatError(error, context);
+		const { category, severity, component } = formattedError;
 
-		// Always log to console
+		// 1. Always log to console for immediate debugging
 		this.logToConsole(formattedError);
 
-		// Emit to EventFlow if available
+		// 2. Metrics Integration: Record error stats
+		const metrics =
+			context.metricsRegistry || context.managers?.metricsRegistry;
+		if (metrics) {
+			metrics.increment("errors.total");
+			if (category) metrics.increment(`errors.by_category.${category}`);
+			if (severity) metrics.increment(`errors.by_severity.${severity}`);
+			if (component)
+				metrics.increment(`errors.by_component.${component}`);
+		}
+
+		// 3. Auditing, Security & Embedding Integration (using full context)
+		const managers = context.managers;
+		if (managers) {
+			// For high-severity errors, create a formal audit trail
+			if (severity === "high" && managers.forensicLogger) {
+				const securityContext =
+					managers.securityManager?.getSubject() || {};
+				managers.forensicLogger.logAuditEvent(
+					"SYSTEM_ERROR_CRITICAL",
+					this.sanitizeError(formattedError),
+					securityContext
+				);
+			}
+			// For storage errors, capture cache metrics for context
+			if (category === "storage_error" && managers.cacheManager) {
+				formattedError.context.cacheMetrics =
+					managers.cacheManager.getMetrics();
+			}
+			// For high-severity errors, generate embeddings for AI analysis
+			if (severity === "high" && managers.embedding) {
+				// We pass the full error context to get a rich embedding
+				const embeddingText = `Error: ${formattedError.message}. Category: ${category}. Component: ${component}. Stack: ${formattedError.stack}`;
+				managers.embedding
+					.generateEmbedding(embeddingText, {
+						// Use the correct manager name 'embedding'
+						// Corrected manager name
+						errorId: formattedError.id,
+						type: "error_context",
+					})
+					.catch((e) =>
+						console.warn("Failed to generate error embedding:", e)
+					);
+			}
+		}
+
+		// 4. Emit to EventFlow for UI notifications and other listeners
 		if (eventFlow) {
 			this.emitToFlow(eventFlow, formattedError, context);
 		}
 
-		// Attempt recovery if possible
+		// 5. Attempt recovery if possible
 		if (formattedError.recoverable) {
 			this.attemptRecovery(formattedError, context);
 		}
@@ -364,7 +359,7 @@ export const ErrorHelpers = {
 				this.recoverPolicyError(error, context);
 				break;
 			default:
-				console.log(
+				console.warn(
 					`[ErrorHelpers] No recovery strategy for ${error.category}`
 				);
 		}
@@ -381,7 +376,7 @@ export const ErrorHelpers = {
 		if (context.component && context.refreshComponent) {
 			try {
 				context.refreshComponent(context.component);
-				console.log(
+				console.info(
 					`[ErrorHelpers] Attempted to refresh component: ${context.component}`
 				);
 			} catch (recoveryError) {
@@ -404,7 +399,7 @@ export const ErrorHelpers = {
 		if (context.enableOfflineMode) {
 			try {
 				context.enableOfflineMode();
-				console.log(
+				console.info(
 					"[ErrorHelpers] Enabled offline mode due to network error"
 				);
 			} catch (recoveryError) {
@@ -427,7 +422,7 @@ export const ErrorHelpers = {
 		if (context.clearCache) {
 			try {
 				context.clearCache();
-				console.log(
+				console.info(
 					"[ErrorHelpers] Cleared cache due to storage error"
 				);
 			} catch (recoveryError) {
@@ -447,7 +442,7 @@ export const ErrorHelpers = {
 	 */
 	recoverPolicyError(error, context) {
 		// Show permission dialog or redirect to login
-		console.log(
+		console.info(
 			"[ErrorHelpers] Policy error - user may need different permissions"
 		);
 		// Recovery would be handled by the UI layer
@@ -457,13 +452,21 @@ export const ErrorHelpers = {
 	 * Creates a simple error boundary object for a component.
 	 * This provides `try` and `tryAsync` methods that wrap functions with error handling.
 	 * @param {object} eventFlow - The EventFlowEngine instance.
-	 * @param {string} [component="unknown"] - The name of the component to associate with errors.
+	 * @param {object} [context={}] - The full context, including managers and component name.
 	 * @returns {{try: function(function(): any): any, tryAsync: function(function(): Promise<any>): Promise<any>}} An error boundary object.
 	 */
-	createErrorBoundary(eventFlow, component = "unknown") {
+	createErrorBoundary(context = {}, component = "unknown") {
 		return {
-			try: (fn) => this.captureSync(fn, eventFlow, { component }),
-			tryAsync: (fn) => this.captureAsync(fn, eventFlow, { component }),
+			try: (fn) =>
+				this.captureSync(fn, context.eventFlow, {
+					component,
+					...context,
+				}),
+			tryAsync: (fn) =>
+				this.captureAsync(fn, context.eventFlow, {
+					component,
+					...context,
+				}),
 		};
 	},
 
@@ -472,20 +475,21 @@ export const ErrorHelpers = {
 	 * unhandled promise rejections, piping them through the standard error handling pipeline.
 	 * @param {object} eventFlow - The EventFlowEngine instance to use for reporting.
 	 */
-	setupGlobalHandlers(eventFlow) {
+	setupGlobalHandlers(context = {}) {
 		// Handle uncaught errors
 		window.addEventListener("error", (event) => {
-			this.handleError(event.error || event.message, eventFlow, {
+			this.handleError(event.error || event.message, context.eventFlow, {
 				component: "global",
 				filename: event.filename,
 				lineno: event.lineno,
 				colno: event.colno,
+				...context,
 			});
 		});
 
 		// Handle unhandled promise rejections
 		window.addEventListener("unhandledrejection", (event) => {
-			this.handleError(event.reason, eventFlow, {
+			this.handleError(event.reason, context.eventFlow, {
 				component: "global",
 				type: "unhandled_promise_rejection",
 			});
@@ -499,14 +503,16 @@ export const ErrorHelpers = {
 	 * It logs a warning for slow operations and enriches any errors with performance data.
 	 * @param {function(...any): Promise<any>} fn - The async function to wrap.
 	 * @param {string} [operation="operation"] - A name for the operation being tracked.
+	 * @param {object} [context={}] - The context to pass to the error handler.
 	 * @returns {function(...any): Promise<any>} The wrapped, performance-aware function.
 	 */
-	withPerformanceTracking(fn, operation = "operation") {
+	withPerformanceTracking(fn, operation = "operation", context = {}) {
 		return async (...args) => {
-			const startTime = performance.now();
+			// The function being wrapped might have its own context, so we accept it here.
+			const startTime = DateCore.timestamp();
 			try {
 				const result = await fn(...args);
-				const duration = performance.now() - startTime;
+				const duration = DateCore.timestamp() - startTime;
 
 				// Log slow operations
 				if (duration > 100) {
@@ -517,12 +523,16 @@ export const ErrorHelpers = {
 
 				return result;
 			} catch (error) {
-				const duration = performance.now() - startTime;
-				throw this.formatError(error, {
+				const duration = DateCore.timestamp() - startTime;
+				// Enrich the original error instead of wrapping it in a new one
+				const enrichedError = this.formatError(error, {
+					// Pass full context
+					...context,
 					operation,
 					duration: duration.toFixed(2),
 					performance_issue: duration > 100,
 				});
+				throw enrichedError;
 			}
 		};
 	},

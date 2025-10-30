@@ -4,6 +4,12 @@
  * This class integrates with the HybridStateManager for persistence and provides an API for semantic search and similarity analysis.
  */
 
+import { DateCore } from "../utils/DateUtils.js";
+import {
+	ErrorHelpers,
+	NetworkError,
+	PolicyError,
+} from "../utils/ErrorHelpers.js";
 /**
  * @class EmbeddingManager
  * @classdesc Handles all operations related to vector embeddings, including generation via API or placeholders,
@@ -12,60 +18,44 @@
 export class EmbeddingManager {
 	/**
 	 * Creates an instance of EmbeddingManager.
-	 * @param {import('../core/HybridStateManager.js').default} stateManager - The main application state manager.
-	 * @param {object} [options={}] - Configuration options for the manager.
+	 * @param {object} context - The application context.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager.
+	 * @param {object} context.managers - A collection of system managers.
+	 * @param {import('../managers/CacheManager.js').CacheManager} context.managers.cacheManager - The central cache manager.
+	 * @param {import('../managers/IdManager.js').IdManager} context.managers.idManager - The central ID manager.
+	 * @param {import('../utils/MetricsRegistry.js').MetricsRegistry} context.managers.metricsRegistry - The central metrics registry.
 	 * @param {string} [options.model='text-embedding'] - The name of the embedding model to use.
-	 * @param {number} [options.maxCacheSize=1000] - The maximum number of embeddings to hold in the in-memory cache.
 	 * @param {number} [options.embeddingDimensions=384] - The dimensionality of the embedding vectors.
 	 * @param {number} [options.batchSize=10] - The default batch size for processing multiple embeddings.
 	 * @param {string|null} [options.apiEndpoint=null] - The API endpoint for the embedding generation service.
 	 */
-	constructor(stateManager, options = {}) {
-		this.stateManager = stateManager;
-		this.metrics = stateManager?.metrics || null;
+	constructor({ stateManager, managers, ...options } = {}) {
+		this.stateManager = stateManager; // For config and event emission
+		this.managers = managers; // For access to other managers
+		this.idManager = managers.idManager;
+		this.metrics = managers.metricsRegistry?.namespace("ai.embeddings");
+
+		this.errorBoundary = ErrorHelpers.createErrorBoundary(
+			// Pass the full context so errors can be audited and enriched
+			{ eventFlow: stateManager.eventFlow, managers },
+			"EmbeddingManager"
+		);
 
 		this.options = {
 			model: "text-embedding",
-			maxCacheSize: 1000,
 			embeddingDimensions: 384,
 			batchSize: 10,
 			apiEndpoint: null,
 			...options,
 		};
 
-		this.vectors = new Map(); // In-memory embedding cache
+		// Use the central CacheManager for all caching
+		this.cache = managers.cacheManager?.getCache("embeddings", 1000);
 		this.pendingEmbeddings = new Map(); // Deduplication for concurrent requests
-		this.processingQueue = [];
-		this.isProcessing = false;
-		this.similarityCache = new Map(); // Semantic similarity cache
-
-		this.initializeCache();
-	}
-
-	/**
-	 * Initializes the in-memory embedding cache by loading any previously saved embeddings from the HybridStateManager.
-	 * @private
-	 * @returns {Promise<void>}
-	 */
-	async initializeCache() {
-		try {
-			if (this.stateManager?.getEmbeddingCache) {
-				const cachedVectors =
-					await this.stateManager.getEmbeddingCache();
-				for (const [id, data] of cachedVectors) {
-					this.vectors.set(id, data);
-				}
-				console.log(
-					`[EmbeddingManager] Loaded ${cachedVectors.size} cached embeddings`
-				);
-				this.recordMetric("embeddings_cache_load", cachedVectors.size);
-			}
-		} catch (error) {
-			console.warn(
-				"[EmbeddingManager] Failed to load cached embeddings:",
-				error
-			);
-		}
+		this.similarityCache = managers.cacheManager?.getCache(
+			"similarity",
+			5000
+		);
 	}
 
 	/**
@@ -75,19 +65,21 @@ export class EmbeddingManager {
 	 * @returns {Promise<boolean>} - True if access is granted, otherwise throws an error.
 	 */
 	async _checkAccess(entity) {
-		const securityManager = this.stateManager?.managers?.securityManager;
-		if (!securityManager?.mac || this.stateManager.config.demoMode) {
+		const securityManager = this.managers?.securityManager;
+		if (!securityManager || this.stateManager.config.demoMode) {
 			return true; // Bypass in demo mode or if MAC is not configured
 		}
 
 		const subject = securityManager.getSubject();
-		const label = this.stateManager.storage.instance._label(entity);
-
-		const canRead = securityManager.mac.canRead(subject, label);
-
+		const canRead = await securityManager.canRead(
+			subject,
+			entity.securityLabel
+		);
 		if (!canRead) {
-			throw new Error(
-				"EMBEDDING_ACCESS_DENIED: Insufficient clearance to read entity for embedding."
+			// Use a specific, categorized error for better handling
+			throw new PolicyError(
+				"Insufficient clearance to read entity for embedding.",
+				{ entityId: entity.id, requiredLabel: entity.securityLabel }
 			);
 		}
 		return true;
@@ -102,39 +94,41 @@ export class EmbeddingManager {
 	 * @public
 	 */
 	async generateEmbedding(text, meta = {}, entity = null) {
-		// If an entity is provided, perform a security check first.
-		if (entity) {
-			await this._checkAccess(entity);
-		}
+		return this.errorBoundary.tryAsync(async () => {
+			// If an entity is provided, perform a security check first.
+			if (entity) {
+				await this._checkAccess(entity);
+			}
 
-		if (!text || typeof text !== "string") return null;
+			if (!text || typeof text !== "string") return null;
 
-		const textHash = this.hashText(text);
-		const id = meta.id || `emb_${textHash}`;
+			const id =
+				meta.id ||
+				this.idManager.generate({
+					prefix: "emb",
+					entityType: "embedding",
+				});
 
-		if (this.vectors.has(id)) {
-			this.recordMetric("embeddings_cache_hit");
-			return { id, vector: this.vectors.get(id).vector, cached: true };
-		}
+			// Use the central cache
+			const cached = this.cache.get(id);
+			if (cached) {
+				this.metrics?.increment("cache_hit");
+				return { id, vector: cached.vector, cached: true };
+			}
 
-		if (this.pendingEmbeddings.has(textHash)) {
-			this.recordMetric("embeddings_pending_hit");
-			return await this.pendingEmbeddings.get(textHash);
-		}
+			if (this.pendingEmbeddings.has(id)) {
+				this.metrics?.increment("pending_hit");
+				return await this.pendingEmbeddings.get(id);
+			}
 
-		const embeddingPromise = this._processEmbedding(text, id, meta);
-		this.pendingEmbeddings.set(textHash, embeddingPromise);
+			const embeddingPromise = this._processEmbedding(text, id, meta);
+			this.pendingEmbeddings.set(id, embeddingPromise);
 
-		try {
 			const result = await embeddingPromise;
-			this.pendingEmbeddings.delete(textHash);
-			this.recordMetric("embeddings_generated");
+			this.pendingEmbeddings.delete(id);
+			this.metrics?.increment("generated");
 			return result;
-		} catch (error) {
-			this.pendingEmbeddings.delete(textHash);
-			this.recordMetric("embeddings_failed");
-			throw error;
-		}
+		});
 	}
 
 	/**
@@ -146,44 +140,31 @@ export class EmbeddingManager {
 	 * @returns {Promise<{id: string, vector: number[], cached: boolean}>} The generated embedding object.
 	 */
 	async _processEmbedding(text, id, meta) {
-		try {
-			const start = performance.now();
-			let vector;
+		const start = performance.now();
+		let vector;
 
-			if (this.options.apiEndpoint) {
-				vector = await this._callEmbeddingAPI(text);
-			} else {
-				vector = await this._generatePlaceholderEmbedding(text);
-			}
-
-			const embeddingData = {
-				vector,
-				meta: {
-					...meta,
-					text: text.substring(0, 100),
-					timestamp: Date.now(),
-					dimensions: vector.length,
-				},
-			};
-
-			this.vectors.set(id, embeddingData);
-
-			if (this.stateManager?.saveEmbedding) {
-				await this.stateManager.saveEmbedding(id, embeddingData);
-			}
-
-			this.manageCacheSize();
-
-			const duration = performance.now() - start;
-			this.recordMetric("embedding_generation_time", duration);
-			return { id, vector, cached: false };
-		} catch (error) {
-			console.error(
-				"[EmbeddingManager] Failed to generate embedding:",
-				error
-			);
-			throw error;
+		if (this.options.apiEndpoint) {
+			vector = await this._callEmbeddingAPI(text);
+		} else {
+			vector = await this._generatePlaceholderEmbedding(text);
 		}
+
+		const embeddingData = {
+			vector,
+			meta: {
+				...meta,
+				text_preview: text.substring(0, 100),
+				timestamp: DateCore.timestamp(),
+				dimensions: vector.length,
+			},
+		};
+
+		// Use the central cache
+		this.cache.set(id, embeddingData);
+
+		const duration = performance.now() - start;
+		this.metrics?.timer("generation_time", duration);
+		return { id, vector, cached: false };
 	}
 
 	/**
@@ -202,8 +183,12 @@ export class EmbeddingManager {
 			body: JSON.stringify({ model: this.options.model, input: text }),
 		});
 
-		if (!response.ok)
-			throw new Error(`API request failed: ${response.status}`);
+		if (!response.ok) {
+			// Use a specific, categorized error for network issues
+			throw new NetworkError(
+				`Embedding API request failed: ${response.status} ${response.statusText}`
+			);
+		}
 		const data = await response.json();
 		return data.data[0].embedding;
 	}
@@ -216,7 +201,7 @@ export class EmbeddingManager {
 	 * @returns {Promise<number[]>} A promise that resolves with the placeholder vector.
 	 */
 	async _generatePlaceholderEmbedding(text) {
-		const hash = this.hashText(text);
+		const hash = this._hashText(text);
 		const vector = [];
 		for (let i = 0; i < this.options.embeddingDimensions; i++) {
 			const seed = (hash * (i + 1)) % 2147483647;
@@ -239,41 +224,42 @@ export class EmbeddingManager {
 	 * @returns {Promise<Array<{id: string, relevance: number, meta: object}>>} A promise that resolves with an array of ranked search results.
 	 */
 	async semanticSearch(query, options = {}) {
-		const { topK = 5, threshold = 0.5, includeText = false } = options;
-		if (!query) return [];
+		return this.errorBoundary.tryAsync(async () => {
+			const { topK = 5, threshold = 0.5, includeText = false } = options;
+			if (!query) return [];
 
-		try {
 			// A query is public, so no entity-based security check is needed here.
 			const queryEmbedding = await this.generateEmbedding(query);
 			if (!queryEmbedding) return [];
 			const queryVector = queryEmbedding.vector;
 			const results = [];
 
-			for (const [id, data] of this.vectors.entries()) {
+			for (const [id, data] of this.cache.entries()) {
 				const similarity = this.cosineSimilarity(
 					queryVector,
 					data.vector
 				);
 				if (similarity >= threshold) {
-					results.push({
+					const result = {
 						id,
 						relevance: similarity,
 						meta: data.meta,
-						text: includeText ? data.meta.text : undefined,
-					});
+					};
+
+					if (includeText && data.meta?.text_preview) {
+						result.text = data.meta.text_preview;
+					}
+
+					results.push(result);
 				}
 			}
 
 			const top = results
 				.sort((a, b) => b.relevance - a.relevance)
 				.slice(0, topK);
-			this.recordMetric("semantic_search_executed");
+			this.metrics?.increment("semantic_search.executed");
 			return top;
-		} catch (error) {
-			console.error("[EmbeddingManager] Semantic search failed:", error);
-			this.recordMetric("semantic_search_failed");
-			return [];
-		}
+		});
 	}
 
 	/**
@@ -284,33 +270,30 @@ export class EmbeddingManager {
 	 * @returns {Promise<Array<{id: string, vector: number[], cached: boolean}|null>>} A promise that resolves with an array of embedding results.
 	 */
 	async generateBatchEmbeddings(texts, metas = []) {
-		const results = [];
-		const batches = this._createBatches(texts, this.options.batchSize);
-		const start = performance.now();
+		return this.errorBoundary.tryAsync(async () => {
+			const results = [];
+			const batches = this._createBatches(texts, this.options.batchSize);
+			const start = performance.now();
 
-		for (const batch of batches) {
-			const batchPromises = batch.map((text, index) => {
-				// Note: This batch method does not support entity-based security checks.
-				const meta = metas[index] || {};
-				return this.generateEmbedding(text, meta);
-			});
+			for (const batch of batches) {
+				const batchPromises = batch.map((text, index) => {
+					// Note: This batch method does not support entity-based security checks.
+					const meta = metas[index] || {};
+					return this.generateEmbedding(text, meta);
+				});
 
-			const batchResults = await Promise.allSettled(batchPromises);
-			batchResults.forEach((result, index) => {
-				if (result.status === "fulfilled") results.push(result.value);
-				else {
-					console.error(
-						`[EmbeddingManager] Batch embedding ${index} failed:`,
-						result.reason
-					);
-					results.push(null);
-				}
-			});
-		}
+				const batchResults = await Promise.allSettled(batchPromises);
+				batchResults.forEach((result) => {
+					if (result.status === "fulfilled")
+						results.push(result.value);
+					else results.push(null); // Error already handled by generateEmbedding
+				});
+			}
 
-		const duration = performance.now() - start;
-		this.recordMetric("batch_embedding_time", duration);
-		return results;
+			const duration = performance.now() - start;
+			this.metrics?.timer("batch_generation_time", duration);
+			return results;
+		});
 	}
 
 	/**
@@ -334,25 +317,41 @@ export class EmbeddingManager {
 	 * @public
 	 * @param {string} targetId - The ID of the entity to find similar items for.
 	 * @param {number} [topK=5] - The maximum number of similar items to return.
-	 * @param {number} [threshold=0.7] - The minimum similarity score for an item to be considered similar.
+	 * @param {object} [options={}] - Options for the search, including `threshold` and `includeText`.
 	 * @returns {Promise<Array<{id: string, relevance: number, meta: object}>>} A promise that resolves with an array of similar items.
 	 */
-	async findSimilar(targetId, topK = 5, threshold = 0.7) {
-		const targetData = this.vectors.get(targetId);
-		if (!targetData) throw new Error(`Embedding not found: ${targetId}`);
-		const results = [];
-		for (const [id, data] of this.vectors.entries()) {
-			if (id === targetId) continue;
-			const similarity = this.cosineSimilarity(
-				targetData.vector,
-				data.vector
-			);
-			if (similarity >= threshold) {
-				results.push({ id, relevance: similarity, meta: data.meta });
+	async findSimilar(targetId, topK = 5, options = {}) {
+		const { threshold = 0.7, includeText = false } = options;
+		return this.errorBoundary.tryAsync(async () => {
+			const targetData = this.cache.get(targetId);
+			if (!targetData)
+				throw new Error(`Embedding not found: ${targetId}`);
+			const results = [];
+			for (const [id, data] of this.cache.entries()) {
+				if (id === targetId) continue;
+				const similarity = this.cosineSimilarity(
+					targetData.vector,
+					data.vector
+				);
+				if (similarity >= threshold) {
+					const result = {
+						id,
+						relevance: similarity,
+						meta: data.meta,
+					};
+
+					if (includeText && data.meta?.text_preview) {
+						result.text = data.meta.text_preview;
+					}
+
+					results.push(result);
+				}
 			}
-		}
-		this.recordMetric("similarity_search_executed");
-		return results.sort((a, b) => b.relevance - a.relevance).slice(0, topK);
+			this.metrics?.increment("similarity_search.executed");
+			return results
+				.sort((a, b) => b.relevance - a.relevance)
+				.slice(0, topK);
+		});
 	}
 
 	/**
@@ -364,22 +363,25 @@ export class EmbeddingManager {
 	 * @returns {Promise<void>}
 	 */
 	async upsertEmbedding(entityId, vector, version = "v1") {
-		const entity = this.stateManager?.clientState?.entities.get(entityId);
-		if (!entity) return;
+		return this.errorBoundary.tryAsync(async () => {
+			const entity =
+				this.stateManager?.clientState?.entities.get(entityId);
+			if (!entity) return;
 
-		entity.embeddings = entity.embeddings || {};
-		entity.embeddings.default = vector;
-		entity.embedding_version = version;
-		entity.embedding_updated_at = Date.now();
+			entity.embeddings = entity.embeddings || {};
+			entity.embeddings.default = vector;
+			entity.embedding_version = version;
+			entity.embedding_updated_at = DateCore.timestamp();
 
-		await this.stateManager.storage.instance.put("objects", entity);
-		this.stateManager.emit?.("entitySaved", {
-			store: "objects",
-			item: entity,
+			await this.stateManager.storage.instance.put("objects", entity);
+			this.stateManager.emit?.("entitySaved", {
+				store: "objects",
+				item: entity,
+			});
+			this._updateSimilarityCache(entityId, vector);
+
+			this.metrics?.increment("entity_embedding_upserted");
 		});
-		this._updateSimilarityCache(entityId, vector);
-
-		this.recordMetric("entity_embedding_upserted");
 	}
 
 	/**
@@ -389,36 +391,38 @@ export class EmbeddingManager {
 	 * @param {string} [version='v1'] - The version of the embedding model used.
 	 */
 	async bulkUpsertEmbeddings(embeddings = [], version = "v1") {
-		if (!embeddings.length) return;
-		const storage = this.stateManager?.storage?.instance;
-		const updated = [];
+		return this.errorBoundary.tryAsync(async () => {
+			if (!embeddings.length) return;
+			const storage = this.stateManager?.storage?.instance;
+			const updated = [];
 
-		for (const { id, vector } of embeddings) {
-			const entity = this.stateManager?.clientState?.entities.get(id);
-			if (!entity) continue;
+			for (const { id, vector } of embeddings) {
+				const entity = this.stateManager?.clientState?.entities.get(id);
+				if (!entity) continue;
 
-			entity.embeddings = entity.embeddings || {};
-			entity.embeddings.default = vector;
-			entity.embedding_version = version;
-			entity.embedding_updated_at = Date.now();
-			await this._checkAccess(entity); // Security check for each entity in the batch
-			updated.push(entity);
-			this.updateSimilarityCache(id, vector);
-		}
+				entity.embeddings = entity.embeddings || {};
+				entity.embeddings.default = vector;
+				entity.embedding_version = version;
+				entity.embedding_updated_at = DateCore.timestamp();
+				await this._checkAccess(entity); // Security check for each entity in the batch
+				updated.push(entity);
+				this.updateSimilarityCache(id, vector);
+			}
 
-		if (storage?.bulkPut) await storage.bulkPut("objects", updated);
-		else for (const e of updated) await storage.put("objects", e);
+			if (storage?.bulkPut) await storage.bulkPut("objects", updated);
+			else for (const e of updated) await storage.put("objects", e);
 
-		this.stateManager.emit?.("embeddingsBatchUpdated", {
-			count: updated.length,
-			version,
-			entities: updated.map((e) => e.id),
+			this.stateManager.emit?.("embeddingsBatchUpdated", {
+				count: updated.length,
+				version,
+				entities: updated.map((e) => e.id),
+			});
+
+			this.metrics?.increment("bulk_embeddings_upserted", updated.length);
+			console.log(
+				`[EmbeddingManager] Bulk upserted ${updated.length} embeddings (v${version})`
+			);
 		});
-
-		this.recordMetric("bulk_embeddings_upserted", updated.length);
-		console.log(
-			`[EmbeddingManager] Bulk upserted ${updated.length} embeddings (v${version})`
-		);
 	}
 
 	/**
@@ -429,7 +433,7 @@ export class EmbeddingManager {
 	 */
 	_updateSimilarityCache(entityId, vector) {
 		if (!vector?.length) return;
-		this.similarityCache.set(entityId, this._normalizeVector(vector));
+		this.similarityCache.set(entityId, this.normalizeVector(vector));
 	}
 
 	/**
@@ -444,21 +448,12 @@ export class EmbeddingManager {
 	}
 
 	/**
-	 * Normalizes a vector to have a magnitude of 1.
-	 * @private
-	 * @param {number[]} vec - The vector to normalize.
-	 * @returns {number[]} The normalized vector.
-	 */
-	_normalizeVector(vec) {
-		return this.normalizeVector(vec); // Delegate to the public method
-	}
-	/**
 	 * Creates a simple hash from a text string for use as a cache key.
 	 * @private
 	 * @param {string} text - The text to hash.
 	 * @returns {number} The calculated hash.
 	 */
-	hashText(text) {
+	_hashText(text) {
 		let hash = 0;
 		for (let i = 0; i < text.length; i++) {
 			hash = (hash << 5) - hash + text.charCodeAt(i);
@@ -483,37 +478,17 @@ export class EmbeddingManager {
 	}
 
 	/**
-	 * Manages the in-memory cache size by evicting the oldest entries if the max size is exceeded.
-	 * @private
-	 */
-	manageCacheSize() {
-		if (this.vectors.size > this.options.maxCacheSize) {
-			const entries = Array.from(this.vectors.entries());
-			entries.sort((a, b) => a[1].meta.timestamp - b[1].meta.timestamp);
-			const toRemove = entries.slice(
-				0,
-				entries.length - this.options.maxCacheSize
-			);
-			toRemove.forEach(([id]) => this.vectors.delete(id));
-			console.log(
-				`[EmbeddingManager] Removed ${toRemove.length} old embeddings from cache`
-			);
-			this.recordMetric("embeddings_cache_trimmed", toRemove.length);
-		}
-	}
-
-	/**
 	 * Retrieves statistics about the state of the EmbeddingManager.
 	 * @public
 	 * @returns {object} An object containing statistics.
 	 */
 	getStats() {
 		return {
-			cacheSize: this.vectors.size,
-			maxCacheSize: this.options.maxCacheSize,
+			cache: this.cache?.getMetrics(),
 			pendingEmbeddings: this.pendingEmbeddings.size,
 			embeddingDimensions: this.options.embeddingDimensions,
 			apiConfigured: !!this.options.apiEndpoint,
+			metrics: this.metrics?.getAllAsObject(),
 		};
 	}
 
@@ -522,10 +497,11 @@ export class EmbeddingManager {
 	 * @public
 	 */
 	clearCache() {
-		this.vectors.clear();
+		this.cache?.clear();
+		this.similarityCache?.clear();
 		this.pendingEmbeddings.clear();
 		console.log("[EmbeddingManager] Cache cleared");
-		this.recordMetric("embeddings_cache_cleared");
+		this.metrics?.increment("cache_cleared");
 	}
 
 	/**
@@ -535,7 +511,7 @@ export class EmbeddingManager {
 	 */
 	exportEmbeddings() {
 		const exported = {};
-		for (const [id, data] of this.vectors.entries()) {
+		for (const [id, data] of this.cache.entries()) {
 			exported[id] = { vector: data.vector, meta: data.meta };
 		}
 		return exported;
@@ -550,30 +526,12 @@ export class EmbeddingManager {
 	importEmbeddings(exported) {
 		let imported = 0;
 		for (const [id, data] of Object.entries(exported)) {
-			this.vectors.set(id, data);
+			this.cache.set(id, data);
 			imported++;
 		}
 		console.log(`[EmbeddingManager] Imported ${imported} embeddings`);
-		this.recordMetric("embeddings_imported", imported);
+		this.metrics?.increment("imported", imported);
 		return imported;
-	}
-
-	/**
-	 * Records a metric through the state manager's metrics system.
-	 * @private
-	 * @param {string} name - The name of the metric.
-	 * @param {number} [value=1] - The value to record.
-	 */
-	recordMetric(name, value = 1) {
-		if (!this.metrics?.record) return;
-		try {
-			this.metrics.record("ai.embeddings", name, value);
-		} catch (err) {
-			console.warn(
-				"[EmbeddingManager] Metric recording failed:",
-				err.message
-			);
-		}
 	}
 }
 

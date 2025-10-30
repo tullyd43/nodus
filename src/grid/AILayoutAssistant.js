@@ -1,4 +1,5 @@
 import { showGridToast } from "./GridToastManager.js";
+import { DateCore } from "../utils/DateUtils.js";
 
 /**
  * @file AILayoutAssistant.js
@@ -65,7 +66,7 @@ export class AILayoutAssistant {
 		// Queue for analysis (batch processing for performance)
 		this.analysisQueue.push({
 			...changeEvent,
-			timestamp: Date.now(),
+			timestamp: DateCore.timestamp(),
 			userId: this.getCurrentUserId(),
 		});
 
@@ -106,7 +107,10 @@ export class AILayoutAssistant {
 				);
 			}
 		} catch (error) {
-			console.warn("Could not check AI suggestions policy:", error);
+			console.warn(
+				"Could not check AI suggestions policy:",
+				error.message
+			);
 		}
 
 		return this.options.enabled;
@@ -121,6 +125,7 @@ export class AILayoutAssistant {
 		try {
 			return window.appViewModel?.getCurrentUser?.()?.id || "anonymous";
 		} catch (error) {
+			console.warn("Could not get current user ID:", error.message);
 			return "anonymous";
 		}
 	}
@@ -231,7 +236,7 @@ export class AILayoutAssistant {
 	 * @returns {boolean} `true` if suggestions should be generated.
 	 */
 	shouldGenerateSuggestions() {
-		const now = Date.now();
+		const now = DateCore.timestamp();
 		const timeSinceLastSuggestion = now - this.lastSuggestionTime;
 		const hasEnoughData = this.patterns.size >= this.options.minDataPoints;
 		const cooldownPassed =
@@ -277,14 +282,14 @@ export class AILayoutAssistant {
 			// Store and emit suggestions
 			if (suggestions.length > 0) {
 				this.storeSuggestions(suggestions);
-				this.lastSuggestionTime = Date.now();
+				this.lastSuggestionTime = DateCore.timestamp();
 
 				window.eventFlowEngine.emit("aiLayoutSuggestions", {
 					suggestions: suggestions.slice(
 						0,
 						this.options.maxSuggestions
 					),
-					timestamp: Date.now(),
+					timestamp: DateCore.timestamp(),
 				});
 			}
 		} catch (error) {
@@ -344,7 +349,8 @@ export class AILayoutAssistant {
 		// For now, simple heuristic based on modification patterns
 		const recentlyModified = Array.from(this.patterns.entries())
 			.filter(([blockId, pattern]) => {
-				const timeSinceModified = Date.now() - pattern.lastModified;
+				const timeSinceModified =
+					DateCore.timestamp() - pattern.lastModified;
 				return timeSinceModified < 3600000; // Modified in last hour
 			})
 			.map(([blockId]) => blockId);
@@ -407,7 +413,7 @@ export class AILayoutAssistant {
 	 * @param {object[]} suggestions - An array of suggestion objects.
 	 */
 	storeSuggestions(suggestions) {
-		const timestamp = Date.now();
+		const timestamp = DateCore.timestamp();
 		suggestions.forEach((suggestion, index) => {
 			this.suggestions.set(`${timestamp}_${index}`, {
 				...suggestion,
@@ -426,7 +432,7 @@ export class AILayoutAssistant {
 	 * @private
 	 */
 	cleanupOldSuggestions() {
-		const cutoff = Date.now() - 24 * 60 * 60 * 1000; // 24 hours
+		const cutoff = DateCore.timestamp() - 24 * 60 * 60 * 1000; // 24 hours
 
 		for (const [id, suggestion] of this.suggestions.entries()) {
 			if (suggestion.created < cutoff) {

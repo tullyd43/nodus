@@ -5,6 +5,8 @@
  * an action can be cryptographically proven to have been initiated by a specific user.
  */
 
+import { DateCore } from "@utils/DateUtils.js";
+
 /**
  * Provides a mechanism for creating non-repudiable records of user actions.
  * This is a critical security feature for audit trails and compliance, ensuring that
@@ -88,7 +90,7 @@ export class NonRepudiation {
 			userId,
 			action,
 			label,
-			ts: Date.now(),
+			ts: DateCore.timestamp(),
 		});
 
 		const encodedPayload = new TextEncoder().encode(payload);
@@ -109,7 +111,7 @@ export class NonRepudiation {
 		return {
 			signature,
 			algorithm: "ECDSA-P256-SHA256",
-			timestamp: new Date().toISOString(),
+			timestamp: DateCore.now(),
 		};
 	}
 
@@ -181,7 +183,7 @@ export class NonRepudiation {
 		const payload = JSON.stringify({
 			subject: userCert.subject,
 			action,
-			ts: Date.now(),
+			ts: DateCore.timestamp(),
 		});
 
 		// 3. Sign the payload with the user-specific private key.
@@ -203,7 +205,7 @@ export class NonRepudiation {
 			signature,
 			certFingerprint,
 			algorithm: "ECDSA-P256-SHA256",
-			timestamp: new Date().toISOString(),
+			timestamp: DateCore.now(),
 		};
 	}
 }

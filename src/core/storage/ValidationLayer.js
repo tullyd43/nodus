@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-private-class-members */
 // core/validation/ValidationLayer.js
 // Universal schema validation with composable rules
 
@@ -156,7 +155,7 @@ export class ValidationLayer {
 			if (!isValid) {
 				this.stateManager?.emit?.("validationError", {
 					entityId: entity.id,
-					entityType: entity.entity_type,
+					entityType: entity.entity_type, // Not shorthand-able
 					errors: errors.slice(0, this.#config.maxErrors),
 				});
 			}
@@ -168,7 +167,7 @@ export class ValidationLayer {
 				metadata: {
 					latency,
 					rulesExecuted: this.#getExecutedRules(),
-					entityType: entity.entity_type,
+					entityType: entity.entity_type, // Not shorthand-able
 				},
 			};
 		} catch (error) {
@@ -675,7 +674,7 @@ export class ValidationLayer {
 			if (entity.content_type === "json" && entity.content) {
 				try {
 					JSON.parse(entity.content);
-				} catch (error) {
+				} catch {
 					errors.push(
 						"Document content is not valid JSON despite content_type being json"
 					);

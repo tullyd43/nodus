@@ -1,5 +1,7 @@
-import GridBootstrap from "@grid/GridBootstrap.js";
 import { SystemBootstrap } from "@core/SystemBootstrap.js";
+import { initializeCompleteGridSystem } from "@grid/CompleteGridSystem.js";
+import { DeveloperDashboard } from "/dev/DeveloperDashboard.js";
+
 import { AppConfig } from "../environment.config.js";
 
 /**
@@ -38,17 +40,31 @@ const bootstrap = async () => {
 
 	window.nodusApp = stateManager;
 
-	// Render grid
-	const grid = new GridBootstrap(
-		document.getElementById("app"),
-		window.nodusApp.storage.instance, // Pass the initialized storage instance
-		window.nodusApp
-	);
-	await grid.render();
+	// 3. Create a simple appViewModel to bridge state and UI
+	const appViewModel = {
+		hybridStateManager: stateManager,
+		context: {
+			getPolicy: (domain, key) =>
+				stateManager.managers.policy?.getPolicy(domain, key),
+			setPolicy: (domain, key, value) =>
+				stateManager.managers.policy?.update(domain, key, value),
+		},
+		// Add other view model properties as needed
+	};
+	window.appViewModel = appViewModel;
 
-	console.log(
-		"✅ Grid ready (offline mode). Check console for data inspection."
-	);
+	// 4. Initialize the fully integrated grid system
+	await initializeCompleteGridSystem(appViewModel, {
+		gridContainer: document.getElementById("app"), // Pass the correct root element
+	});
+
+	console.log("✅ Complete Grid System Initialized. Application is ready.");
+
+	// 5. (Optional) Initialize the developer dashboard for real-time metrics
+	new DeveloperDashboard(document.body, {
+		metricsReporter: stateManager.managers.metricsReporter,
+		eventFlow: stateManager.eventFlow,
+	});
 };
 
 bootstrap();

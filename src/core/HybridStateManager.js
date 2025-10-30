@@ -6,12 +6,11 @@
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
-import { CrossDomainSolution } from "@core/security/cds.js";
 import { EventFlowEngine } from "@core/EventFlowEngine.js";
 import { InformationFlowTracker } from "@core/security/InformationFlowTracker.js";
 import { BoundedStack } from "@utils/BoundedStack.js";
+import { DateCore } from "@utils/DateUtils.js";
 
-import { LRUCache } from "../utils/LRUCache.js";
 import { MetricsRegistry } from "../utils/MetricsRegistry.js";
 import { NonRepudiation } from "./security/NonRepudiation.js";
 import { StorageLoader } from "./storage/StorageLoader.js";
@@ -80,7 +79,7 @@ export class HybridStateManager {
 			dragState: null,
 
 			// Performance cache
-			cache: new LRUCache(1000, { ttl: 30 * 60 * 1000 }),
+			cache: null, // Will be initialized by CacheManager
 		};
 
 		// NEW: Dynamic storage system
@@ -124,6 +123,8 @@ export class HybridStateManager {
 		 * @property {import('./storage/ValidationLayer.js').default|null} validation - Manages data validation.
 		 * @property {import('./security/SecurityManager.js').default|null} securityManager - Manages user context and security.
 		 * @property {import('./ForensicLogger.js').default|null} forensicLogger - Manages audit logging.
+		 * @property {import('../managers/IdManager.js').IdManager|null} idManager - Manages ID generation.
+		 * @property {import('../managers/CacheManager.js').CacheManager|null} cacheManager - Manages all caches.
 		 */
 		this.managers = {
 			offline: null,
@@ -134,6 +135,8 @@ export class HybridStateManager {
 			validation: null, // NEW: Validation manager
 			securityManager: null, // NEW: Security Manager
 			forensicLogger: null, // NEW: Forensic Logger manager
+			idManager: null, // NEW: ID Manager
+			cacheManager: null, // NEW: Cache Manager
 		};
 
 		// Initialize metrics registry
@@ -187,9 +190,6 @@ export class HybridStateManager {
 
 		// Initialize security subsystems
 		new InformationFlowTracker((evt) => this.emit("securityEvent", evt));
-		new CrossDomainSolution({
-			emit: (evt) => this.emit("securityEvent", evt),
-		});
 
 		// Initialize the Non-Repudiation signer with the crypto instance from storage
 		// This ensures it uses the correct KeyringAdapter (dev or prod)
@@ -197,6 +197,12 @@ export class HybridStateManager {
 			this.#signer = new NonRepudiation(this.storage.instance._crypto);
 		}
 		console.log("[HybridStateManager] Core subsystems bootstrapped.");
+
+		// Initialize the client-side cache via the manager
+		if (this.managers.cacheManager) {
+			this.clientState.cache =
+				this.managers.cacheManager.getCache("clientState");
+		}
 	}
 
 	/**
@@ -297,10 +303,17 @@ export class HybridStateManager {
 			let signature = {
 				signature: null,
 				algorithm: "unsigned",
-				timestamp: new Date().toISOString(),
+				timestamp: DateCore.now(),
 			};
 
-			if (this.#signer) {
+			if (this.#signer && userContext.certificate) {
+				// Use PKI signing if a certificate is present in the user's context
+				signature = await this.#signer.signWithCertificate({
+					action: { type, label },
+					userCert: userContext.certificate,
+				});
+			} else if (this.#signer) {
+				// Fallback to standard system-level signing
 				signature = await this.#signer.signAction({
 					userId: userContext.userId,
 					action: type,
@@ -311,7 +324,7 @@ export class HybridStateManager {
 			const event = {
 				id: crypto.randomUUID(),
 				type,
-				timestamp: new Date().toISOString(),
+				timestamp: DateCore.now(),
 				userId: userContext.userId,
 				// Capture the user's security context at the time of the event.
 				clearance: {
@@ -342,8 +355,6 @@ export class HybridStateManager {
 		if (this.storage.ready) {
 			return this.storage;
 		}
-
-		const startTime = performance.now();
 
 		// Ensure SecurityManager is loaded and set the context
 		const securityManager = await this.loadManager("securityManager");
@@ -1126,10 +1137,20 @@ export class HybridStateManager {
 	 * @throws {Error} If the manager is unknown or fails to load.
 	 */
 	async loadManager(managerName) {
-		if (this.managers[managerName]) return this.managers[managerName];
+		if (this.managers[managerName]) {
+			return this.managers[managerName];
+		}
 
 		try {
 			let manager;
+			// Create a unified context object to pass to all manager constructors.
+			const context = {
+				stateManager: this,
+				managers: this.managers,
+				eventFlow: window.eventFlowEngine,
+				metricsRegistry: this.metricsRegistry,
+			};
+
 			switch (managerName) {
 				case "offline": {
 					break;
@@ -1138,7 +1159,7 @@ export class HybridStateManager {
 					const { EmbeddingManager } = await import(
 						"/src/state/EmbeddingManager.js"
 					);
-					manager = new EmbeddingManager(this);
+					manager = new EmbeddingManager(context);
 					break;
 				}
 				case "extension": {
@@ -1146,6 +1167,22 @@ export class HybridStateManager {
 						"./ExtensionManager.js"
 					);
 					manager = new ExtensionManager(this);
+					break;
+				}
+				case "queryService": {
+					const { QueryService } = await import(
+						"../state/QueryService.js"
+					);
+					// Inject all necessary managers for full integration
+					manager = new QueryService(context);
+					break;
+				}
+				case "plugin": {
+					const { ManifestPluginSystem } = await import(
+						"./ManifestPluginSystem.js"
+					);
+					// Pass the full context to the plugin system
+					manager = new ManifestPluginSystem(context);
 					break;
 				}
 				case "validation":
@@ -1177,6 +1214,27 @@ export class HybridStateManager {
 					manager = new SecurityManager({ crypto });
 					manager.bindStateManager(this);
 					break;
+				case "idManager": {
+					const { IdManager } = await import(
+						"../managers/IdManager.js"
+					);
+					manager = new IdManager(context);
+					break;
+				}
+				case "cacheManager": {
+					const { CacheManager } = await import(
+						"../managers/CacheManager.js"
+					);
+					manager = new CacheManager(context);
+					break;
+				}
+				case "metricsReporter": {
+					const { MetricsReporter } = await import(
+						"../utils/MetricsReporter.js"
+					);
+					manager = new MetricsReporter(context);
+					break;
+				}
 				default:
 					throw new Error(`Unknown manager: ${managerName}`);
 			}

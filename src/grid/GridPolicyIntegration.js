@@ -6,6 +6,8 @@
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
+import { DateCore } from "../utils/DateUtils.js";
+
 /**
  * An object containing grid-specific policy definitions.
  * These are intended to be merged into the main `SystemPolicies` definitions.
@@ -148,11 +150,14 @@ export class GridPolicyHelper {
 	 */
 	static isAutoSaveEnabled(context) {
 		try {
-			return context.getBooleanPolicy(
+			// Use getPolicy and provide a default value if it's null or undefined.
+			const policy = context.getPolicy(
 				"system",
-				"grid_auto_save_layouts",
-				true
+				"grid_auto_save_layouts"
 			);
+			// The '??' operator returns the right-hand side if the left-hand side is null or undefined.
+			// This correctly handles cases where the policy is explicitly set to `false`.
+			return policy ?? true;
 		} catch (error) {
 			console.warn("Could not get grid auto-save policy:", error);
 			return true; // Default to enabled
@@ -167,11 +172,8 @@ export class GridPolicyHelper {
 	 */
 	static shouldShowSaveFeedback(context) {
 		try {
-			return context.getBooleanPolicy(
-				"system",
-				"grid_save_feedback",
-				true
-			);
+			const policy = context.getPolicy("system", "grid_save_feedback");
+			return policy ?? true;
 		} catch (error) {
 			console.warn("Could not get grid save feedback policy:", error);
 			return true; // Default to enabled
@@ -186,11 +188,8 @@ export class GridPolicyHelper {
 	 */
 	static isAiSuggestionsEnabled(context) {
 		try {
-			return context.getBooleanPolicy(
-				"system",
-				"grid_ai_suggestions",
-				false
-			);
+			const policy = context.getPolicy("system", "grid_ai_suggestions");
+			return policy ?? false;
 		} catch (error) {
 			console.warn("Could not get grid AI suggestions policy:", error);
 			return false; // Default to disabled
@@ -217,7 +216,7 @@ export class GridPolicyHelper {
 					domain: "system",
 					key: "grid_performance_mode",
 					value: mode,
-					timestamp: Date.now(),
+					timestamp: DateCore.timestamp(),
 				});
 			}
 

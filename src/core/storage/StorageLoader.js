@@ -17,6 +17,8 @@
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
+import { DateCore } from "@utils/DateUtils.js";
+
 import { constantTimeCheck } from "../security/ct.js"; // timing-channel padding
 import { KeyringAdapter } from "../security/KeyringAdapter.js";
 
@@ -849,7 +851,7 @@ class ModularOfflineStorage {
 					...label,
 					logical_id: record.logical_id,
 					id: record.id,
-					timestamp: Date.now(),
+					timestamp: DateCore.timestamp(),
 				};
 				const aad = new TextEncoder().encode(
 					JSON.stringify(aadPayload)
@@ -871,7 +873,7 @@ class ModularOfflineStorage {
 				const aadPayload = {
 					...label,
 					id: record.id, // Bind to the specific record ID
-					timestamp: Date.now(),
+					timestamp: DateCore.timestamp(),
 				};
 				const aad = new TextEncoder().encode(
 					JSON.stringify(aadPayload)
@@ -884,8 +886,8 @@ class ModularOfflineStorage {
 
 		const res = await idx.put(storeName, record);
 		this.stateManager?.emit?.("entitySaved", {
-			store: storeName,
-			item: record,
+			storeName,
+			item: record, // `item` key doesn't match `record` variable, so no shorthand here.
 		});
 		return res;
 	}
@@ -1012,8 +1014,8 @@ class ModularOfflineStorage {
 
 			await idx.delete(storeName, id);
 			this.stateManager?.emit?.("entityDeleted", {
-				store: storeName,
-				id: id,
+				storeName,
+				id,
 			});
 		}, 100);
 	}

@@ -12,11 +12,15 @@
 export class ManifestPluginSystem {
 	/**
 	 * Creates an instance of ManifestPluginSystem.
-	 * @param {import('./HybridStateManager.js').default} stateManager - The main state manager instance.
+	 * @param {object} context - The global application context.
+	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} context.managers - The collection of system managers.
 	 */
-	constructor(stateManager) {
+	constructor({ stateManager, managers }) {
 		/** @type {import('./HybridStateManager.js').default} */
 		this.stateManager = stateManager;
+		/** @type {object} */
+		this.managers = managers;
 		/** @private @type {Map<string, object>} */
 		this.loadedPlugins = new Map();
 		/** @private @type {Map<string, object>} */
@@ -98,8 +102,13 @@ export class ManifestPluginSystem {
 	 */
 	async loadPluginManifests() {
 		try {
+			// Use the correct storage query method as per the V8.0 Global Contracts
 			const manifestEntities =
-				await this.stateManager.getEntitiesByType("plugin_manifest");
+				await this.stateManager.storage.instance.query(
+					"objects",
+					"entity_type",
+					"plugin_manifest"
+				);
 
 			for (const entity of manifestEntities) {
 				this.registerManifest(entity.data);
@@ -271,6 +280,7 @@ export class ManifestPluginSystem {
 			pluginId: manifest.id,
 			manifest,
 			stateManager: this.stateManager,
+			managers: this.managers, // Pass all system managers to the plugin
 
 			// Registration methods
 			registerComponent: (id, definition) =>
@@ -290,8 +300,18 @@ export class ManifestPluginSystem {
 					`plugin:${manifest.id}:${event}`,
 					data
 				),
-			log: (level, message, data) =>
-				console[level](`[Plugin:${manifest.id}] ${message}`, data),
+			log: (level, message, data) => {
+				const allowedLevels = {
+					log: console.log,
+					warn: console.warn,
+					error: console.error,
+					info: console.info,
+					debug: console.debug,
+				};
+				// Default to console.log if an invalid level is provided
+				const logFn = allowedLevels[level] || console.log;
+				logFn(`[Plugin:${manifest.id}] ${message}`, data || "");
+			},
 
 			// Access to other plugins (with permission check)
 			getPlugin: (pluginId) =>

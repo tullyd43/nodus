@@ -1,3 +1,11 @@
+import { DateCore } from "./DateUtils.js"; // DateCore is now the lean, integrated version
+import {
+	AppError,
+	StorageError,
+	ErrorHelpers,
+	PolicyError,
+} from "./ErrorHelpers.js";
+
 /**
  * @class LRUCache
  * @description An enhanced Least Recently Used (LRU) cache implementation.
@@ -19,15 +27,37 @@ export class LRUCache {
 	 * Creates an instance of LRUCache.
 	 * @param {number} [maxSize=1000] - The maximum number of items the cache can hold.
 	 * @param {object} [options={}] - Configuration options for the cache.
-	 * @param {number} [options.ttl=null] - Time to live for items in milliseconds. If set, items expire after this duration.
-	 * @param {function(string, T, string): void} [options.onEvict=null] - Callback function invoked when an item is evicted (key, value, reason).
-	 * @param {function(string, T): void} [options.onExpire=null] - Callback function invoked when an item expires (key, value).
 	 * @param {boolean} [options.enableMetrics=true] - Whether to collect performance metrics.
 	 * @param {boolean} [options.auditOperations=false] - Whether to log cache operations for auditing.
 	 * @param {number} [options.memoryLimit=null] - Maximum memory (in bytes) the cache can consume.
 	 * @param {string} [options.keyPrefix=""] - An optional prefix to apply to all keys for namespacing.
+	 * @param {import('./MetricsRegistry').MetricsRegistry} [options.metricsRegistry=null] - An external metrics registry to report to.
+	 * @param {object} [options.eventFlow=null] - The application's EventFlowEngine instance for emitting audit events.
+	 * @param {object} [options.securityManager=null] - The application's security manager for access control.
 	 */
 	constructor(maxSize = 1000, options = {}) {
+		if (
+			typeof maxSize !== "number" ||
+			!Number.isInteger(maxSize) ||
+			maxSize <= 0
+		) {
+			throw new AppError("LRUCache maxSize must be a positive integer.", {
+				category: "configuration_error",
+				severity: "high",
+				context: { maxSize },
+			});
+		}
+		if (
+			options.ttl &&
+			(typeof options.ttl !== "number" || options.ttl <= 0)
+		) {
+			throw new AppError("LRUCache ttl must be a positive number.", {
+				category: "configuration_error",
+				severity: "high",
+				context: { ttl: options.ttl },
+			});
+		}
+
 		this.maxSize = maxSize;
 		this.cache = new Map();
 
@@ -37,17 +67,6 @@ export class LRUCache {
 			 * Time to live for items in milliseconds. If set, items expire after this duration.
 			 * @type {number|null}
 			 */
-			ttl: null,
-			/**
-			 * Callback function invoked when an item is evicted.
-			 * @type {function(string, T, string): void|null}
-			 */
-			onEvict: null,
-			/**
-			 * Callback function invoked when an item expires.
-			 * @type {function(string, T): void|null}
-			 */
-			onExpire: null,
 			enableMetrics: options.enableMetrics !== false, // Default enabled
 			/** @type {boolean} */
 			auditOperations: false,
@@ -55,6 +74,12 @@ export class LRUCache {
 			memoryLimit: null,
 			/** @type {string} Optional key prefix for namespacing. */
 			keyPrefix: "",
+			/** @type {import('./MetricsRegistry').MetricsRegistry|null} The external metrics registry. */
+			metricsRegistry: null,
+			/** @type {object|null} The EventFlowEngine instance. */
+			eventFlow: null,
+			/** @type {object|null} The SecurityManager instance. */
+			securityManager: null,
 			...options,
 		};
 
@@ -62,23 +87,16 @@ export class LRUCache {
 		this.metrics = {
 			hits: 0,
 			misses: 0,
-			evictions: 0,
-			expirations: 0,
-			sets: 0,
-			deletes: 0,
-			memoryUsage: 0,
-			operationTimes: [],
-			lastCleanup: Date.now(),
-			/**
-			 * Map tracking the count of cached items per entity type.
-			 * @type {Map<string, number>}
-			 */
-			entityTypes: new Map(), // Count by entity type
-			/** @type {number} */
-			averageEntitySize: 0,
-			/** @type {number} */
-			totalEntitiesCached: 0,
 		};
+
+		// Use a namespaced registry if provided, otherwise use the main one
+		if (this.options.metricsRegistry && this.options.keyPrefix) {
+			this.registry = this.options.metricsRegistry.namespace(
+				`cache.${this.options.keyPrefix}`
+			);
+		} else if (this.options.metricsRegistry) {
+			this.registry = this.options.metricsRegistry;
+		}
 
 		// TTL management
 		/**
@@ -98,45 +116,81 @@ export class LRUCache {
 	 * If the item exists and is not expired, it's marked as most recently used.
 	 * Metrics are updated for hits and misses.
 	 * @param {string} key - The key of the item to retrieve.
+	 * @param {object} [securityContext={}] - Optional security context for MAC checks.
 	 * @returns {T|undefined} The cached value, or `undefined` if not found or expired.
 	 * @fires LRUCache#cache_get
 	 */
-	get(key) {
-		const startTime = this.options.enableMetrics ? performance.now() : 0;
+	get = ErrorHelpers.withPerformanceTracking(
+		(key, securityContext = {}) =>
+			ErrorHelpers.captureSync(
+				() => {
+					const prefixedKey = this.getPrefixedKey(key);
 
-		try {
-			const prefixedKey = this.getPrefixedKey(key);
+					// Check if item exists
+					if (!this.cache.has(prefixedKey)) {
+						// This is a 'miss'
+						this.registry?.increment("misses");
+						this.options.eventFlow?.emit("cache_miss", {
+							timestamp: DateCore.now(),
+							source: `cache:${this.options.keyPrefix || "generic"}`,
+							key,
+						});
+						return undefined;
+					}
 
-			// Check if item exists
-			if (!this.cache.has(prefixedKey)) {
-				this.recordMetric("misses");
-				return undefined;
-			}
+					// Check TTL if enabled
+					if (this.isExpired(prefixedKey)) {
+						this.expireItem(prefixedKey);
+						this.registry?.increment("misses");
+						this.options.eventFlow?.emit("cache_miss", {
+							timestamp: DateCore.now(),
+							source: `cache:${this.options.keyPrefix || "generic"}`,
+							key,
+							reason: "expired",
+						});
+						return undefined;
+					}
 
-			// Check TTL if enabled
-			if (this.options.ttl && this.isExpired(prefixedKey)) {
-				this.expireItem(prefixedKey);
-				this.recordMetric("misses");
-				return undefined;
-			}
+					// Move to end of map (most recently used)
+					const item = this.cache.get(prefixedKey);
+					this.cache.delete(prefixedKey);
+					this.cache.set(prefixedKey, item);
 
-			// Move to end (most recently used)
-			const item = this.cache.get(prefixedKey);
-			this.cache.delete(prefixedKey);
-			this.cache.set(prefixedKey, item);
+					// Security Integration: Check if user can read this item
+					if (this.options.securityManager && item.securityLabel) {
+						const canRead = this.options.securityManager.canRead(
+							securityContext,
+							item.securityLabel
+						);
+						if (!canRead) {
+							this.auditOperation("cache_read_denied", {
+								key,
+								securityContext,
+							});
+							throw new PolicyError(
+								"Access denied to cached item."
+							);
+						}
+					}
 
-			// Update item access tracking
-			item.accessed = Date.now();
-			item.hits++;
+					// Update item access tracking
+					item.accessed = DateCore.timestamp(); // timestamp() returns a number, which is fine
+					item.hits++;
 
-			this.recordMetric("hits");
-			return item.value;
-		} finally {
-			if (this.options.enableMetrics) {
-				this.recordOperationTime(performance.now() - startTime);
-			}
-		}
-	}
+					this.registry?.increment("hits"); // This is a 'hit'
+					this.options.eventFlow?.emit("cache_hit", {
+						timestamp: DateCore.now(),
+						source: `cache:${this.options.keyPrefix || "generic"}`,
+						key,
+						entityType: item.entityType,
+					});
+					return item.value;
+				},
+				this.options.eventFlow,
+				{ component: "LRUCache.get", key }
+			),
+		"cache.get"
+	);
 
 	/**
 	 * Adds or updates an item in the cache.
@@ -144,74 +198,117 @@ export class LRUCache {
 	 * or oldest items if `memoryLimit` is exceeded. Updates TTL and metrics.
 	 * @param {string} key - The key for the item.
 	 * @param {T} value - The value to cache.
-	 * @param {number} [ttlOverride=null] - An optional TTL for this specific item, overriding the cache's default.
+	 * @param {object} [options={}] - Options for this set operation.
+	 * @param {number} [options.ttlOverride=null] - An optional TTL for this specific item.
+	 * @param {object} [options.securityContext={}] - Optional security context for MAC checks.
+	 * @param {object} [options.securityLabel=null] - Security label to attach to the item.
 	 * @returns {void}
 	 * @fires LRUCache#cache_set
 	 */
-	set(key, value, ttlOverride = null) {
-		const startTime = this.options.enableMetrics ? performance.now() : 0;
+	set = ErrorHelpers.withPerformanceTracking(
+		(key, value, options = {}) =>
+			ErrorHelpers.captureSync(
+				() => {
+					const { ttlOverride, securityContext, securityLabel } =
+						options;
+					const prefixedKey = this.getPrefixedKey(key);
+					const itemSize = this.estimateItemSize(prefixedKey, value);
 
-		try {
-			const prefixedKey = this.getPrefixedKey(key);
-			const itemSize = this.estimateItemSize(prefixedKey, value);
+					// Security Integration: Check if user can write this item
+					if (this.options.securityManager && securityLabel) {
+						const canWrite = this.options.securityManager.canWrite(
+							securityContext,
+							securityLabel
+						);
+						if (!canWrite) {
+							this.auditOperation("cache_write_denied", {
+								key,
+								securityContext,
+								securityLabel,
+							});
+							throw new PolicyError(
+								"Access denied to write to cache with this security label."
+							);
+						}
+					}
 
-			// Check memory limit if enabled
-			if (
-				this.options.memoryLimit &&
-				this.metrics.memoryUsage + itemSize > this.options.memoryLimit
-			) {
-				this.enforceMemoryLimit(itemSize);
-			}
+					// Check memory limit before adding
+					const currentMemory =
+						this.registry?.get("memory_bytes")?.value || 0;
+					if (
+						this.options.memoryLimit &&
+						currentMemory + itemSize > this.options.memoryLimit
+					) {
+						this.enforceMemoryLimit(itemSize);
+					}
 
-			// Create item wrapper with metadata
-			const item = {
-				value,
-				size: itemSize,
-				created: Date.now(),
-				accessed: Date.now(),
-				hits: 0,
-				entityType: this.extractEntityType(value),
-			};
+					// Create item wrapper with metadata
+					const item = {
+						value,
+						size: itemSize,
+						created: DateCore.timestamp(), // Returns a number
+						accessed: DateCore.timestamp(), // Returns a number
+						hits: 0,
+						entityType: this.extractEntityType(value),
+						securityLabel,
+					};
 
-			// Handle existing item
-			if (this.cache.has(prefixedKey)) {
-				const oldItem = this.cache.get(prefixedKey);
-				this.metrics.memoryUsage -= oldItem.size;
-				this.updateEntityTypeMetrics(oldItem.entityType, -1);
-				this.cache.delete(prefixedKey);
-			} else if (this.cache.size >= this.maxSize) {
-				// Evict least recently used item
-				this.evictOldestItem();
-			}
+					// Handle existing item
+					if (this.cache.has(prefixedKey)) {
+						const oldItem = this.cache.get(prefixedKey); // Get old item to update metrics
+						if (oldItem) {
+							this.registry?.increment(
+								"memory_bytes",
+								-oldItem.size
+							);
+							this.registry?.increment(
+								`entities.${oldItem.entityType}`,
+								-1
+							);
+						}
 
-			// Add new item
-			this.cache.set(prefixedKey, item);
-			this.metrics.memoryUsage += itemSize;
-			this.updateEntityTypeMetrics(item.entityType, 1);
+						this.cache.delete(prefixedKey);
+					} else if (this.cache.size >= this.maxSize) {
+						// Evict least recently used item
+						this.evictOldestItem();
+					}
 
-			// Set TTL
-			const ttl = ttlOverride || this.options.ttl;
-			if (ttl) {
-				this.ttlMap.set(prefixedKey, Date.now() + ttl);
-			}
+					// Add new item
+					this.cache.set(prefixedKey, item);
+					this.registry?.increment("memory_bytes", itemSize);
+					if (item.entityType) {
+						this.registry?.increment(
+							`entities.${item.entityType}`,
+							1
+						);
+					}
 
-			this.recordMetric("sets");
+					// Set TTL
+					const ttl = ttlOverride || this.options.ttl;
+					if (ttl) {
+						this.ttlMap.set(
+							prefixedKey,
+							DateCore.timestamp() + ttl
+						); // Number + number is fine
+					}
 
-			// Generate audit event if enabled
-			if (this.options.auditOperations) {
-				this.auditOperation("cache_set", {
-					key: prefixedKey,
-					size: itemSize,
-					ttl,
-					entityType: item.entityType,
-				});
-			}
-		} finally {
-			if (this.options.enableMetrics) {
-				this.recordOperationTime(performance.now() - startTime);
-			}
-		}
-	}
+					this.registry?.increment("sets");
+
+					// Generate audit event if enabled
+					if (this.options.auditOperations) {
+						this.auditOperation("cache_set", {
+							key: prefixedKey,
+							size: itemSize,
+							ttl,
+							entityType: item.entityType,
+						});
+					}
+				},
+				this.options.eventFlow,
+				{ component: "LRUCache.set", key }
+			),
+		"cache.set"
+	);
 
 	/**
 	 * Retrieves all cached entities of a specific type.
@@ -285,7 +382,7 @@ export class LRUCache {
 	 * @fires LRUCache#cache_expire (if an item is found and expired)
 	 * @fires LRUCache#cache_delete (if an item is found and expired)
 	 */
-	has(key) {
+	has = ErrorHelpers.withPerformanceTracking((key) => {
 		const prefixedKey = this.getPrefixedKey(key);
 
 		if (!this.cache.has(prefixedKey)) {
@@ -298,7 +395,7 @@ export class LRUCache {
 		}
 
 		return true;
-	}
+	}, "cache.has");
 
 	/**
 	 * Deletes an item from the cache.
@@ -308,7 +405,7 @@ export class LRUCache {
 	 * @fires LRUCache#cache_delete
 	 * @fires LRUCache#audit_cache_delete (if auditing is enabled)
 	 */
-	delete(key) {
+	delete = ErrorHelpers.withPerformanceTracking((key) => {
 		const prefixedKey = this.getPrefixedKey(key);
 		const item = this.cache.get(prefixedKey);
 		if (!item) {
@@ -317,9 +414,11 @@ export class LRUCache {
 
 		this.cache.delete(prefixedKey);
 		this.ttlMap.delete(prefixedKey);
-		this.metrics.memoryUsage -= item.size;
-		this.updateEntityTypeMetrics(item.entityType, -1);
-		this.recordMetric("deletes");
+		this.registry?.increment("memory_bytes", -item.size);
+		this.registry?.increment("deletes");
+		if (item.entityType) {
+			this.registry?.increment(`entities.${item.entityType}`, -1);
+		}
 
 		if (this.options.auditOperations) {
 			this.auditOperation("cache_delete", {
@@ -329,7 +428,7 @@ export class LRUCache {
 		}
 
 		return true;
-	}
+	}, "cache.delete");
 
 	/**
 	 * Clears all items from the cache.
@@ -342,22 +441,15 @@ export class LRUCache {
 	clear() {
 		const clearedCount = this.cache.size;
 
-		// Call eviction callback for all items if configured
-		if (this.options.onEvict) {
-			for (const [key, item] of this.cache.entries()) {
-				this.options.onEvict(
-					this.getUnprefixedKey(key),
-					item.value,
-					"clear"
-				);
-			}
-		}
-
 		this.cache.clear();
 		this.ttlMap.clear();
-		this.metrics.memoryUsage = 0;
-		this.metrics.entityTypes.clear();
-		this.recordMetric("evictions", clearedCount);
+		const currentMemory = this.registry?.get("memory_bytes")?.value || 0;
+		if (currentMemory > 0) {
+			this.registry?.increment("memory_bytes", -currentMemory);
+		}
+		// Reset all entity counts
+		this.registry?.reset(/^entities\./);
+		this.registry?.increment("evictions", clearedCount);
 
 		if (this.options.auditOperations) {
 			this.auditOperation("cache_clear", { itemCount: clearedCount });
@@ -468,33 +560,6 @@ export class LRUCache {
 	}
 
 	/**
-	 * Updates the internal count of items per entity type.
-	 * Used when items are added, removed, or evicted.
-	 * @private
-	 * @param {string} entityType - The type of the entity.
-	 * @param {number} delta - The change in count (e.g., `1` for add, `-1` for remove).
-	 * @returns {void}
-	 */
-	updateEntityTypeMetrics(entityType, delta) {
-		if (!entityType) return;
-
-		const current = this.metrics.entityTypes.get(entityType) || 0;
-		const newCount = current + delta;
-
-		if (newCount <= 0) {
-			this.metrics.entityTypes.delete(entityType);
-		} else {
-			this.metrics.entityTypes.set(entityType, newCount);
-		}
-
-		// Update total count
-		this.metrics.totalEntitiesCached = Math.max(
-			0,
-			this.metrics.totalEntitiesCached + delta
-		);
-	}
-
-	/**
 	 * Estimates the memory size of a cache item (key + value + overhead) in bytes.
 	 * This is a rough heuristic and not a precise measurement.
 	 * @private
@@ -570,8 +635,23 @@ export class LRUCache {
 	enforceMemoryLimit(newItemSize) {
 		const targetMemory = this.options.memoryLimit - newItemSize;
 
-		while (this.metrics.memoryUsage > targetMemory && this.cache.size > 0) {
+		while (
+			(this.registry?.get("memory_bytes")?.value || 0) > targetMemory &&
+			this.cache.size > 0
+		) {
 			this.evictOldestItem();
+		}
+
+		// After eviction, check if there's still not enough space
+		if ((this.registry?.get("memory_bytes")?.value || 0) > targetMemory) {
+			throw new StorageError(
+				`Cannot add item of size ${newItemSize}. Insufficient memory after eviction.`,
+				{
+					memoryLimit: this.options.memoryLimit,
+					currentUsage:
+						this.registry?.get("memory_bytes")?.value || 0,
+				}
+			);
 		}
 	}
 
@@ -587,7 +667,7 @@ export class LRUCache {
 		if (!this.options.ttl) return false;
 
 		const expireTime = this.ttlMap.get(key);
-		return expireTime && Date.now() > expireTime;
+		return expireTime && DateCore.timestamp() > expireTime; // Number comparison is fine
 	}
 
 	/**
@@ -603,13 +683,18 @@ export class LRUCache {
 
 		this.cache.delete(key);
 		this.ttlMap.delete(key);
-		this.metrics.memoryUsage -= item.size;
-		this.updateEntityTypeMetrics(item.entityType, -1);
-		this.recordMetric("expirations");
-
-		if (this.options.onExpire) {
-			this.options.onExpire(this.getUnprefixedKey(key), item.value);
+		this.registry?.increment("memory_bytes", -item.size);
+		if (item.entityType) {
+			this.registry?.increment(`entities.${item.entityType}`, -1);
 		}
+		this.registry?.increment("expirations");
+
+		this.options.eventFlow?.emit("cache_expiration", {
+			timestamp: DateCore.now(),
+			source: `cache:${this.options.keyPrefix || "generic"}`,
+			key: this.getUnprefixedKey(key),
+			entityType: item.entityType,
+		});
 
 		if (this.options.auditOperations) {
 			this.auditOperation("cache_expire", {
@@ -633,17 +718,19 @@ export class LRUCache {
 
 		this.cache.delete(oldestKey);
 		this.ttlMap.delete(oldestKey);
-		this.metrics.memoryUsage -= oldestItem.size;
-		this.updateEntityTypeMetrics(oldestItem.entityType, -1);
-		this.recordMetric("evictions");
-
-		if (this.options.onEvict) {
-			this.options.onEvict(
-				this.getUnprefixedKey(oldestKey),
-				oldestItem.value,
-				"lru"
-			);
+		this.registry?.increment("memory_bytes", -oldestItem.size);
+		if (oldestItem.entityType) {
+			this.registry?.increment(`entities.${oldestItem.entityType}`, -1);
 		}
+		this.registry?.increment("evictions");
+
+		this.options.eventFlow?.emit("cache_eviction", {
+			timestamp: DateCore.now(),
+			source: `cache:${this.options.keyPrefix || "generic"}`,
+			key: this.getUnprefixedKey(oldestKey),
+			entityType: oldestItem.entityType,
+			reason: "lru",
+		});
 
 		if (this.options.auditOperations) {
 			this.auditOperation("cache_evict", {
@@ -661,7 +748,7 @@ export class LRUCache {
 	 * @fires LRUCache#expireItem (for each expired item)
 	 */
 	cleanupExpired() {
-		const now = Date.now();
+		const now = DateCore.timestamp();
 		const expiredKeys = [];
 
 		for (const [key, expireTime] of this.ttlMap.entries()) {
@@ -673,8 +760,6 @@ export class LRUCache {
 		for (const key of expiredKeys) {
 			this.expireItem(key);
 		}
-
-		this.metrics.lastCleanup = now;
 	}
 
 	/**
@@ -707,71 +792,40 @@ export class LRUCache {
 	/**
 	 * Metrics and monitoring
 	 */
-	recordMetric(metricName, value = 1) {
-		if (this.options.enableMetrics) {
-			this.metrics[metricName] += value;
-		}
-	}
-
-	recordOperationTime(time) {
-		/**
-		 * Records the duration of a cache operation.
-		 * Only records if `options.enableMetrics` is true.
-		 * @private
-		 * @param {number} time - The duration of the operation in milliseconds.
-		 */
-		this.metrics.operationTimes.push(time);
-
-		// Keep only recent measurements
-		if (this.metrics.operationTimes.length > 1000) {
-			this.metrics.operationTimes =
-				this.metrics.operationTimes.slice(-500);
-		}
-	}
-
 	getMetrics() {
 		/**
 		 * Retrieves a comprehensive object of current cache performance and usage metrics.
 		 * Includes hit rate, memory usage, operation times, and entity type distribution.
 		 * @returns {object} An object containing various cache metrics.
 		 * @property {number} hitRate - The cache hit rate as a percentage.
-		 * @property {number} avgOperationTime - The average time taken for cache operations in milliseconds. */
-		const hitRate =
-			this.metrics.hits + this.metrics.misses > 0
-				? (this.metrics.hits /
-						(this.metrics.hits + this.metrics.misses)) *
-					100
-				: 0;
+		 * @property {number} avgGetTime - The average time for a 'get' operation.
+		 * @property {number} avgSetTime - The average time for a 'set' operation.
+		 */
+		const allMetrics = this.registry?.getAllAsObject() || {};
+		const hits = allMetrics["hits"]?.value || 0;
+		const misses = allMetrics["misses"]?.value || 0;
+		const totalAccesses = hits + misses;
+		const hitRate = totalAccesses > 0 ? (hits / totalAccesses) * 100 : 0;
 
-		const avgOperationTime =
-			this.metrics.operationTimes.length > 0
-				? this.metrics.operationTimes.reduce((a, b) => a + b) /
-					this.metrics.operationTimes.length
-				: 0;
-
-		// Calculate average entity size
-		this.metrics.averageEntitySize =
-			this.metrics.totalEntitiesCached > 0
-				? this.metrics.memoryUsage / this.metrics.totalEntitiesCached
-				: 0;
+		const memoryUsage = allMetrics["memory_bytes"]?.value || 0;
+		const totalEntities = Object.entries(allMetrics)
+			.filter(([k]) => k.startsWith("entities."))
+			.reduce((sum, [, v]) => sum + v.value, 0);
 
 		return {
-			...this.metrics,
 			hitRate: Math.round(hitRate * 100) / 100,
-			avgOperationTime: Math.round(avgOperationTime * 1000) / 1000,
+			avgGetTime: allMetrics["get"]?.avg || 0,
+			avgSetTime: allMetrics["set"]?.avg || 0,
+			memoryUsage,
+			averageEntitySize:
+				totalEntities > 0 ? memoryUsage / totalEntities : 0,
 			memoryUtilization: this.options.memoryLimit
-				? Math.round(
-						(this.metrics.memoryUsage / this.options.memoryLimit) *
-							100
-					)
+				? Math.round((memoryUsage / this.options.memoryLimit) * 100)
 				: null,
 			itemCount: this.cache.size,
 			maxSize: this.maxSize,
 			utilizationPercent: Math.round(
 				(this.cache.size / this.maxSize) * 100
-			),
-			entityTypeDistribution: Object.fromEntries(
-				this.metrics.entityTypes
 			),
 		};
 	}
@@ -781,20 +835,8 @@ export class LRUCache {
 		 * Resets all collected metrics to their initial state, except for current memory usage and total entity count.
 		 * @returns {void}
 		 */
-		this.metrics = {
-			hits: 0,
-			misses: 0,
-			evictions: 0,
-			expirations: 0,
-			sets: 0,
-			deletes: 0,
-			memoryUsage: this.metrics.memoryUsage, // Keep memory usage
-			operationTimes: [],
-			lastCleanup: Date.now(),
-			entityTypes: new Map(),
-			averageEntitySize: 0,
-			totalEntitiesCached: this.metrics.totalEntitiesCached, // Keep entity count
-		};
+		this.metrics = {};
+		this.registry?.reset();
 	}
 
 	/**
@@ -808,9 +850,21 @@ export class LRUCache {
 	 * @returns {void}
 	 */
 	auditOperation(operation, metadata) {
-		// This would integrate with the audit system
-		if (this.options.enableMetrics) {
-			console.log(`Cache audit: ${operation}`, metadata);
+		if (!this.options.auditOperations) return;
+
+		const auditEvent = {
+			timestamp: DateCore.now(),
+			source: `cache:${this.options.keyPrefix || "generic"}`,
+			operation,
+			metadata,
+		};
+
+		// Emit to event flow if available
+		if (this.options.eventFlow) {
+			this.options.eventFlow.emit("cache_audit", auditEvent);
+		} else if (this.options.enableMetrics) {
+			// Fallback to console logging if no event flow but auditing is on
+			console.log(`Cache audit:`, auditEvent);
 		}
 	}
 

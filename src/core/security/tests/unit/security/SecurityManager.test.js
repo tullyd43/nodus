@@ -1,8 +1,8 @@
 // tests/unit/security/SecurityManager.test.js
 
-import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import { SecurityManager } from "@core/security/SecurityManager.js";
 import { MACEngine } from "@core/security/MACEngine.js";
+import { SecurityManager } from "@core/security/SecurityManager.js";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Mock HybridStateManager for event emission
 const mockHSM = {
@@ -106,7 +106,7 @@ describe("SecurityManager", () => {
 	test("cleanup should stop the TTL check interval", async () => {
 		const sm = new SecurityManager({ ttlCheckIntervalMs: 100 });
 		await sm.initialize();
-		const clearIntervalSpy = vi.spyOn(global, "clearInterval");
+		const clearIntervalSpy = vi.spyOn(vi.getTimerMock(), "clearInterval");
 
 		sm.cleanup();
 
