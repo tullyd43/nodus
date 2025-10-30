@@ -6,10 +6,11 @@
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
+import { CrossDomainSolution } from "@core/security/cds.js";
 import { EventFlowEngine } from "@core/EventFlowEngine.js";
+import { InformationFlowTracker } from "@core/security/InformationFlowTracker.js";
 import { BoundedStack } from "@utils/BoundedStack.js";
 
-import AdaptiveRenderer from "./AdaptiveRenderer.js";
 import { LRUCache } from "../utils/LRUCache.js";
 import { MetricsRegistry } from "../utils/MetricsRegistry.js";
 import { NonRepudiation } from "./security/NonRepudiation.js";
@@ -22,6 +23,13 @@ import { StorageLoader } from "./storage/StorageLoader.js";
  * designed to integrate with the `StorageLoader` for modern, modular storage capabilities.
  */
 export class HybridStateManager {
+	// Private fields for core subsystems to enforce encapsulation
+	/**
+	 * The instance for creating non-repudiable signatures for audit events.
+	 * @private @type {NonRepudiation|null}
+	 */
+	#signer = null;
+
 	/**
 	 * @param {object} [config={}] - The configuration object for the state manager.
 	 */
@@ -104,36 +112,18 @@ export class HybridStateManager {
 		/** @type {Map<string, object>} */
 		this.typeDefinitions = new Map();
 
-		// Plugin management (unchanged)
-		this.plugins = {
-			active: new Set(),
-			loaded: new Map(),
-			configs: new Map(),
-			loadingStrategies: new Map(),
-		};
-
-		// Extension-based server capabilities (unchanged)
-		this.serverCapabilities = {
-			discovered: new Map(),
-			endpoints: new Map(),
-			routing: new Map(),
-			fallbacks: new Map(),
-			lastDiscovery: 0,
-			discoveryInterval: 5 * 60 * 1000,
-		};
-
 		// State change listeners (unchanged)
 		this.listeners = new Map();
-		/** @private */
-		this.viewModelBindings = new Map();
-
-		// Component managers (enhanced with storage)
 		/**
 		 * A collection of specialized managers for different subsystems.
 		 * @type {object}
-		 * @property {object|null} offline - The offline storage manager.
-		 * @property {import('./security/SecurityManager.js').default|null} securityManager - Manages user context and security policies.
-		 * @property {import('./ForensicLogger.js').default|null} forensicLogger - Manages audit event logging.
+		 * @property {object|null} sync - Manages data synchronization.
+		 * @property {object|null} plugin - Manages plugins.
+		 * @property {import('../state/EmbeddingManager.js').default|null} embedding - Manages AI embeddings.
+		 * @property {object|null} extension - Manages extensions.
+		 * @property {import('./storage/ValidationLayer.js').default|null} validation - Manages data validation.
+		 * @property {import('./security/SecurityManager.js').default|null} securityManager - Manages user context and security.
+		 * @property {import('./ForensicLogger.js').default|null} forensicLogger - Manages audit logging.
 		 */
 		this.managers = {
 			offline: null,
@@ -146,140 +136,14 @@ export class HybridStateManager {
 			forensicLogger: null, // NEW: Forensic Logger manager
 		};
 
-		// Enhanced metrics (unchanged structure)
-		/**
-		 * A collection of performance and usage metrics.
-		 * @type {object}
-		 */
-		this.metrics = {
-			operationLatencies: [],
-			bundleSize: 0,
-			embeddingCacheHitRate: 0,
-			embeddingProcessingTimes: [],
-			embeddingBatchEfficiency: 0,
-
-			routing: {
-				serverSuccessRate: 0,
-				clientFallbackRate: 0,
-				adaptiveDecisions: 0,
-				extensionRoutingCount: 0,
-			},
-
-			rendering: {
-				adaptiveRenderTimes: [],
-				templateRenderTimes: [],
-				averageRenderTime: 0,
-				averageAdaptiveRenderTime: 0,
-				componentCacheHitRate: 0,
-			},
-
-			memory: {
-				entitiesCount: 0,
-				relationshipsCount: 0,
-				cacheSize: 0,
-				undoStackSize: 0,
-			},
-
-			interaction: {
-				commandsExecuted: 0,
-				actionsTriggered: 0,
-				conditionsEvaluated: 0,
-			},
-
-			// NEW: Storage metrics
-			storage: {
-				loadTime: 0,
-				saveTime: 0,
-				syncTime: 0,
-				validationTime: 0,
-				securityChecks: 0,
-			},
-		};
-
-		// Vector Embedding State Management (unchanged)
-		/**
-		 * Manages state related to vector embeddings for AI/semantic features.
-		 * @type {object}
-		 */
-		this.embeddingState = {
-			contentCache: new LRUCache(1000, {
-				ttl: 24 * 60 * 60 * 1000,
-				onEvict: (key, value) => this.onEmbeddingCacheEvict(key, value),
-			}),
-
-			processingQueues: {
-				immediate: [],
-				batched: [],
-				deferred: [],
-			},
-
-			batchConfig: {
-				maxSizes: {
-					entity_embeddings: 50,
-					field_embeddings: 100,
-					relationship_embeddings: 25,
-				},
-				timeouts: {
-					immediate: 100,
-					batched: 5000,
-					deferred: 30000,
-				},
-			},
-
-			modelConfig: {
-				version: "text-embedding-3-small",
-				dimensions: 1536,
-				maxTokens: 8192,
-			},
-
-			isProcessing: false,
-			lastBatchTime: 0,
-			activeRequests: new Set(),
-
-			routingDecisions: {
-				clientCount: 0,
-				serverCount: 0,
-				reasonCounts: {
-					all_cached: 0,
-					immediate_priority: 0,
-					large_volume: 0,
-					offline: 0,
-					rate_limited: 0,
-					user_facing_cached: 0,
-					default_server: 0,
-					extension_routed: 0,
-				},
-				avgCacheHitRate: 0,
-				avgContentVolume: 0,
-			},
-		};
-
-		// Circuit breaker for server operations (unchanged)
-		/**
-		 * Implements a circuit breaker pattern to handle server operation failures gracefully.
-		 * @type {object}
-		 */
-		this.circuitBreaker = {
-			isOpen: false,
-			failureCount: 0,
-			lastFailureTime: 0,
-			threshold: 5,
-			timeout: 30000,
-			halfOpenAttempts: 0,
-			maxHalfOpenAttempts: 3,
-		};
-
-		// Initialize adaptive renderer (unchanged)
-		/** @type {AdaptiveRenderer} */
-		this.adaptiveRenderer = new AdaptiveRenderer(this);
-
 		// Initialize metrics registry
 		/** @type {MetricsRegistry} */
 		this.metricsRegistry = new MetricsRegistry();
 
-		// NEW: Non-repudiation signer
-		/** @type {NonRepudiation} */
-		this.signer = new NonRepudiation();
+		// NEW: Non-repudiation signer.
+		// This will be initialized by SystemBootstrap after the crypto engine is ready.
+		/** @type {NonRepudiation|null} */
+		this.#signer = null;
 
 		/**
 		 * A flag indicating if the state manager has been initialized.
@@ -302,44 +166,44 @@ export class HybridStateManager {
 	 * @param {string} authContext.clearanceLevel - The user's security clearance level.
 	 * @param {string[]} [authContext.compartments] - An array of security compartments the user has access to.
 	 */
-	async initialize(authContext) {
-		if (this.initialized) return; // ✅ guard
-		this.initialized = true;
-
-		// (storage first to avoid event flow queries before DB exists)
-		await this.initializeStorageSystem(authContext);
-		await this.initializeEventSystem();
-
-		// Initialize the Information Flow Tracker
-		const { InformationFlowTracker } = await import(
-			"@core/security/InformationFlowTracker.js"
+	async initialize() {
+		// The primary initialization logic is now handled by SystemBootstrap.
+		// This method can be used for post-bootstrap setup if needed in the future.
+		console.warn(
+			"[HybridStateManager] initialize() is deprecated. Use SystemBootstrap to start the application."
 		);
-		this.informationFlow = new InformationFlowTracker((evt) =>
-			this.emit("securityEvent", evt)
-		);
+	}
 
-		// Initialize the Cross-Domain Solution
-		const { CrossDomainSolution } = await import("@core/security/cds.js");
-		this.crossDomain = new CrossDomainSolution({
+	/**
+	 * Initializes core subsystems like the event engine and security components.
+	 * This is called by SystemBootstrap after storage is ready.
+	 * @internal
+	 */
+	bootstrapSubsystems() {
+		// Initialize the event system
+		window.eventFlowEngine =
+			window.eventFlowEngine ?? new EventFlowEngine(this);
+		this.subscribeToCoreEvents();
+
+		// Initialize security subsystems
+		new InformationFlowTracker((evt) => this.emit("securityEvent", evt));
+		new CrossDomainSolution({
 			emit: (evt) => this.emit("securityEvent", evt),
 		});
-		await this.loadManager("securityManager"); // Initialize security manager early
-		await this.loadManager("forensicLogger"); // Ensure forensic logger is initialized early
 
-		await this.loadDatabaseSchema();
+		// Initialize the Non-Repudiation signer with the crypto instance from storage
+		// This ensures it uses the correct KeyringAdapter (dev or prod)
+		if (this.storage.instance?._crypto) {
+			this.#signer = new NonRepudiation(this.storage.instance._crypto);
+		}
+		console.log("[HybridStateManager] Core subsystems bootstrapped.");
 	}
 
 	/**
 	 * Initializes the internal event system and subscribes to core events.
 	 * @private
-	 * @returns {Promise<EventFlowEngine>} The initialized event flow engine.
 	 */
-	async initializeEventSystem() {
-		if (this.eventFlow?.initialized) return this.eventFlow;
-
-		this.eventFlow = window.eventFlowEngine ?? new EventFlowEngine(this);
-		this.eventFlow.initialized = true;
-
+	subscribeToCoreEvents() {
 		// --- Core Event Subscriptions ---
 		this.on("validationError", (data) => this.handleValidationError(data));
 		this.on("syncCompleted", (data) => this.handleSyncCompleted(data));
@@ -347,7 +211,6 @@ export class HybridStateManager {
 		this.on("accessDenied", (data) => this.handleAccessDenied(data));
 
 		console.log("[HybridStateManager] Event system initialized");
-		return this.eventFlow;
 	}
 
 	// --- Validation Layer ---
@@ -404,39 +267,59 @@ export class HybridStateManager {
 	 */
 	async recordAuditEvent(type, payload) {
 		if (!this.managers.forensicLogger || !this.managers.securityManager) {
+			// If the logger isn't ready, we can queue this or log a warning.
+			// For now, we'll log a warning to avoid losing events silently.
 			console.warn(
-				"[HybridStateManager] ForensicLogger not initialized, audit event not recorded:",
-				type,
-				payload
+				"[HybridStateManager] ForensicLogger or SecurityManager not initialized. Audit event not recorded:",
+				{ type, payload }
 			);
 			return;
 		}
 
 		try {
-			const userId = this.managers.securityManager.userId || "system";
+			const userContext = this.managers.securityManager.getSubject();
+			if (!userContext) {
+				console.warn(
+					"[HybridStateManager] Could not get user context for audit event."
+				);
+				return;
+			}
+
+			// The label provides context for what is being acted upon.
 			const label = {
-				entityId: payload?.entity?.id || payload?.resource,
-				entityType: payload?.entity?.type,
+				entityId:
+					payload?.entity?.id ?? payload?.id ?? payload?.resource,
+				entityType: payload?.entity?.type ?? payload?.type,
 			};
 
-			// Get the user's clearance at the time of the event for the audit record.
-			const clearance = this.managers.securityManager.getSubject();
-			const serializableClearance = {
-				level: clearance.level,
-				compartments: Array.from(clearance.compartments),
+			// Create a non-repudiable signature for the action.
+			// This binds the user's identity to the action and its context.
+			let signature = {
+				signature: null,
+				algorithm: "unsigned",
+				timestamp: new Date().toISOString(),
 			};
-			const signature = await this.signer.signAction({
-				userId,
-				action: type,
-				label,
-			});
+
+			if (this.#signer) {
+				signature = await this.#signer.signAction({
+					userId: userContext.userId,
+					action: type,
+					label,
+				});
+			}
 
 			const event = {
 				id: crypto.randomUUID(),
 				type,
 				timestamp: new Date().toISOString(),
+				userId: userContext.userId,
+				// Capture the user's security context at the time of the event.
+				clearance: {
+					level: userContext.level,
+					compartments: Array.from(userContext.compartments),
+				},
 				payload,
-				clearance: serializableClearance, // Add clearance to the event
+				// The signature proves the event was logged by this user at this time.
 				...signature,
 			};
 			await this.managers.forensicLogger.logEvent(event);
@@ -1253,7 +1136,7 @@ export class HybridStateManager {
 				}
 				case "embedding": {
 					const { EmbeddingManager } = await import(
-						"./../state/EmbeddingManager.js"
+						"/src/state/EmbeddingManager.js"
 					);
 					manager = new EmbeddingManager(this);
 					break;
@@ -1278,7 +1161,7 @@ export class HybridStateManager {
 				case "forensicLogger":
 					// Dynamically import and instantiate ForensicLogger
 					const { ForensicLogger } = await import(
-						"./ForensicLogger.js"
+						"@core/ForensicLogger.js"
 					);
 					manager = new ForensicLogger(
 						this.config.forensicLoggerConfig
@@ -1289,7 +1172,9 @@ export class HybridStateManager {
 					const { SecurityManager } = await import(
 						"./security/SecurityManager.js"
 					);
-					manager = new SecurityManager();
+					// Pass the crypto instance to the security manager for signed operations
+					const crypto = this.storage.instance?._crypto;
+					manager = new SecurityManager({ crypto });
 					manager.bindStateManager(this);
 					break;
 				default:

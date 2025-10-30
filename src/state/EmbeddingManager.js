@@ -69,6 +69,31 @@ export class EmbeddingManager {
 	}
 
 	/**
+	 * Security gate to verify read access before processing.
+	 * @private
+	 * @param {object} entity - The entity whose content is to be embedded.
+	 * @returns {Promise<boolean>} - True if access is granted, otherwise throws an error.
+	 */
+	async _checkAccess(entity) {
+		const securityManager = this.stateManager?.managers?.securityManager;
+		if (!securityManager?.mac || this.stateManager.config.demoMode) {
+			return true; // Bypass in demo mode or if MAC is not configured
+		}
+
+		const subject = securityManager.getSubject();
+		const label = this.stateManager.storage.instance._label(entity);
+
+		const canRead = securityManager.mac.canRead(subject, label);
+
+		if (!canRead) {
+			throw new Error(
+				"EMBEDDING_ACCESS_DENIED: Insufficient clearance to read entity for embedding."
+			);
+		}
+		return true;
+	}
+
+	/**
 	 * Generates a vector embedding for a given piece of text.
 	 * It uses caching and deduplication to avoid redundant processing.
 	 * @param {string} text - The text to generate an embedding for.
@@ -76,7 +101,12 @@ export class EmbeddingManager {
 	 * @returns {Promise<{id: string, vector: number[], cached: boolean}|null>} A promise that resolves with the embedding object, or null if the input is invalid.
 	 * @public
 	 */
-	async generateEmbedding(text, meta = {}) {
+	async generateEmbedding(text, meta = {}, entity = null) {
+		// If an entity is provided, perform a security check first.
+		if (entity) {
+			await this._checkAccess(entity);
+		}
+
 		if (!text || typeof text !== "string") return null;
 
 		const textHash = this.hashText(text);
@@ -92,7 +122,7 @@ export class EmbeddingManager {
 			return await this.pendingEmbeddings.get(textHash);
 		}
 
-		const embeddingPromise = this.processEmbedding(text, id, meta);
+		const embeddingPromise = this._processEmbedding(text, id, meta);
 		this.pendingEmbeddings.set(textHash, embeddingPromise);
 
 		try {
@@ -115,15 +145,15 @@ export class EmbeddingManager {
 	 * @param {object} meta - Metadata associated with the text.
 	 * @returns {Promise<{id: string, vector: number[], cached: boolean}>} The generated embedding object.
 	 */
-	async processEmbedding(text, id, meta) {
+	async _processEmbedding(text, id, meta) {
 		try {
 			const start = performance.now();
 			let vector;
 
 			if (this.options.apiEndpoint) {
-				vector = await this.callEmbeddingAPI(text);
+				vector = await this._callEmbeddingAPI(text);
 			} else {
-				vector = await this.generatePlaceholderEmbedding(text);
+				vector = await this._generatePlaceholderEmbedding(text);
 			}
 
 			const embeddingData = {
@@ -162,7 +192,7 @@ export class EmbeddingManager {
 	 * @param {string} text - The text to send to the API.
 	 * @returns {Promise<number[]>} A promise that resolves with the embedding vector.
 	 */
-	async callEmbeddingAPI(text) {
+	async _callEmbeddingAPI(text) {
 		const response = await fetch(this.options.apiEndpoint, {
 			method: "POST",
 			headers: {
@@ -185,7 +215,7 @@ export class EmbeddingManager {
 	 * @param {string} text - The text to generate a placeholder for.
 	 * @returns {Promise<number[]>} A promise that resolves with the placeholder vector.
 	 */
-	async generatePlaceholderEmbedding(text) {
+	async _generatePlaceholderEmbedding(text) {
 		const hash = this.hashText(text);
 		const vector = [];
 		for (let i = 0; i < this.options.embeddingDimensions; i++) {
@@ -213,6 +243,7 @@ export class EmbeddingManager {
 		if (!query) return [];
 
 		try {
+			// A query is public, so no entity-based security check is needed here.
 			const queryEmbedding = await this.generateEmbedding(query);
 			if (!queryEmbedding) return [];
 			const queryVector = queryEmbedding.vector;
@@ -254,11 +285,12 @@ export class EmbeddingManager {
 	 */
 	async generateBatchEmbeddings(texts, metas = []) {
 		const results = [];
-		const batches = this.createBatches(texts, this.options.batchSize);
+		const batches = this._createBatches(texts, this.options.batchSize);
 		const start = performance.now();
 
 		for (const batch of batches) {
 			const batchPromises = batch.map((text, index) => {
+				// Note: This batch method does not support entity-based security checks.
 				const meta = metas[index] || {};
 				return this.generateEmbedding(text, meta);
 			});
@@ -332,7 +364,7 @@ export class EmbeddingManager {
 	 * @returns {Promise<void>}
 	 */
 	async upsertEmbedding(entityId, vector, version = "v1") {
-		const entity = this.stateManager?.clientState?.entities?.get(entityId);
+		const entity = this.stateManager?.clientState?.entities.get(entityId);
 		if (!entity) return;
 
 		entity.embeddings = entity.embeddings || {};
@@ -345,7 +377,7 @@ export class EmbeddingManager {
 			store: "objects",
 			item: entity,
 		});
-		this.updateSimilarityCache(entityId, vector);
+		this._updateSimilarityCache(entityId, vector);
 
 		this.recordMetric("entity_embedding_upserted");
 	}
@@ -362,14 +394,14 @@ export class EmbeddingManager {
 		const updated = [];
 
 		for (const { id, vector } of embeddings) {
-			const entity = this.stateManager?.clientState?.entities?.get(id);
+			const entity = this.stateManager?.clientState?.entities.get(id);
 			if (!entity) continue;
 
 			entity.embeddings = entity.embeddings || {};
 			entity.embeddings.default = vector;
 			entity.embedding_version = version;
 			entity.embedding_updated_at = Date.now();
-
+			await this._checkAccess(entity); // Security check for each entity in the batch
 			updated.push(entity);
 			this.updateSimilarityCache(id, vector);
 		}
@@ -395,9 +427,9 @@ export class EmbeddingManager {
 	 * @param {string} entityId - The ID of the entity.
 	 * @param {number[]} vector - The embedding vector.
 	 */
-	updateSimilarityCache(entityId, vector) {
+	_updateSimilarityCache(entityId, vector) {
 		if (!vector?.length) return;
-		this.similarityCache.set(entityId, this.normalizeVector(vector));
+		this.similarityCache.set(entityId, this._normalizeVector(vector));
 	}
 
 	/**
@@ -411,6 +443,15 @@ export class EmbeddingManager {
 		return mag ? vec.map((v) => v / mag) : vec;
 	}
 
+	/**
+	 * Normalizes a vector to have a magnitude of 1.
+	 * @private
+	 * @param {number[]} vec - The vector to normalize.
+	 * @returns {number[]} The normalized vector.
+	 */
+	_normalizeVector(vec) {
+		return this.normalizeVector(vec); // Delegate to the public method
+	}
 	/**
 	 * Creates a simple hash from a text string for use as a cache key.
 	 * @private
@@ -433,7 +474,7 @@ export class EmbeddingManager {
 	 * @param {number} batchSize - The size of each batch.
 	 * @returns {Array<Array>} An array of batches.
 	 */
-	createBatches(array, batchSize) {
+	_createBatches(array, batchSize) {
 		const batches = [];
 		for (let i = 0; i < array.length; i += batchSize) {
 			batches.push(array.slice(i, i + batchSize));

@@ -1,5 +1,5 @@
-import { HybridStateManager } from "@core/HybridStateManager.js";
 import GridBootstrap from "@grid/GridBootstrap.js";
+import { SystemBootstrap } from "@core/SystemBootstrap.js";
 import { AppConfig } from "../environment.config.js";
 
 /**
@@ -25,11 +25,18 @@ const bootstrap = async () => {
 
 	console.log("🚀 Nodus Grid Data Layer Test Starting...");
 
-	// Initialize Hybrid State Manager (no backend)
-	window.nodusApp = new HybridStateManager({
+	// 1. Use the new SystemBootstrap to initialize the application
+	const bootstrapApp = new SystemBootstrap({
 		...AppConfig, // Use the centralized configuration
 	});
-	await window.nodusApp.initialize();
+
+	// 2. Initialize with a default user context for demo mode
+	const stateManager = await bootstrapApp.initialize({
+		userId: "demo-user",
+		clearanceLevel: "internal",
+	});
+
+	window.nodusApp = stateManager;
 
 	// Render grid
 	const grid = new GridBootstrap(

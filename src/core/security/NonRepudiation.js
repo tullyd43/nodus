@@ -16,33 +16,41 @@ export class NonRepudiation {
 	#keyPair = null;
 	/** @private @type {Promise<void> | null} */
 	#initPromise = null;
+	/** @private @type {import('./ClassificationCrypto.js').ClassificationCrypto|null} */
+	#crypto = null;
 
-	constructor() {
-		this.#initPromise = this.#initializeKeys();
+	/**
+	 * @param {import('./ClassificationCrypto.js').ClassificationCrypto} cryptoInstance - The main crypto instance which holds the keyring.
+	 */
+	constructor(cryptoInstance) {
+		if (!cryptoInstance?.keyring) {
+			throw new Error(
+				"[NonRepudiation] A crypto instance with a keyring is required."
+			);
+		}
+		this.#crypto = cryptoInstance;
+		this.#initPromise = this.#initializeKeys("system-audit");
 	}
 
 	/**
-	 * Generates a new ECDSA key pair for signing and verification.
+	 * Derives or generates an ECDSA key pair for signing and verification.
 	 * @private
+	 * @param {string} domain - The cryptographic domain for the signing key.
 	 * @returns {Promise<void>}
 	 */
-	async #initializeKeys() {
+	async #initializeKeys(domain) {
 		try {
-			this.#keyPair = await crypto.subtle.generateKey(
-				{
-					name: "ECDSA",
-					namedCurve: "P-256",
-				},
-				true, // a boolean value indicating whether it will be possible to export the key.
-				["sign", "verify"]
+			// Use the keyring to derive a stable signing key.
+			// This ensures the same key is used across sessions for the same domain.
+			this.#keyPair = await this.#crypto.keyring.derive(
+				"signing",
+				domain
 			);
 		} catch (error) {
 			console.error(
 				"[NonRepudiation] Failed to generate signing keys:",
 				error
 			);
-			// In a real app, you might want to handle this more gracefully,
-			// but for now, the signer will fail to sign.
 		}
 	}
 

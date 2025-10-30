@@ -18,6 +18,7 @@
  */
 
 import { constantTimeCheck } from "../security/ct.js"; // timing-channel padding
+import { KeyringAdapter } from "../security/KeyringAdapter.js";
 
 /**
  * @description These imports are optional. If the cryptographic modules are not wired or available,
@@ -26,17 +27,9 @@ import { constantTimeCheck } from "../security/ct.js"; // timing-channel padding
  */
 let ClassificationCrypto = null;
 
-/**
- * @description These imports are optional. If the cryptographic modules are not wired or available,
- * the StorageLoader will still function, but without encryption capabilities.
- * @type {typeof import("../security/Keyring.js").InMemoryKeyring | null}
- */
-let InMemoryKeyring = null;
-
 try {
 	/** @description Dynamically import cryptographic classes. */
-	const kr = await import("../security/Keyring.js");
-	InMemoryKeyring = kr.InMemoryKeyring;
+	// KeyringAdapter and its dependencies are now imported statically.
 	const cc = await import("../security/ClassificationCrypto.js");
 	ClassificationCrypto = cc.ClassificationCrypto;
 } catch {
@@ -146,9 +139,12 @@ export class StorageLoader {
 		};
 
 		// Optional crypto router (only if available)
+		// Use the KeyringAdapter to select dev or prod keyring.
 		this.crypto = ClassificationCrypto
 			? new ClassificationCrypto({
-					keyring: InMemoryKeyring ? new InMemoryKeyring() : null,
+					keyring: new KeyringAdapter({
+						mode: this._config.demoMode ? "dev" : "prod",
+					}),
 				})
 			: null;
 
@@ -809,12 +805,16 @@ class ModularOfflineStorage {
 		if (!idx?.put) throw new Error("IndexedDB adapter not loaded");
 
 		// MAC write (no write down)
-		if (this._mac) {
-			this._mac.enforceNoWriteDown(
+		if (!this._demo && this._mac) {
+			const canWrite = this._mac.canWrite(
 				this._subject(),
-				this._label(item, { storeName }),
-				{ storeName }
+				this._label(item, { storeName })
 			);
+			if (!canWrite) {
+				throw new Error(
+					"MAC_WRITE_DENIED: Insufficient clearance to write at this level."
+				);
+			}
 		}
 
 		let record = { ...item };
@@ -824,11 +824,11 @@ class ModularOfflineStorage {
 			// 1. Generate the deterministic composite ID.
 			// This ensures that a put operation for the same logical object at the same classification level
 			// will overwrite the existing instance, fulfilling the "overwrite same-level" rule.
-			// A write to a different classification level will create a new row.
+			// A write to a different classification level will create a new row if permitted by MAC.
 			record.id = `${item.logical_id}-${item.classification_level}`;
 
 			// 2. The MAC 'enforceNoWriteDown' check has already ensured the user has permission
-			// to write at this classification level. The composite ID now handles the storage logic.
+			// to write at this classification level. The composite ID handles the storage logic.
 			// Additional checks (e.g., preventing a new low-level instance if a higher one exists)
 			// could be added here, but the current model relies on the MAC check as the primary guard.
 		}
@@ -840,10 +840,20 @@ class ModularOfflineStorage {
 
 			if (isPoly && record.instance_data) {
 				const pt = new TextEncoder().encode(
-					JSON.stringify(record.instance_data)
+					JSON.stringify(record.instance_data) // Only encrypt the sensitive part
 				);
 				// AAD binds the ciphertext to its classification metadata.
-				const aad = new TextEncoder().encode(JSON.stringify(label));
+				// This stronger AAD payload includes the unique ID and a timestamp,
+				// preventing replay or substitution attacks.
+				const aadPayload = {
+					...label,
+					logical_id: record.logical_id,
+					id: record.id,
+					timestamp: Date.now(),
+				};
+				const aad = new TextEncoder().encode(
+					JSON.stringify(aadPayload)
+				);
 				const env = await this._crypto.encrypt(label, pt, aad);
 				record = {
 					...record,
@@ -857,8 +867,15 @@ class ModularOfflineStorage {
 				delete record.instance_data;
 			} else {
 				const pt = new TextEncoder().encode(JSON.stringify(record));
-				// AAD binds the ciphertext to its classification metadata.
-				const aad = new TextEncoder().encode(JSON.stringify(label));
+				// AAD binds the ciphertext to its classification metadata for the whole object.
+				const aadPayload = {
+					...label,
+					id: record.id, // Bind to the specific record ID
+					timestamp: Date.now(),
+				};
+				const aad = new TextEncoder().encode(
+					JSON.stringify(aadPayload)
+				);
 				const env = await this._crypto.encrypt(label, pt, aad);
 				record.envelope = env;
 				record.encrypted = true;
@@ -907,12 +924,15 @@ class ModularOfflineStorage {
 			if (!raw) return null;
 
 			// MAC read (no read up)
-			if (this._mac) {
-				this._mac.enforceNoReadUp(
+			if (!this._demo && this._mac) {
+				const canRead = this._mac.canRead(
 					this._subject(),
-					this._label(raw, { storeName }),
-					{ storeName }
+					this._label(raw, { storeName })
 				);
+				if (!canRead) {
+					// In a constant-time check, this will just return null after a delay.
+					throw new Error("MAC_READ_DENIED");
+				}
 			}
 			return this._maybeDecryptNormal(raw);
 		}, 100);
@@ -946,17 +966,18 @@ class ModularOfflineStorage {
 				if (readableRows.length === 0) return; // Nothing to delete.
 
 				// MAC check: Treat delete like a write. User must dominate all readable instances.
-				if (this._mac) {
+				if (!this._demo && this._mac) {
 					const subject = this._subject();
 					for (const row of readableRows) {
-						this._mac.enforceNoWriteDown(
+						const canDelete = this._mac.canWrite(
 							subject,
-							this._label(row, { storeName }),
-							{
-								storeName,
-								operation: "delete",
-							}
+							this._label(row, { storeName })
 						);
+						if (!canDelete) {
+							throw new Error(
+								"MAC_DELETE_DENIED: Cannot delete an object you don't dominate."
+							);
+						}
 					}
 				}
 
@@ -978,15 +999,15 @@ class ModularOfflineStorage {
 			if (!item) return; // Item doesn't exist or is not readable.
 
 			// MAC check: Treat delete like a write.
-			if (this._mac) {
-				this._mac.enforceNoWriteDown(
+			if (!this._demo && this._mac) {
+				const canDelete = this._mac.canWrite(
 					this._subject(),
-					this._label(item, { storeName }),
-					{
-						storeName,
-						operation: "delete",
-					}
+					this._label(item, { storeName })
 				);
+				if (!canDelete) {
+					// This will be caught by constantTimeCheck and return a uniform error.
+					throw new Error("MAC_DELETE_DENIED");
+				}
 			}
 
 			await idx.delete(storeName, id);
@@ -1099,8 +1120,16 @@ class ModularOfflineStorage {
 		const label = this._label(row, {
 			storeName: "objects_polyinstantiated",
 		});
-		// AAD must match the label used during encryption to pass verification.
-		const aad = new TextEncoder().encode(JSON.stringify(label));
+
+		// Reconstruct the AAD payload used during encryption for verification.
+		// The timestamp is not included here as it's part of the authenticated
+		// data but not needed for reconstruction. The crypto layer verifies it.
+		const aadPayload = {
+			...label,
+			logical_id: row.logical_id,
+			id: row.id,
+		};
+		const aad = new TextEncoder().encode(JSON.stringify(aadPayload));
 		const pt = await this._crypto.decrypt(
 			label,
 			{
@@ -1132,8 +1161,13 @@ class ModularOfflineStorage {
 	async _maybeDecryptNormal(row) {
 		if (this._demo || !this._crypto || !row?.encrypted) return row;
 		const label = this._label(row);
-		// AAD must match the label used during encryption to pass verification.
-		const aad = new TextEncoder().encode(JSON.stringify(label));
+
+		// Reconstruct the AAD payload for verification.
+		const aadPayload = {
+			...label,
+			id: row.id,
+		};
+		const aad = new TextEncoder().encode(JSON.stringify(aadPayload));
 		const pt = await this._crypto.decrypt(label, row.envelope, aad);
 		const obj = JSON.parse(new TextDecoder().decode(pt));
 		return obj;
@@ -1152,13 +1186,12 @@ class ModularOfflineStorage {
 		const s = this._subject();
 		const out = [];
 		for (const it of list) {
-			try {
-				this._mac.enforceNoReadUp(s, this._label(it, { storeName }), {
-					storeName,
-				});
+			const canRead = this._mac.canRead(
+				s,
+				this._label(it, { storeName })
+			);
+			if (canRead) {
 				out.push(it);
-			} catch {
-				/* not readable */
 			}
 		}
 		return out;

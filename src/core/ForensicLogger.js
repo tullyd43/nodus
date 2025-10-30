@@ -1,14 +1,18 @@
-// src/core/ForensicLogger.js
-// Forensic Audit Core: Secure, immutable logging of audit events.
+/**
+ * @file ForensicLogger.js
+ * @description Provides an immutable, chained, and optionally signed logging mechanism
+ * for security-critical audit events. This version is designed for robust,
+ * persistent storage using IndexedDB and aligns with the project's modern architecture.
+ */
 
 import { forensicLogMigrations } from "@core/storage/migrations/forensic_log_migrations.js";
 import { ModernIndexedDB } from "@core/storage/ModernIndexedDB.js";
 
 /**
- * @description ForensicLogger: Secure, immutable logging of audit events.
- * This module is responsible for capturing, storing, and potentially forwarding
- * security-relevant and operational audit events. It aims to provide a tamper-evident
- * and comprehensive record of system activities.
+ * @class ForensicLogger
+ * @description Secure, immutable logging of audit events. This module captures,
+ * stores, and can forward security-relevant and operational audit events,
+ * providing a tamper-evident and comprehensive record of system activities.
  */
 export class ForensicLogger {
 	/** @type {import('./HybridStateManager.js').HybridStateManager|null} */
@@ -76,7 +80,7 @@ export class ForensicLogger {
 	 * Initializes the ForensicLogger, setting up IndexedDB and background flush.
 	 * @returns {Promise<this>} A promise that resolves with the initialized ForensicLogger instance.
 	 */
-	async init() {
+	async initialize() {
 		if (this.#ready) return this;
 
 		try {

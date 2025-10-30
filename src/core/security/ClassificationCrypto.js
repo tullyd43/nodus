@@ -83,9 +83,9 @@ export class ClassificationCrypto {
 	 * @param {object} envelope - The encrypted envelope to decrypt.
 	 * @returns {Promise<Uint8Array>} A promise that resolves to the decrypted raw data as bytes.
 	 */
-	async decrypt(label, envelope) {
+	async decrypt(label, envelope, aad) {
 		const domain = getCryptoDomain(label);
 		const key = await this.keyring.getKey(domain);
-		return key.decrypt(envelope);
+		return await key.decrypt(envelope, aad);
 	}
 }

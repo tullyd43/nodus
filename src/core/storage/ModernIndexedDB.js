@@ -70,6 +70,17 @@ export class ModernIndexedDB {
 				const db = event.target.result;
 				const transaction = event.target.transaction;
 
+				// Ensure the primary object store exists before running migrations.
+				// This is crucial for new database creation (oldVersion === 0).
+				if (!db.objectStoreNames.contains(this.#storeName)) {
+					db.createObjectStore(this.#storeName, {
+						keyPath: "id",
+					});
+					console.log(
+						`[ModernIndexedDB] Created object store '${this.#storeName}'.`
+					);
+				}
+
 				// Run all migrations between the old and new version.
 				this.#migrations.forEach(({ version, migrate }) => {
 					if (
@@ -80,7 +91,7 @@ export class ModernIndexedDB {
 							console.log(
 								`[ModernIndexedDB] Applying migration for version ${version}.`
 							);
-							migrate(db, transaction);
+							migrate(db, transaction, event.oldVersion);
 						} catch (error) {
 							console.error(
 								`[ModernIndexedDB] Migration for version ${version} failed:`,
@@ -91,18 +102,6 @@ export class ModernIndexedDB {
 						}
 					}
 				});
-
-				// Ensure the primary object store exists if it's the first version.
-				if (event.oldVersion < 1) {
-					if (!db.objectStoreNames.contains(this.#storeName)) {
-						db.createObjectStore(this.#storeName, {
-							keyPath: "id",
-						});
-						console.log(
-							`[ModernIndexedDB] Created object store '${this.#storeName}'.`
-						);
-					}
-				}
 			};
 		});
 	}
