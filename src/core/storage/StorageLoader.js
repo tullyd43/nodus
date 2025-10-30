@@ -251,7 +251,7 @@ export class StorageLoader {
       console.log(`[StorageLoader] Loading module: ${moduleName}`);
       
       const moduleURL = `${this.#config.baseURL}${moduleName}.js`;
-      const module = await import(moduleURL);
+      const module = await import(/* @vite-ignore */ moduleURL);
       
       const ModuleClass = module.default || module[this.#toPascalCase(moduleName)];
       
@@ -330,6 +330,13 @@ class ModularOfflineStorage {
        if (moduleClasses[moduleType]) {
          if (moduleType === 'indexeddb') {
            this.#modules[moduleType] = new moduleClasses[moduleType](config.dbName, config.version, config);
+         } else if (['validation', 'security', 'crypto', 'sync'].includes(moduleType)) {
+           const MaybeClass = moduleClasses[moduleType];
+           if (typeof MaybeClass === 'function') {
+             this.#modules[moduleType] = new MaybeClass(config);
+           } else {
+             this.#modules[moduleType] = MaybeClass;
+           }
          } else {
            this.#modules[moduleType] = new moduleClasses[moduleType](config);
          }

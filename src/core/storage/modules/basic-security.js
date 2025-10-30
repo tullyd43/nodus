@@ -1,6 +1,6 @@
 // src/core/storage/modules/basic-security.js
 
-export class BasicSecurity {
+export default class BasicSecurity {
   constructor(config) {
     this.config = config;
     console.log("[BasicSecurity] Initialized with config:", config);

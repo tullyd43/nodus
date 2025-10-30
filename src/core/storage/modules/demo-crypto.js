@@ -1,6 +1,6 @@
 // src/core/storage/modules/demo-crypto.js
 
-export class DemoCrypto {
+export default class DemoCrypto {
   constructor(config) {
     this.config = config;
     console.log("[DemoCrypto] Initialized with config:", config);
