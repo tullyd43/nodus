@@ -1,0 +1,1262 @@
+complete fix path for stabilizing initialization and preventing StorageLoader from being re-created (and wiping out demoMode).
+
+🧩 Step 1: Update HybridStateManager.initialize()
+async initialize() {
+  if (this.initialized) {
+    console.log("[HybridStateManager] Already initialized. Skipping reinit.");
+    return this;
+  }
+
+  console.group("[HybridStateManager] Initialization Sequence");
+
+  await this.initializeEventSystem();
+  await this.initializeStorageSystem();
+  await this.initializeMetricsSystem();
+  await this.initializeSecuritySystem();
+
+  this.initialized = true;
+
+  console.groupEnd();
+  console.log("[HybridStateManager] Initialization complete");
+  return this;
+}
+
+
+This ensures the entire manager only initializes once per runtime.
+
+🧠 Step 2: Fix HybridStateManager.initializeStorageSystem()
+async initializeStorageSystem() {
+  if (this.storage && this.storage.initialized) {
+    console.log("[HybridStateManager] StorageLoader already initialized. Skipping reinit.");
+    return this.storage;
+  }
+
+  console.log("[HybridStateManager] Using demoMode:", this.config.demoMode);
+
+  this.storage = new StorageLoader({
+    ...this.config.storageConfig,
+    demoMode: this.config.demoMode,
+  });
+
+  await this.storage.init();
+  this.storage.initialized = true;
+
+  console.log("[HybridStateManager] Storage system initialized");
+  return this.storage;
+}
+
+
+✅ This fixes:
+
+Demo mode not propagating correctly.
+
+Reinitialization loops resetting configuration.
+
+⚙️ Step 3: Make sure StorageLoader honors explicit config
+
+In StorageLoader.js constructor:
+
+constructor(options = {}) {
+  this.#config = {
+    baseURL: options.baseURL ?? '/modules/',
+    demoMode: options.demoMode ?? false, // Use nullish coalescing, not ||
+    ...options,
+  };
+
+  console.log('[StorageLoader] Initialized with demoMode:', this.#config.demoMode);
+}
+
+
+✅ This prevents overwriting a valid true value with false.
+
+🧠 Step 4: Optional safeguard inside main.js
+
+Before creating the manager, you can prevent accidental multiple startups:
+
+if (!window.nodusApp) {
+  window.nodusApp = new HybridStateManager({
+    demoMode: true,
+    storageConfig: { enableOffline: true },
+  });
+  await window.nodusApp.initialize();
+}
+
+
+This ensures you only have one global instance of the platform running, which prevents state duplication and reinit loops when hot-reloading during dev.
+
+✅ Result
+
+Once you apply all of the above:
+
+Console Output
+[HybridStateManager] Using demoMode: true
+[StorageLoader] Initialized with demoMode: true
+[StorageLoader] Ready with dynamic module loading
+[StorageLoader] Loading module: demo-crypto
+[DemoCrypto] Initialized with config: []
+[HybridStateManager] Storage system initialized
+
+
+Would you like me to extend this fix path by including similar guards for your other core systems (EventFlowEngine, MetricsManager, SecurityManager) so the initialization lifecycle is completely unified across the platfo
+
+
+
+your complete unified initialization fix path — covering all major subsystems (Storage, EventFlow, Metrics, Security, AI, etc.) so the HybridStateManager never re-instantiates any of them and demoMode (and every config flag) stays consistent across the entire runtime.
+
+✅ Step 1: Core Initialization Guard (HybridStateManager.js)
+
+Replace your current initialize() method with:
+
+async initialize() {
+  if (this.initialized) {
+    console.warn("[HybridStateManager] Already initialized. Skipping.");
+    return this;
+  }
+
+  console.group("[HybridStateManager] Full Initialization");
+
+  // 1️⃣ Event system
+  await this.initializeEventSystem();
+
+  // 2️⃣ Storage system
+  await this.initializeStorageSystem();
+
+  // 3️⃣ Metrics / telemetry
+  await this.initializeMetricsSystem();
+
+  // 4️⃣ Security & RBAC
+  await this.initializeSecuritySystem();
+
+  // 5️⃣ AI / Embedding layer
+  await this.initializeAILayer();
+
+  this.initialized = true;
+  console.groupEnd();
+  console.log("[HybridStateManager] Initialization complete");
+
+  return this;
+}
+
+✅ Step 2: Add Guards to Each Subsystem
+
+Each of your initialize methods should follow this pattern.
+
+🧩 Storage
+async initializeStorageSystem() {
+  if (this.storage?.initialized) {
+    console.log("[HybridStateManager] Storage already initialized.");
+    return this.storage;
+  }
+
+  console.log("[HybridStateManager] Using demoMode:", this.config.demoMode);
+
+  this.storage = new StorageLoader({
+    ...this.config.storageConfig,
+    demoMode: this.config.demoMode,
+  });
+
+  await this.storage.init();
+  this.storage.initialized = true;
+
+  return this.storage;
+}
+
+🧩 Event System
+async initializeEventSystem() {
+  if (this.eventFlow?.initialized) return this.eventFlow;
+
+  this.eventFlow = window.eventFlowEngine ?? new EventFlowEngine();
+  this.eventFlow.initialized = true;
+
+  console.log("[HybridStateManager] Event system ready");
+  return this.eventFlow;
+}
+
+🧩 Metrics
+async initializeMetricsSystem() {
+  if (this.metrics?.initialized) return this.metrics;
+
+  this.metrics = new MetricsManager(this);
+  await this.metrics.init();
+  this.metrics.initialized = true;
+
+  console.log("[HybridStateManager] Metrics initialized");
+  return this.metrics;
+}
+
+🧩 Security
+async initializeSecuritySystem() {
+  if (this.security?.initialized) return this.security;
+
+  if (!this.config.securityEnabled) {
+    console.log("[HybridStateManager] Security disabled via config");
+    return null;
+  }
+
+  this.security = new SecurityManager(this);
+  await this.security.init();
+  this.security.initialized = true;
+
+  console.log("[HybridStateManager] Security system ready");
+  return this.security;
+}
+
+🧩 AI / Embedding (if enabled)
+async initializeAILayer() {
+  if (this.ai?.initialized) return this.ai;
+
+  if (!this.config.enableAI) {
+    console.log("[HybridStateManager] AI Layer disabled via config");
+    return null;
+  }
+
+  this.ai = new EmbeddingManager(this);
+  await this.ai.init();
+  this.ai.initialized = true;
+
+  console.log("[HybridStateManager] AI / Embedding layer ready");
+  return this.ai;
+}
+
+✅ Step 3: Guard in main.js
+
+Ensure your main entry point uses a global singleton:
+
+if (!window.nodusApp) {
+  window.nodusApp = new HybridStateManager({
+    demoMode: true, // or read from EnvironmentConfig.mode
+    storageConfig: { enableOffline: true },
+    enableAI: true,
+  });
+  await window.nodusApp.initialize();
+} else {
+  console.warn("Nodus already initialized, skipping.");
+}
+
+✅ Step 4: Verify in Console
+
+After this fix path:
+
+[HybridStateManager] Using demoMode: true
+[StorageLoader] Initialized with demoMode: true
+[StorageLoader] Ready with dynamic module loading
+[StorageLoader] Loading module: demo-crypto
+[DemoCrypto] Initialized
+[HybridStateManager] Storage system initialized
+[HybridStateManager] Metrics initialized
+[HybridStateManager] Security system ready
+[HybridStateManager] Initialization complete
+
+
+This ensures:
+
+Every subsystem initializes once per runtime.
+
+Configuration (demoMode, offline, AI, metrics, etc.) is propagated consistently.
+
+No duplication or re-initialization loops occur.
+
+Future systems (UIManager, PluginLoader, etc.) can follow the same pattern.
+
+
+
+ow that you’ve stabilized all core initialization, here’s the EnvironmentConfig-driven bootstrap path, where all runtime modes (demo, dev, prod, etc.) and feature flags are pulled dynamically from /src/config/environment.config.js.
+
+📄 /src/config/environment.config.js
+export const EnvironmentConfig = {
+  // ----------------------------
+  // Environment & Mode
+  // ----------------------------
+  mode: 'demo',                 // 'demo' | 'dev' | 'prod'
+  version: '7.1.0',
+  buildDate: new Date().toISOString(),
+
+  // ----------------------------
+  // Core Feature Toggles
+  // ----------------------------
+  enableOffline: true,
+  enableAI: true,
+  enableSecurity: true,
+  enableAudit: true,
+  enableMetrics: true,
+  enableAnalytics: false,
+
+  // ----------------------------
+  // Logging & Diagnostics
+  // ----------------------------
+  enableDebugLogs: true,
+  verboseStartup: true,
+  traceEventFlow: false,
+
+  // ----------------------------
+  // Compliance & Security
+  // ----------------------------
+  clearanceLevel: 'internal',  // 'internal' | 'enterprise' | 'nato'
+  enforceRLS: true,
+  dataCompliance: ['GDPR', 'HIPAA'],
+
+  // ----------------------------
+  // Integration & Modules
+  // ----------------------------
+  remoteModuleBaseURL: '/src/core/storage/modules/',
+  allowPluginDiscovery: true,
+
+  // ----------------------------
+  // Developer Utilities
+  // ----------------------------
+  mockNetwork: false,
+  hotReloadEnabled: true,
+};
+
+🧩 /src/main.js – Bootstrap
+import { EnvironmentConfig } from '@/config/environment.config.js';
+import { HybridStateManager } from '@/core/HybridStateManager.js';
+
+if (!window.nodusApp) {
+  const config = {
+    demoMode: EnvironmentConfig.mode === 'demo',
+    enableAI: EnvironmentConfig.enableAI,
+    enableSecurity: EnvironmentConfig.enableSecurity,
+    enableMetrics: EnvironmentConfig.enableMetrics,
+    storageConfig: {
+      enableOffline: EnvironmentConfig.enableOffline,
+      baseURL: EnvironmentConfig.remoteModuleBaseURL,
+    },
+  };
+
+  console.log('[Nodus] Bootstrapping environment:', EnvironmentConfig.mode);
+
+  window.nodusApp = new HybridStateManager(config);
+  await window.nodusApp.initialize();
+} else {
+  console.warn('[Nodus] Already initialized.');
+}
+
+⚙️ HybridStateManager.js
+import { EnvironmentConfig } from '@/config/environment.config.js';
+
+constructor(config = {}) {
+  this.config = {
+    ...config,
+    mode: EnvironmentConfig.mode,
+    demoMode: EnvironmentConfig.mode === 'demo',
+    enableAI: EnvironmentConfig.enableAI,
+    enableSecurity: EnvironmentConfig.enableSecurity,
+    enableMetrics: EnvironmentConfig.enableMetrics,
+    enableAudit: EnvironmentConfig.enableAudit,
+    storageConfig: {
+      ...config.storageConfig,
+      baseURL: EnvironmentConfig.remoteModuleBaseURL,
+      enableOffline: EnvironmentConfig.enableOffline,
+    },
+  };
+}
+
+
+This ensures demoMode, securityEnabled, enableAI, etc. are always synchronized with the environment file — but can still be overridden when passed from the main bootstrap.
+
+🧠 Why This Matters
+Benefit	Description
+One Source of Truth	All runtime modes are defined in environment.config.js.
+No Hardcoding	HybridStateManager and subsystems become fully environment-aware but not environment-defining.
+Dynamic Loading Ready	You can later replace the static config with an API call (e.g., your backend admin panel).
+Future-proof	Adding new flags like enablePayments or enablePlugins takes one line in the config.
+🧩 Optional: Dynamic Backend Configuration
+
+If your admin panel eventually exposes an endpoint like /api/config/environment, simply replace:
+
+import { EnvironmentConfig } from '@/config/environment.config.js';
+
+
+with:
+
+const EnvironmentConfig = await fetch('/api/config/environment').then(res => res.json());
+
+
+and the entire system will auto-adjust without code changes.
+
+Would you like me to show the version where the admin panel config API dynamically updates the environment at runtime (using local cache + reinit triggers) — so toggling a switch in the panel (like “Enable Offline Mode”) instantly propagates to all subsystems without a page reload?
+
+
+
+ere’s how to extend your environment config into a fully dynamic system — where your backend admin panel can change settings at runtime (e.g., toggling demo mode, enabling offline mode, switching to prod) and have those changes propagate automatically throughout your app without reloads.
+
+⚙️ 1. Create /src/config/environment.loader.js
+
+This handles fetching live configuration data from your backend and caching it.
+
+// src/config/environment.loader.js
+const CONFIG_CACHE_KEY = "NODUS_ENVIRONMENT_CONFIG";
+
+export async function loadEnvironmentConfig() {
+  try {
+    // 1️⃣ Check local cache first
+    const cached = localStorage.getItem(CONFIG_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      console.log("[EnvironmentLoader] Loaded cached config:", parsed.mode);
+      return parsed;
+    }
+
+    // 2️⃣ Fetch from backend
+    const response = await fetch("/api/config/environment");
+    if (!response.ok) throw new Error("Failed to fetch environment config");
+    const config = await response.json();
+
+    // 3️⃣ Cache for offline use
+    localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));
+
+    console.log("[EnvironmentLoader] Loaded config from backend:", config.mode);
+    return config;
+  } catch (err) {
+    console.warn("[EnvironmentLoader] Using fallback static config:", err);
+    const { EnvironmentConfig } = await import("./environment.config.js");
+    return EnvironmentConfig;
+  }
+}
+
+// Live reload subscription (for admin panel triggers)
+export function subscribeToEnvironmentUpdates(callback) {
+  const eventSource = new EventSource("/api/config/stream");
+  eventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      console.log("[EnvironmentLoader] Received live update:", data);
+      localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(data));
+      callback(data);
+    } catch (err) {
+      console.warn("[EnvironmentLoader] Invalid update event:", err);
+    }
+  };
+}
+
+🌐 2. Backend Admin Panel Endpoint Example
+
+Your backend (Node, Flask, FastAPI, etc.) would expose:
+
+GET /api/config/environment
+→ Returns the current config JSON
+POST /api/config/environment
+→ Updates settings from the admin panel
+GET /api/config/stream
+→ Sends Server-Sent Events for real-time updates to clients
+
+🧩 3. Modify /src/main.js
+import { loadEnvironmentConfig, subscribeToEnvironmentUpdates } from "@/config/environment.loader.js";
+import { HybridStateManager } from "@/core/HybridStateManager.js";
+
+async function bootstrap() {
+  const env = await loadEnvironmentConfig();
+
+  const config = {
+    demoMode: env.mode === "demo",
+    enableAI: env.enableAI,
+    enableSecurity: env.enableSecurity,
+    enableMetrics: env.enableMetrics,
+    storageConfig: {
+      enableOffline: env.enableOffline,
+      baseURL: env.remoteModuleBaseURL,
+    },
+  };
+
+  console.log("[Nodus] Bootstrapping environment:", env.mode);
+
+  window.nodusApp = new HybridStateManager(config);
+  await window.nodusApp.initialize();
+
+  // 🔄 Live config updates from admin panel
+  subscribeToEnvironmentUpdates(async (updatedEnv) => {
+    console.log("[Nodus] Live environment update detected:", updatedEnv);
+    Object.assign(window.nodusApp.config, updatedEnv);
+    await window.nodusApp.reinitialize?.(); // if you add a reinit hook
+  });
+}
+
+bootstrap();
+
+🧠 4. Benefits of This System
+Feature	Description
+🔄 Dynamic Updates	Admin panel changes propagate live through SSE.
+🧱 Offline Resilience	Cached environment used if backend unavailable.
+⚙️ Centralized Config	Environment file remains fallback + local dev config.
+🔒 Secure Separation	Backend controls available modes & flags.
+💡 Observability	Live logging shows when updates occur and what changed.
+🧩 5. Optional: Hot Reinitialization Support
+
+Add a safe method to HybridStateManager:
+
+async reinitialize() {
+  console.group("[HybridStateManager] Reinitializing subsystems...");
+  if (this.storage?.initialized) await this.storage.destroy?.();
+  this.initialized = false;
+  await this.initialize();
+  console.groupEnd();
+}
+
+
+When the admin toggles a flag, this method cleanly tears down and rebuilds affected subsystems using the new environment configuration.
+
+With this setup:
+
+🧩 environment.config.js stays your local fallback
+
+🌐 environment.loader.js handles backend synchronization + caching
+
+⚙️ HybridStateManager remains environment-agnostic
+
+🪄 Admin panel switches propagate automatically across clients
+
+Would you like me to include the backend endpoint specs (Express or FastAPI) for /api/config/environment and /api/config/stream next, so you can connect this end-to-end?
+
+
+
+
+re’s how to complete your backend integration for the dynamic configuration system while ensuring all flows pass through the security layer and remain compliant with your CIA-grade design philosophy (confidentiality, integrity, availability).
+
+🛡️ 1. Core Security Principles
+
+Every config operation (read, write, stream) must:
+
+Authenticate via your existing token/session mechanism.
+
+Authorize via your RBAC layer (only users with admin.config privilege can modify environment values).
+
+Audit every change (old value, new value, timestamp, user).
+
+Encrypt stored configuration and in-transit updates (TLS/HTTPS + AES-GCM at rest).
+
+🧩 2. Example: Express.js Implementation
+routes/config.js
+import express from "express";
+import { verifyAuthToken, requirePermission } from "../middleware/security.js";
+import { auditEvent } from "../services/audit.js";
+import { encrypt, decrypt } from "../services/crypto.js";
+import { configStore } from "../storage/configStore.js";
+import { EventEmitter } from "events";
+
+export const configRouter = express.Router();
+const configEvents = new EventEmitter();
+
+/* GET current environment config */
+configRouter.get("/environment",
+  verifyAuthToken,
+  requirePermission("admin.config.read"),
+  async (req, res) => {
+    const config = await configStore.get("environment");
+    res.json(JSON.parse(decrypt(config.value)));
+  });
+
+/* POST update environment config */
+configRouter.post("/environment",
+  verifyAuthToken,
+  requirePermission("admin.config.write"),
+  async (req, res) => {
+    const newConfig = req.body;
+    const oldConfig = await configStore.get("environment");
+
+    await configStore.set("environment", { value: encrypt(JSON.stringify(newConfig)) });
+    await auditEvent(req.user, "CONFIG_UPDATE", {
+      target: "environment",
+      before: oldConfig,
+      after: newConfig,
+    });
+
+    // Broadcast via Server-Sent Events
+    configEvents.emit("update", newConfig);
+    res.json({ status: "ok" });
+  });
+
+/* GET live updates via SSE */
+configRouter.get("/stream",
+  verifyAuthToken,
+  requirePermission("admin.config.read"),
+  (req, res) => {
+    res.set({
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const listener = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    configEvents.on("update", listener);
+
+    req.on("close", () => configEvents.removeListener("update", listener));
+  });
+
+middleware/security.js
+export async function verifyAuthToken(req, res, next) {
+  const token = req.headers.authorization?.split(" ")[1];
+  const user = await verifyJWT(token);       // existing auth
+  if (!user) return res.status(401).json({ error: "Unauthorized" });
+  req.user = user;
+  next();
+}
+
+export function requirePermission(permission) {
+  return (req, res, next) => {
+    if (!req.user.permissions?.includes(permission)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    next();
+  };
+}
+
+services/audit.js
+import { db } from "../db/index.js";
+
+export async function auditEvent(user, action, details) {
+  await db.insert("audit_logs", {
+    id: crypto.randomUUID(),
+    user_id: user.id,
+    action,
+    details: JSON.stringify(details),
+    created_at: new Date().toISOString(),
+  });
+}
+
+services/crypto.js
+import crypto from "crypto";
+const key = crypto.createHash("sha256").update(process.env.CONFIG_SECRET).digest();
+
+export function encrypt(plainText) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plainText, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, encrypted]).toString("base64");
+}
+
+export function decrypt(cipherText) {
+  const data = Buffer.from(cipherText, "base64");
+  const iv = data.subarray(0, 12);
+  const tag = data.subarray(12, 28);
+  const encrypted = data.subarray(28);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+}
+
+storage/configStore.js
+import { db } from "../db/index.js";
+export const configStore = {
+  async get(key) {
+    const row = await db.select("configs").where({ key }).first();
+    return row || { value: "{}" };
+  },
+  async set(key, data) {
+    const existing = await this.get(key);
+    if (existing?.key)
+      await db.update("configs").set(data).where({ key });
+    else
+      await db.insert("configs", { key, ...data });
+  },
+};
+
+🧠 3. Security-Integrated Flow
+
+Admin UI calls POST /api/config/environment with new config JSON.
+
+Security middleware verifies JWT + permission.
+
+Audit log records the change (who, when, diff).
+
+Data encrypted before saving to DB.
+
+Server emits live update through /api/config/stream.
+
+Clients receive update via subscribeToEnvironmentUpdates() → reinitialize subsystems safely.
+
+Every stage runs inside your RBAC and audit frameworks.
+
+🧩 4. Example Response Objects
+Endpoint	Response
+GET /api/config/environment	{ mode: "demo", enableSecurity: true, enableAI: true }
+POST /api/config/environment	{ status: "ok" }
+GET /api/config/stream	data: {"mode":"prod","enableAI":false}
+✅ 5. Result
+
+Confidentiality: AES-GCM encryption at rest, HTTPS in transit.
+
+Integrity: Audited, versioned, and RBAC-controlled updates.
+
+Availability: Cached in clients (localStorage) and served via SSE.
+
+Composability: Plugs directly into your existing HybridStateManager and StorageLoader.
+
+Would you like me to include the database schema (SQL) for the configs and audit_logs tables that align with this secure confi
+
+
+
+
+
+
+ow to configure Demo Mode and Offline Demo Mode correctly, so nothing conflicts while keeping your CIA-grade security layers intact.
+
+🧩 1. Environment Config (/src/config/environment.config.js)
+
+Define two modes—demo and offline-demo—that differ in their connectivity and data behavior:
+
+export const EnvironmentConfig = {
+  // ----------------------------
+  // Environment Modes
+  // ----------------------------
+  mode: 'offline-demo',  // 'demo' | 'offline-demo' | 'dev' | 'prod'
+  version: '7.1.0',
+  buildDate: new Date().toISOString(),
+
+  // ----------------------------
+  // Core Toggles
+  // ----------------------------
+  enableOffline: true,
+  enableSecurity: true,
+  enableMetrics: false,
+  enableAudit: false,
+  enableAI: true,
+  enableAnalytics: false,
+
+  // ----------------------------
+  // Offline / Demo Specific
+  // ----------------------------
+  allowNetwork: false,               // No live fetches, API calls bypassed
+  mockNetwork: true,                 // All network ops simulated
+  mockDataSource: '/src/data/demo',  // Local JSON fallback
+  allowPluginDiscovery: false,       // No remote plugin fetch
+  remoteModuleBaseURL: '/src/core/storage/modules/',
+
+  // ----------------------------
+  // Logging / Debug
+  // ----------------------------
+  enableDebugLogs: true,
+  verboseStartup: true,
+
+  // ----------------------------
+  // Security / Compliance
+  // ----------------------------
+  clearanceLevel: 'internal',
+  enforceRLS: false,
+  dataCompliance: ['GDPR'],
+
+  // ----------------------------
+  // Developer Utilities
+  // ----------------------------
+  hotReloadEnabled: true,
+};
+
+⚙️ 2. HybridStateManager Integration
+import { EnvironmentConfig } from '@/config/environment.config.js';
+
+constructor(config = {}) {
+  this.config = {
+    ...config,
+    mode: EnvironmentConfig.mode,
+    demoMode: EnvironmentConfig.mode === 'demo' || EnvironmentConfig.mode === 'offline-demo',
+    offlineMode: EnvironmentConfig.mode === 'offline-demo',
+    enableOffline: EnvironmentConfig.enableOffline,
+    enableSecurity: EnvironmentConfig.enableSecurity,
+    enableAI: EnvironmentConfig.enableAI,
+    allowNetwork: EnvironmentConfig.allowNetwork,
+  };
+}
+
+
+This ensures the manager knows the difference between a cloud demo (loads demo-crypto, basic-security, etc.) and an offline demo (runs without any fetches).
+
+📦 3. StorageLoader Adaptation
+
+Modify your #loadModule() in StorageLoader.js to gracefully handle offline mode:
+
+async #loadModule(moduleName) {
+  if (this.#config.offlineMode || this.#config.mockNetwork) {
+    console.log(`[StorageLoader] Skipping remote load (offline mode): ${moduleName}`);
+    return import(/* @vite-ignore */ `/src/core/storage/modules/${moduleName}.js`);
+  }
+
+  const moduleURL = `${this.#config.baseURL}${moduleName}.js`;
+  return import(/* @vite-ignore */ moduleURL);
+}
+
+
+That guarantees no HTTP fetches or CORS issues when running offline.
+
+🧠 4. Main Bootstrap (/src/main.js)
+import { EnvironmentConfig } from '@/config/environment.config.js';
+import { HybridStateManager } from '@/core/HybridStateManager.js';
+
+async function bootstrap() {
+  const config = {
+    demoMode: EnvironmentConfig.mode.includes('demo'),
+    offlineMode: EnvironmentConfig.mode === 'offline-demo',
+    storageConfig: {
+      enableOffline: EnvironmentConfig.enableOffline,
+      baseURL: EnvironmentConfig.remoteModuleBaseURL,
+    },
+  };
+
+  console.log('[Nodus] Bootstrapping:', EnvironmentConfig.mode);
+
+  window.nodusApp = new HybridStateManager(config);
+  await window.nodusApp.initialize();
+}
+
+bootstrap();
+
+🧩 5. Security Layer Behavior
+
+When running in demo or offline-demo:
+
+Security Layer	Behavior
+Authentication	Mocked credentials (e.g., “demo-admin”)
+RBAC	Loads static roles from /src/data/demo/roles.json
+Audit Logging	Disabled or redirected to IndexedDB
+Crypto Modules	Loads demo-crypto.js (no real key material)
+Network Layer	Bypassed or simulated
+Metrics	Disabled for offline mode
+🧰 6. Local Data Source Example
+
+Create mock data under /src/data/demo/:
+
+/src/data/demo/
+├── users.json
+├── roles.json
+├── settings.json
+└── mock-responses/
+
+
+This lets the app populate the grid, security layer, and task system entirely offline.
+
+✅ Summary
+Mode	Behavior	Network	Security
+demo	Cloud demo with demo modules	Minimal API	Mocked
+offline-demo	Fully self-contained	No network	Local crypto & IndexedDB
+dev	Developer build	Full API	Real auth
+prod	Live deployment	Full API	Full CIA compliance
+
+Would you like me to show you how to toggle between “offline-demo” and “demo” dynamically from the admin panel (without rebuilding or restarting)? It can use your same /api/config/environment system and hot-reload the mode
+
+
+
+
+
+’s complete your system with dynamic demo/offline mode switching that can be toggled directly from your admin panel and instantly reflected in every client without a restart or rebuild.
+
+⚙️ 1. Backend — Secure Toggle Endpoint
+
+Extend your existing /api/config/environment route.
+
+PATCH /api/config/mode
+configRouter.patch("/mode",
+  verifyAuthToken,
+  requirePermission("admin.config.write"),
+  async (req, res) => {
+    const { mode } = req.body;
+    if (!["demo", "offline-demo", "dev", "prod"].includes(mode)) {
+      return res.status(400).json({ error: "Invalid mode" });
+    }
+
+    const currentConfig = JSON.parse(decrypt((await configStore.get("environment")).value));
+    const updatedConfig = { ...currentConfig, mode };
+
+    await configStore.set("environment", { value: encrypt(JSON.stringify(updatedConfig)) });
+    await auditEvent(req.user, "CONFIG_MODE_SWITCH", {
+      from: currentConfig.mode,
+      to: mode,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Notify all connected clients
+    configEvents.emit("update", updatedConfig);
+
+    res.json({ status: "ok", mode });
+  }
+);
+
+
+This endpoint is protected by your authentication, RBAC, and auditing stack.
+Only admins with admin.config.write permission can toggle the mode.
+
+🌐 2. Admin Panel (Frontend)
+
+Add a simple toggle in your config dashboard.
+
+async function switchMode(newMode) {
+  const token = localStorage.getItem("access_token");
+
+  const res = await fetch("/api/config/mode", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ mode: newMode }),
+  });
+
+  const data = await res.json();
+  console.log(`[AdminPanel] Mode switched to: ${data.mode}`);
+}
+
+
+Example dropdown:
+
+<select onchange="switchMode(this.value)">
+  <option value="demo">Cloud Demo</option>
+  <option value="offline-demo">Offline Demo</option>
+  <option value="dev">Development</option>
+  <option value="prod">Production</option>
+</select>
+
+🔄 3. Client-Side Auto Update (Live Mode Switch)
+
+In your /src/config/environment.loader.js subscription handler:
+
+subscribeToEnvironmentUpdates(async (updatedEnv) => {
+  console.log("[EnvironmentLoader] Live update detected:", updatedEnv.mode);
+
+  // Update app mode
+  window.nodusApp.config.mode = updatedEnv.mode;
+  window.nodusApp.config.demoMode =
+    updatedEnv.mode === "demo" || updatedEnv.mode === "offline-demo";
+  window.nodusApp.config.offlineMode = updatedEnv.mode === "offline-demo";
+
+  // Reconfigure storage + network subsystems
+  await window.nodusApp.reinitialize?.();
+
+  console.log(`[Nodus] Mode switched to ${updatedEnv.mode} successfully.`);
+});
+
+
+This lets you change modes live from the admin panel —
+all connected browsers immediately rebuild the relevant layers (storage, crypto, etc.) without refreshing the page.
+
+🧠 4. Security Flow Overview
+Step	Layer	Function
+1	Admin UI	Authenticated toggle request via /api/config/mode
+2	Security Middleware	JWT validation + RBAC enforcement
+3	ConfigStore	AES-GCM encryption at rest
+4	Audit Service	Records old/new mode and user
+5	EventEmitter	Pushes Server-Sent Event to all clients
+6	Client Loader	Hot-updates app config and triggers reinit
+7	Storage + Security Managers	Reload modules (demo-crypto, basic-security, etc.) based on new mode
+✅ Example Console Flow
+
+When you toggle from offline-demo → demo in the admin panel:
+
+[AdminPanel] Mode switched to: demo
+[EnvironmentLoader] Live update detected: demo
+[Nodus] Mode switched to demo successfully.
+[StorageLoader] Reinitialized using demo-crypto
+[HybridStateManager] Storage system initialized
+
+
+No reload. No rebuild. Fully secure.
+
+Would you like me to include the SQL schema and encryption strategy for the configs table (so your environment and mode data are stored securely a
+
+
+
+y. Here’s a production-ready SQL schema + encryption & auditing strategy for storing environment/config values with CIA-grade controls (PostgreSQL 18). It covers encryption-at-rest (envelope style), versioning, audit logs, hash-chain integrity, and RLS so only privileged roles can read/write.
+
+Schema (PostgreSQL 18)
+-- Enable required extensions
+CREATE EXTENSION IF NOT EXISTS pgcrypto;   -- digest(), gen_random_bytes()
+CREATE EXTENSION IF NOT EXISTS uuid-ossp;  -- uuid_generate_v4()
+
+-- 1) Key registry: envelope-encryption key metadata (actual keys NEVER stored here)
+CREATE TABLE IF NOT EXISTS kms_keys (
+  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  key_alias       text UNIQUE NOT NULL,              -- e.g. 'config/env'
+  key_version     int  NOT NULL DEFAULT 1,
+  is_active       boolean NOT NULL DEFAULT true,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  rotated_at      timestamptz
+);
+
+-- 2) Configs (current/active row per key)
+-- Store ciphertext + AEAD tag + IV from the APP (client/service) AES-GCM.
+-- DB never sees plaintext if you follow envelope encryption strictly.
+CREATE TABLE IF NOT EXISTS configs (
+  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  cfg_key         text UNIQUE NOT NULL,              -- e.g. 'environment'
+  ciphertext      bytea NOT NULL,                    -- AES-GCM ciphertext (from app)
+  iv              bytea NOT NULL,                    -- 12 bytes
+  auth_tag        bytea NOT NULL,                    -- 16 bytes
+  kms_key_alias   text NOT NULL,                     -- reference to kms_keys.key_alias
+  kms_key_version int  NOT NULL DEFAULT 1,
+  meta            jsonb NOT NULL DEFAULT '{}'::jsonb, -- additional flags (e.g., mode)
+  version         int  NOT NULL DEFAULT 1,           -- monotonically increasing
+  sha256_prev     bytea,                             -- previous row's digest (hash-chain)
+  sha256_curr     bytea NOT NULL,                    -- current digest over the row
+  updated_by      uuid NOT NULL,                     -- actor id (user/service)
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- 3) Versions journal (immutable)
+CREATE TABLE IF NOT EXISTS config_versions (
+  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  cfg_key         text NOT NULL,
+  ciphertext      bytea NOT NULL,
+  iv              bytea NOT NULL,
+  auth_tag        bytea NOT NULL,
+  kms_key_alias   text NOT NULL,
+  kms_key_version int  NOT NULL,
+  meta            jsonb NOT NULL,
+  version         int  NOT NULL,                     -- same as configs.version snapshot
+  sha256_prev     bytea,
+  sha256_curr     bytea NOT NULL,
+  updated_by      uuid NOT NULL,
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- 4) Audits (coarse-grained, PII-safe)
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id          uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  actor_id    uuid NOT NULL,
+  action      text NOT NULL,                         -- e.g. CONFIG_UPDATE, CONFIG_READ
+  target      text NOT NULL,                         -- e.g. 'environment'
+  details     jsonb NOT NULL,                        -- old/new metadata (NO plaintext)
+  ip          inet,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Indexing
+CREATE UNIQUE INDEX IF NOT EXISTS ux_configs_cfg_key ON configs (cfg_key);
+CREATE INDEX IF NOT EXISTS ix_configs_updated_at ON configs (updated_at);
+CREATE INDEX IF NOT EXISTS ix_config_versions_key_ver ON config_versions (cfg_key, version DESC);
+CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs (created_at);
+CREATE INDEX IF NOT EXISTS ix_configs_meta_gin ON configs USING gin (meta);
+
+Hash-Chain & Versioning Triggers
+-- Compute a deterministic digest over selected columns.
+-- (No plaintext included; only structural + ciphertext integrity.)
+CREATE OR REPLACE FUNCTION config_row_digest(
+  p_cfg_key text, p_ciphertext bytea, p_iv bytea, p_auth_tag bytea,
+  p_kms_alias text, p_kms_ver int, p_meta jsonb, p_version int, p_prev bytea
+) RETURNS bytea LANGUAGE SQL IMMUTABLE AS $$
+  SELECT digest(
+    p_cfg_key || '|' ||
+    encode(p_ciphertext,'hex') || '|' ||
+    encode(p_iv,'hex') || '|' ||
+    encode(p_auth_tag,'hex') || '|' ||
+    p_kms_alias || '|' ||
+    p_kms_ver::text || '|' ||
+    coalesce(p_meta::text,'{}') || '|' ||
+    p_version::text || '|' ||
+    coalesce(encode(p_prev,'hex'),''),
+  'sha256');
+$$;
+
+CREATE OR REPLACE FUNCTION configs_versioning_biud()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  prev_digest bytea;
+  prev_version int;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- find previous digest (if any) for this key from configs
+    SELECT c.sha256_curr, c.version INTO prev_digest, prev_version
+    FROM configs c WHERE c.cfg_key = NEW.cfg_key;
+
+    NEW.version := coalesce(prev_version, 0) + 1;
+    NEW.sha256_prev := prev_digest;
+    NEW.sha256_curr := config_row_digest(
+      NEW.cfg_key, NEW.ciphertext, NEW.iv, NEW.auth_tag,
+      NEW.kms_key_alias, NEW.kms_key_version, NEW.meta, NEW.version, NEW.sha256_prev
+    );
+
+    -- add to versions journal
+    INSERT INTO config_versions (
+      cfg_key, ciphertext, iv, auth_tag, kms_key_alias, kms_key_version,
+      meta, version, sha256_prev, sha256_curr, updated_by, updated_at, created_at
+    ) VALUES (
+      NEW.cfg_key, NEW.ciphertext, NEW.iv, NEW.auth_tag, NEW.kms_key_alias, NEW.kms_key_version,
+      NEW.meta, NEW.version, NEW.sha256_prev, NEW.sha256_curr, NEW.updated_by, NEW.updated_at, NEW.created_at
+    );
+
+    RETURN NEW;
+
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- carry forward previous hash/version
+    NEW.version := OLD.version + 1;
+    NEW.sha256_prev := OLD.sha256_curr;
+    NEW.sha256_curr := config_row_digest(
+      NEW.cfg_key, NEW.ciphertext, NEW.iv, NEW.auth_tag,
+      NEW.kms_key_alias, NEW.kms_key_version, NEW.meta, NEW.version, NEW.sha256_prev
+    );
+
+    INSERT INTO config_versions (
+      cfg_key, ciphertext, iv, auth_tag, kms_key_alias, kms_key_version,
+      meta, version, sha256_prev, sha256_curr, updated_by, updated_at, created_at
+    ) VALUES (
+      NEW.cfg_key, NEW.ciphertext, NEW.iv, NEW.auth_tag, NEW.kms_key_alias, NEW.kms_key_version,
+      NEW.meta, NEW.version, NEW.sha256_prev, NEW.sha256_curr, NEW.updated_by, now(), now()
+    );
+
+    RETURN NEW;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_configs_versioning_biud ON configs;
+CREATE TRIGGER trg_configs_versioning_biud
+BEFORE INSERT OR UPDATE ON configs
+FOR EACH ROW EXECUTE FUNCTION configs_versioning_biud();
+
+RLS & Roles
+-- Roles
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_admin') THEN
+    CREATE ROLE app_admin NOINHERIT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_backend') THEN
+    CREATE ROLE app_backend NOINHERIT;
+  END IF;
+END$$;
+
+-- Ownership & grants
+ALTER TABLE kms_keys         OWNER TO app_backend;
+ALTER TABLE configs          OWNER TO app_backend;
+ALTER TABLE config_versions  OWNER TO app_backend;
+ALTER TABLE audit_logs       OWNER TO app_backend;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_backend;
+GRANT SELECT, INSERT, UPDATE, DELETE ON kms_keys, configs, config_versions, audit_logs TO app_backend;
+GRANT SELECT ON kms_keys, configs, config_versions TO app_admin;
+GRANT INSERT, UPDATE, DELETE ON kms_keys, configs TO app_admin;
+
+-- Enable RLS
+ALTER TABLE kms_keys        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE configs         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE config_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs      ENABLE ROW LEVEL SECURITY;
+
+-- Policies: only app_backend (service) reads/writes; app_admin can read/write via SECURITY DEFINER API
+CREATE POLICY p_configs_service_rw ON configs
+  FOR ALL TO app_backend USING (true) WITH CHECK (true);
+
+CREATE POLICY p_versions_service_r ON config_versions
+  FOR SELECT TO app_backend USING (true);
+
+CREATE POLICY p_audit_service_rw ON audit_logs
+  FOR ALL TO app_backend USING (true) WITH CHECK (true);
+
+-- OPTIONAL: read-only policy for app_admin
+CREATE POLICY p_configs_admin_r ON configs
+  FOR SELECT TO app_admin USING (true);
+CREATE POLICY p_versions_admin_r ON config_versions
+  FOR SELECT TO app_admin USING (true);
+CREATE POLICY p_audit_admin_r ON audit_logs
+  FOR SELECT TO app_admin USING (true);
+
+Secure API Helpers (SQL)
+
+Use SECURITY DEFINER functions to gate DB access via RBAC; the app calls these instead of direct table writes.
+
+-- Upsert encrypted config (ciphertext-only; no plaintext in DB)
+CREATE OR REPLACE FUNCTION api_set_config(
+  p_actor uuid,
+  p_key text,
+  p_ciphertext bytea,
+  p_iv bytea,
+  p_auth_tag bytea,
+  p_kms_alias text,
+  p_kms_version int,
+  p_meta jsonb
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  INSERT INTO configs (cfg_key, ciphertext, iv, auth_tag, kms_key_alias, kms_key_version, meta, updated_by)
+  VALUES (p_key, p_ciphertext, p_iv, p_auth_tag, p_kms_alias, p_kms_version, p_meta, p_actor)
+  ON CONFLICT (cfg_key) DO UPDATE SET
+    ciphertext = EXCLUDED.ciphertext,
+    iv         = EXCLUDED.iv,
+    auth_tag   = EXCLUDED.auth_tag,
+    kms_key_alias = EXCLUDED.kms_key_alias,
+    kms_key_version=EXCLUDED.kms_key_version,
+    meta       = EXCLUDED.meta,
+    updated_by = EXCLUDED.updated_by,
+    updated_at = now();
+
+  INSERT INTO audit_logs (actor_id, action, target, details)
+  VALUES (p_actor, 'CONFIG_UPDATE', p_key, jsonb_build_object(
+    'kms_alias', p_kms_alias,
+    'kms_version', p_kms_version,
+    'meta', p_meta
+  ));
+END;
+$$;
+
+-- Read encrypted config (still ciphertext)
+CREATE OR REPLACE FUNCTION api_get_config(
+  p_actor uuid,
+  p_key text
+) RETURNS TABLE(
+  cfg_key text,
+  ciphertext bytea,
+  iv bytea,
+  auth_tag bytea,
+  kms_key_alias text,
+  kms_key_version int,
+  meta jsonb,
+  version int,
+  updated_at timestamptz
+) LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  INSERT INTO audit_logs (actor_id, action, target, details)
+  VALUES (p_actor, 'CONFIG_READ', p_key, '{}'::jsonb);
+
+  RETURN QUERY
+  SELECT cfg_key, ciphertext, iv, auth_tag, kms_key_alias, kms_key_version, meta, version, updated_at
+  FROM configs WHERE cfg_key = p_key;
+END;
+$$;
+
+
+Note: Decryption happens in the application (HybridStateManager/StorageLoader) using KMS-provided keys; the DB stores only encrypted payloads and can’t decrypt (envelope encryption). If you need a server-side fallback, use pgcrypto AES-CBC with HMAC, but AES-GCM in app is preferred.
+
+Key Rotation Strategy
+
+Keep kms_keys with key_alias, key_version, is_active.
+
+When rotating, create a new row with key_version = old + 1, set is_active = true for the new, and false for the old (or keep it active during migration).
+
+Re-encrypt the ciphertext at the application layer and write back via api_set_config(...) with the new kms_key_version.
+
+The journal (config_versions) preserves history and hash-chain integrity through rotation.
+
+Seed Example (Demo/Offline)
+-- Register a key alias (metadata only; no real key)
+INSERT INTO kms_keys (key_alias, key_version, is_active) VALUES ('config/env', 1, true)
+ON CONFLICT DO NOTHING;
+
+-- Store encrypted "demo" environment (ciphertext/iv/tag come from app AES-GCM)
+SELECT api_set_config(
+  '00000000-0000-0000-0000-000000000001'::uuid, -- demo admin
+  'environment',
+  decode('DEADBEEF','hex'),                      -- ciphertext (placeholder)
+  decode('000102030405060708090A0B','hex'),     -- 12-byte IV
+  decode('AABBCCDDEEFF00112233445566778899','hex'), -- 16-byte GCM tag
+  'config/env',
+  1,
+  jsonb_build_object('mode','offline-demo','enableOffline',true,'enableSecurity',true)
+);
+
+How it flows through your stack
+
+Admin Panel → calls secure API → api_set_config() (audit logged).
+
+DB → stores ciphertext only (+ IV/tag, key alias/version), auto-versions, hash-chains.
+
+Clients → fetch via your /api/config/environment controller → still ciphertext → app decrypts with active KMS key → HybridStateManager consumes the plaintext JSON flags.
+
+Live updates → SSE stream pushes mode changes; client calls reinitialize() sa
+
+
+
+

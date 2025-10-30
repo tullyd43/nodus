@@ -3,7 +3,7 @@
 
 /**
  * Composable Security Layer
- * 
+ *
  * ZERO-KNOWLEDGE PRINCIPLES:
  * - Access decisions made on encrypted hints, not actual data
  * - Classification metadata encrypted alongside content
@@ -11,464 +11,506 @@
  * - Client-side access control with cryptographic proof
  */
 export class ComposableSecurity {
-  #crypto;
-  #context = null;
-  #accessCache = new Map();
-  #auditLog = [];
-  #config;
-  #metrics;
-  #ready = false;
-  stateManager = null;
+	#crypto;
+	#context = null;
+	#accessCache = new Map();
+	#auditLog = [];
+	#config;
+	#metrics;
+	#ready = false;
+	#eventListeners;
+	stateManager = null;
 
-  bindStateManager(manager) {
-    this.stateManager = manager;
-  }
+	bindStateManager(manager) {
+		this.stateManager = manager;
+	}
 
-  constructor(crypto, options = {}) {
-    this.#crypto = crypto;
-    this.#config = {
-      auditLevel: options.auditLevel || 'standard',
-      cacheSize: options.cacheSize || 1000,
-      cacheTTL: options.cacheTTL || 5 * 60 * 1000, // 5 minutes
-      metricsCallback: options.metricsCallback || (() => {}),
-      ...options
-    };
+	constructor(crypto, options = {}) {
+		this.#crypto = crypto;
+		this.#config = {
+			auditLevel: options.auditLevel || "standard",
+			cacheSize: options.cacheSize || 1000,
+			cacheTTL: options.cacheTTL || 5 * 60 * 1000, // 5 minutes
+			metricsCallback: options.metricsCallback || (() => {}),
+			...options,
+		};
 
-    this.#metrics = {
-      accessChecks: 0,
-      accessDenied: 0,
-      cacheHits: 0,
-      cacheMisses: 0,
-      auditEvents: 0
-    };
-  }
+		this.#metrics = {
+			accessChecks: 0,
+			accessDenied: 0,
+			cacheHits: 0,
+			cacheMisses: 0,
+			auditEvents: 0,
+		};
 
-  /**
-   * Initialize security layer
-   */
-  async init() {
-    if (this.#ready) return this;
+		this.#eventListeners = new Map();
+	}
 
-    // Setup cache cleanup
-    this.#setupCacheCleanup();
+	/**
+	 * Initialize security layer
+	 */
+	async init() {
+		if (this.#ready) return this;
 
-    this.#ready = true;
-    this.#audit('security_initialized', {});
-    console.log('[ComposableSecurity] Ready with zero-knowledge access control');
-    return this;
-  }
+		// Setup cache cleanup
+		this.#setupCacheCleanup();
 
-  /**
-   * Set user security context with proof verification
-   */
-  async setContext(userId, clearanceLevel, compartments = [], authProof, ttl = 4 * 3600000) {
-    // Verify authentication proof
-    if (!await this.#crypto.verifyAuthProof(userId, authProof)) {
-      this.#audit('auth_proof_failed', { userId });
-      throw new SecurityError('Invalid authentication proof');
-    }
+		this.#ready = true;
+		this.#audit("security_initialized", {});
+		console.log(
+			"[ComposableSecurity] Ready with zero-knowledge access control"
+		);
+		return this;
+	}
 
-    // Set security context
-    this.#context = {
-      userId,
-      clearanceLevel,
-      compartments: new Set(compartments),
-      authProof,
-      expires: Date.now() + ttl,
-      created: Date.now()
-    };
+	/**
+	 * Set user security context with proof verification
+	 */
+	async setContext(
+		userId,
+		clearanceLevel,
+		compartments = [],
+		authProof,
+		ttl = 4 * 3600000
+	) {
+		// Verify authentication proof
+		if (!(await this.#crypto.verifyAuthProof(userId, authProof))) {
+			this.#audit("auth_proof_failed", { userId });
+			throw new SecurityError("Invalid authentication proof");
+		}
 
-    // Clear access cache when context changes
-    this.#accessCache.clear();
+		// Set security context
+		this.#context = {
+			userId,
+			clearanceLevel,
+			compartments: new Set(compartments),
+			authProof,
+			expires: Date.now() + ttl,
+			created: Date.now(),
+		};
 
-    this.#audit('context_set', { 
-      userId, 
-      clearanceLevel, 
-      compartmentCount: compartments.length 
-    });
+		// Clear access cache when context changes
+		this.#accessCache.clear();
 
-    return this;
-  }
+		this.#audit("context_set", {
+			userId,
+			clearanceLevel,
+			compartmentCount: compartments.length,
+		});
 
-  /**
-   * Set organization context for multi-tenant security
-   */
-  async setOrganizationContext(organizationId) {
-    if (!this.#context) {
-      throw new SecurityError('User context must be set before organization context');
-    }
+		return this;
+	}
 
-    this.#context.organizationId = organizationId;
-    this.#accessCache.clear(); // Clear cache for new org context
+	/**
+	 * Set organization context for multi-tenant security
+	 */
+	async setOrganizationContext(organizationId) {
+		if (!this.#context) {
+			throw new SecurityError(
+				"User context must be set before organization context"
+			);
+		}
 
-    this.#audit('organization_context_set', { organizationId });
-    return this;
-  }
+		this.#context.organizationId = organizationId;
+		this.#accessCache.clear(); // Clear cache for new org context
 
-  /**
-   * Validate organization access
-   */
-  async validateOrganizationAccess(organizationId, securityContext) {
-    if (!this.#context) {
-      return false;
-    }
+		this.#audit("organization_context_set", { organizationId });
+		return this;
+	}
 
-    // Check if user has access to this organization
-    // This would typically involve checking org membership
-    const hasAccess = await this.#checkOrganizationMembership(organizationId, this.#context.userId);
-    
-    if (!hasAccess) {
-      this.#audit('organization_access_denied', { 
-        organizationId, 
-        userId: this.#context.userId 
-      });
-    }
+	/**
+	 * Validate organization access
+	 */
+	async validateOrganizationAccess(organizationId, securityContext) {
+		if (!this.#context) {
+			return false;
+		}
 
-    return hasAccess;
-  }
+		// Check if user has access to this organization
+		// This would typically involve checking org membership
+		const hasAccess = await this.#checkOrganizationMembership(
+			organizationId,
+			this.#context.userId
+		);
 
-  /**
-   * Check access to classified data
-   */
-  async canAccess(classification, compartments = []) {
-    if (!this.#context) {
-      this.#audit('access_denied_no_context', { classification });
-      return false;
-    }
+		if (!hasAccess) {
+			this.#audit("organization_access_denied", {
+				organizationId,
+				userId: this.#context.userId,
+			});
+		}
 
-    // Check context expiration
-    if (Date.now() > this.#context.expires) {
-      this.#audit('access_denied_context_expired', { 
-        classification,
-        expired: this.#context.expires 
-      });
-      return false;
-    }
+		return hasAccess;
+	}
 
-    const cacheKey = `${classification}:${compartments.sort().join(',')}`;
-    
-    // Check cache first
-    if (this.#accessCache.has(cacheKey)) {
-      const cached = this.#accessCache.get(cacheKey);
-      if (Date.now() < cached.expires) {
-        this.#metrics.cacheHits++;
-        return cached.access;
-      } else {
-        this.#accessCache.delete(cacheKey);
-      }
-    }
+	/**
+	 * Check access to classified data
+	 */
+	async canAccess(classification, compartments = []) {
+		if (!this.#context) {
+			this.#audit("access_denied_no_context", { classification });
+			return false;
+		}
 
-    this.#metrics.cacheMisses++;
-    this.#metrics.accessChecks++;
+		// Check context expiration
+		if (Date.now() > this.#context.expires) {
+			this.#audit("access_denied_context_expired", {
+				classification,
+				expired: this.#context.expires,
+			});
+			return false;
+		}
 
-    // Perform access check
-    const hasAccess = this.#performAccessCheck(classification, compartments);
-    
-    // Cache result
-    this.#accessCache.set(cacheKey, {
-      access: hasAccess,
-      expires: Date.now() + this.#config.cacheTTL
-    });
+		const cacheKey = `${classification}:${compartments.sort().join(",")}`;
 
-    // Cleanup cache if too large
-    if (this.#accessCache.size > this.#config.cacheSize) {
-      this.#cleanupCache();
-    }
+		// Check cache first
+		if (this.#accessCache.has(cacheKey)) {
+			const cached = this.#accessCache.get(cacheKey);
+			if (Date.now() < cached.expires) {
+				this.#metrics.cacheHits++;
+				return cached.access;
+			} else {
+				this.#accessCache.delete(cacheKey);
+			}
+		}
 
-    if (!hasAccess) {
-      this.#metrics.accessDenied++;
-      this.#audit('access_denied', { 
-        classification, 
-        compartments,
-        userClearance: this.#context.clearanceLevel,
-        userCompartments: Array.from(this.#context.compartments)
-      });
-      this.stateManager?.emit?.('accessDenied', { resource: classification });
-    }
+		this.#metrics.cacheMisses++;
+		this.#metrics.accessChecks++;
 
-    return hasAccess;
-  }
+		// Perform access check
+		const hasAccess = this.#performAccessCheck(
+			classification,
+			compartments
+		);
 
-  /**
-   * Check access using encrypted hints (zero-knowledge)
-   */
-  async canAccessEncrypted(accessHint) {
-    if (!this.#context) {
-      return false;
-    }
+		// Cache result
+		this.#accessCache.set(cacheKey, {
+			access: hasAccess,
+			expires: Date.now() + this.#config.cacheTTL,
+		});
 
-    // Generate our own hint for comparison
-    const userHint = await this.#generateUserAccessHint();
-    
-    // Compare hints to determine access without decryption
-    return this.#compareAccessHints(userHint, accessHint);
-  }
+		// Cleanup cache if too large
+		if (this.#accessCache.size > this.#config.cacheSize) {
+			this.#cleanupCache();
+		}
 
-  /**
-   * Check if security context is valid
-   */
-  hasValidContext() {
-    return this.#context && Date.now() < this.#context.expires;
-  }
+		if (!hasAccess) {
+			this.#metrics.accessDenied++;
+			this.#audit("access_denied", {
+				classification,
+				compartments,
+				userClearance: this.#context.clearanceLevel,
+				userCompartments: Array.from(this.#context.compartments),
+			});
+			// Emit event through the state manager as per the parity plan
+			this.stateManager?.emit?.("accessDenied", {
+				resource: classification,
+				compartments,
+			});
+			this.stateManager?.emit?.("accessDenied", {
+				resource: classification,
+			});
+		}
 
-  /**
-   * Get cache hit rate for performance monitoring
-   */
-  getCacheHitRate() {
-    const total = this.#metrics.cacheHits + this.#metrics.cacheMisses;
-    return total > 0 ? this.#metrics.cacheHits / total : 0;
-  }
+		return hasAccess;
+	}
 
-  /**
-   * Get recent security events
-   */
-  getRecentAuditEvents(limit = 10) {
-    return this.#auditLog.slice(-limit);
-  }
+	/**
+	 * Check access using encrypted hints (zero-knowledge)
+	 */
+	async canAccessEncrypted(accessHint) {
+		if (!this.#context) {
+			return false;
+		}
 
-  /**
-   * Clear security context and sensitive data
-   */
-  async clear() {
-    this.#context = null;
-    this.#accessCache.clear();
-    
-    // Clear audit log if configured
-    if (this.#config.auditLevel === 'minimal') {
-      this.#auditLog = [];
-    }
+		// Generate our own hint for comparison
+		const userHint = await this.#generateUserAccessHint();
 
-    this.#audit('security_cleared', {});
-  }
+		// Compare hints to determine access without decryption
+		return this.#compareAccessHints(userHint, accessHint);
+	}
 
-  /**
-   * Close and cleanup
-   */
-  close() {
-    this.clear();
-    this.#ready = false;
-  }
+	/**
+	 * Check if security context is valid
+	 */
+	hasValidContext() {
+		return this.#context && Date.now() < this.#context.expires;
+	}
 
-  // ===== PRIVATE ACCESS CONTROL METHODS =====
+	/**
+	 * Get cache hit rate for performance monitoring
+	 */
+	getCacheHitRate() {
+		const total = this.#metrics.cacheHits + this.#metrics.cacheMisses;
+		return total > 0 ? this.#metrics.cacheHits / total : 0;
+	}
 
-  /**
-   * Perform the actual access check
-   */
-  #performAccessCheck(classification, compartments) {
-    const userClearance = this.#context.clearanceLevel;
-    const userCompartments = this.#context.compartments;
+	/**
+	 * Get recent security events
+	 */
+	getRecentAuditEvents(limit = 10) {
+		return this.#auditLog.slice(-limit);
+	}
 
-    // 1. Check clearance level
-    if (!this.#hasSufficientClearance(userClearance, classification)) {
-      return false;
-    }
+	/**
+	 * Clear security context and sensitive data
+	 */
+	async clear() {
+		this.#context = null;
+		this.#accessCache.clear();
 
-    // 2. Check compartment access
-    if (!this.#hasRequiredCompartments(userCompartments, compartments)) {
-      return false;
-    }
+		// Clear audit log if configured
+		if (this.#config.auditLevel === "minimal") {
+			this.#auditLog = [];
+		}
 
-    return true;
-  }
+		this.#audit("security_cleared", {});
+	}
 
-  /**
-   * Check if user has sufficient clearance level
-   */
-  #hasSufficientClearance(userClearance, requiredClearance) {
-    const clearanceLevels = [
-      'public',
-      'internal', 
-      'restricted',
-      'confidential',
-      'secret',
-      'top_secret',
-      'nato_restricted',
-      'nato_confidential', 
-      'nato_secret',
-      'cosmic_top_secret'
-    ];
+	/**
+	 * Close and cleanup
+	 */
+	close() {
+		this.clear();
+		this.#ready = false;
+	}
 
-    const userLevel = clearanceLevels.indexOf(userClearance);
-    const requiredLevel = clearanceLevels.indexOf(requiredClearance);
+	// ===== PRIVATE ACCESS CONTROL METHODS =====
 
-    return userLevel >= requiredLevel;
-  }
+	/**
+	 * Perform the actual access check
+	 */
+	#performAccessCheck(classification, compartments) {
+		const userClearance = this.#context.clearanceLevel;
+		const userCompartments = this.#context.compartments;
 
-  /**
-   * Check if user has required compartments
-   */
-  #hasRequiredCompartments(userCompartments, requiredCompartments) {
-    // User must have ALL required compartments
-    for (const required of requiredCompartments) {
-      if (!userCompartments.has(required)) {
-        return false;
-      }
-    }
-    return true;
-  }
+		// 1. Check clearance level
+		if (!this.#hasSufficientClearance(userClearance, classification)) {
+			return false;
+		}
 
-  /**
-   * Generate access hint for current user context
-   */
-  async #generateUserAccessHint() {
-    if (!this.#context) return null;
+		// 2. Check compartment access
+		if (!this.#hasRequiredCompartments(userCompartments, compartments)) {
+			return false;
+		}
 
-    return await this.#crypto.generateAccessHint(
-      this.#context.clearanceLevel,
-      Array.from(this.#context.compartments)
-    );
-  }
+		return true;
+	}
 
-  /**
-   * Compare access hints without revealing actual classifications
-   */
-  #compareAccessHints(userHint, dataHint) {
-    // Simple comparison for demo - production would use more sophisticated crypto
-    return userHint === dataHint || this.#hasHigherAccessLevel(userHint, dataHint);
-  }
+	/**
+	 * Check if user has sufficient clearance level
+	 */
+	#hasSufficientClearance(userClearance, requiredClearance) {
+		const clearanceLevels = [
+			"public",
+			"internal",
+			"restricted",
+			"confidential",
+			"secret",
+			"top_secret",
+			"nato_restricted",
+			"nato_confidential",
+			"nato_secret",
+			"cosmic_top_secret",
+		];
 
-  /**
-   * Check if user hint indicates higher access level
-   */
-  #hasHigherAccessLevel(userHint, dataHint) {
-    // This is a simplified check - production would use proper cryptographic comparison
-    // The actual implementation would depend on how hints encode access levels
-    
-    // For now, assume hints encode access level in a comparable way
-    const userLevel = parseInt(userHint.substring(0, 2), 16) || 0;
-    const dataLevel = parseInt(dataHint.substring(0, 2), 16) || 0;
-    
-    return userLevel >= dataLevel;
-  }
+		const userLevel = clearanceLevels.indexOf(userClearance);
+		const requiredLevel = clearanceLevels.indexOf(requiredClearance);
 
-  /**
-   * Check organization membership
-   */
-  async #checkOrganizationMembership(organizationId, userId) {
-    // This would typically check against a membership database/cache
-    // For demo purposes, assume access is granted
-    return true;
-  }
+		return userLevel >= requiredLevel;
+	}
 
-  /**
-   * Setup cache cleanup
-   */
-  #setupCacheCleanup() {
-    setInterval(() => {
-      this.#cleanupCache();
-    }, this.#config.cacheTTL);
-  }
+	/**
+	 * Check if user has required compartments
+	 */
+	#hasRequiredCompartments(userCompartments, requiredCompartments) {
+		// User must have ALL required compartments
+		for (const required of requiredCompartments) {
+			if (!userCompartments.has(required)) {
+				return false;
+			}
+		}
+		return true;
+	}
 
-  /**
-   * Cleanup expired cache entries
-   */
-  #cleanupCache() {
-    const now = Date.now();
-    const toDelete = [];
+	/**
+	 * Generate access hint for current user context
+	 */
+	async #generateUserAccessHint() {
+		if (!this.#context) return null;
 
-    for (const [key, value] of this.#accessCache.entries()) {
-      if (now >= value.expires) {
-        toDelete.push(key);
-      }
-    }
+		return await this.#crypto.generateAccessHint(
+			this.#context.clearanceLevel,
+			Array.from(this.#context.compartments)
+		);
+	}
 
-    for (const key of toDelete) {
-      this.#accessCache.delete(key);
-    }
+	/**
+	 * Compare access hints without revealing actual classifications
+	 */
+	#compareAccessHints(userHint, dataHint) {
+		// Simple comparison for demo - production would use more sophisticated crypto
+		return (
+			userHint === dataHint ||
+			this.#hasHigherAccessLevel(userHint, dataHint)
+		);
+	}
 
-    // If still too large, remove oldest entries
-    if (this.#accessCache.size > this.#config.cacheSize) {
-      const entries = Array.from(this.#accessCache.entries());
-      const toRemove = entries.slice(0, entries.length - this.#config.cacheSize);
-      
-      for (const [key] of toRemove) {
-        this.#accessCache.delete(key);
-      }
-    }
-  }
+	/**
+	 * Check if user hint indicates higher access level
+	 */
+	#hasHigherAccessLevel(userHint, dataHint) {
+		// This is a simplified check - production would use proper cryptographic comparison
+		// The actual implementation would depend on how hints encode access levels
 
-  /**
-   * Audit security events
-   */
-  #audit(eventType, data) {
-    const auditEvent = {
-      type: eventType,
-      data,
-      timestamp: Date.now(),
-      userId: this.#context?.userId || null,
-      organizationId: this.#context?.organizationId || null
-    };
+		// For now, assume hints encode access level in a comparable way
+		const userLevel = parseInt(userHint.substring(0, 2), 16) || 0;
+		const dataLevel = parseInt(dataHint.substring(0, 2), 16) || 0;
 
-    this.#auditLog.push(auditEvent);
-    this.#metrics.auditEvents++;
+		return userLevel >= dataLevel;
+	}
 
-    // Keep audit log size reasonable
-    if (this.#auditLog.length > 1000) {
-      this.#auditLog = this.#auditLog.slice(-500);
-    }
+	/**
+	 * Check organization membership
+	 */
+	async #checkOrganizationMembership(organizationId, userId) {
+		// This would typically check against a membership database/cache
+		// For demo purposes, assume access is granted
+		return true;
+	}
 
-    // Report metrics
-    this.#config.metricsCallback('security_event', {
-      type: eventType,
-      timestamp: auditEvent.timestamp
-    });
+	/**
+	 * Setup cache cleanup
+	 */
+	#setupCacheCleanup() {
+		setInterval(() => {
+			this.#cleanupCache();
+		}, this.#config.cacheTTL);
+	}
 
-    // Log security violations and errors
-    if (['access_denied', 'auth_proof_failed', 'organization_access_denied'].includes(eventType)) {
-      console.warn(`[Security] ${eventType}:`, data);
-    }
-  }
+	/**
+	 * Cleanup expired cache entries
+	 */
+	#cleanupCache() {
+		const now = Date.now();
+		const toDelete = [];
 
-  // Event system for composability
-  on(event, callback) {
-    if (!this.#eventListeners) {
-      this.#eventListeners = new Map();
-    }
-    
-    if (!this.#eventListeners.has(event)) {
-      this.#eventListeners.set(event, []);
-    }
-    
-    this.#eventListeners.get(event).push(callback);
-  }
+		for (const [key, value] of this.#accessCache.entries()) {
+			if (now >= value.expires) {
+				toDelete.push(key);
+			}
+		}
 
-  emit(event, data) {
-    if (!this.#eventListeners?.has(event)) return;
-    
-    for (const callback of this.#eventListeners.get(event)) {
-      try {
-        callback(data);
-      } catch (error) {
-        console.error(`[ComposableSecurity] Event callback error:`, error);
-      }
-    }
-  }
+		for (const key of toDelete) {
+			this.#accessCache.delete(key);
+		}
 
-  // Getters
-  get context() { return this.#context; }
-  get metrics() { return { ...this.#metrics }; }
-  get isReady() { return this.#ready; }
+		// If still too large, remove oldest entries
+		if (this.#accessCache.size > this.#config.cacheSize) {
+			const entries = Array.from(this.#accessCache.entries());
+			const toRemove = entries.slice(
+				0,
+				entries.length - this.#config.cacheSize
+			);
+
+			for (const [key] of toRemove) {
+				this.#accessCache.delete(key);
+			}
+		}
+	}
+
+	/**
+	 * Audit security events
+	 */
+	#audit(eventType, data) {
+		const auditEvent = {
+			type: eventType,
+			data,
+			timestamp: Date.now(),
+			userId: this.#context?.userId || null,
+			organizationId: this.#context?.organizationId || null,
+		};
+
+		this.#auditLog.push(auditEvent);
+		this.#metrics.auditEvents++;
+
+		// Keep audit log size reasonable
+		if (this.#auditLog.length > 1000) {
+			this.#auditLog = this.#auditLog.slice(-500);
+		}
+
+		// Report metrics
+		this.#config.metricsCallback("security_event", {
+			type: eventType,
+			timestamp: auditEvent.timestamp,
+		});
+
+		// Log security violations and errors
+		if (
+			[
+				"access_denied",
+				"auth_proof_failed",
+				"organization_access_denied",
+			].includes(eventType)
+		) {
+			console.warn(`[Security] ${eventType}:`, data);
+		}
+	}
+
+	// Event system for composability
+	on(event, callback) {
+		if (!this.#eventListeners.has(event)) {
+			this.#eventListeners.set(event, []);
+		}
+		this.#eventListeners.get(event).push(callback);
+	}
+
+	emit(event, data) {
+		if (!this.#eventListeners?.has(event)) return;
+
+		for (const callback of this.#eventListeners.get(event)) {
+			try {
+				callback(data);
+			} catch (error) {
+				console.error(
+					`[ComposableSecurity] Event callback error:`,
+					error
+				);
+			}
+		}
+	}
+
+	// Getters
+	get context() {
+		return this.#context;
+	}
+	get metrics() {
+		return { ...this.#metrics };
+	}
+	get isReady() {
+		return this.#ready;
+	}
 }
 
 /**
  * Security error class
  */
 export class SecurityError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'SecurityError';
-  }
+	constructor(message) {
+		super(message);
+		this.name = "SecurityError";
+	}
 }
 
 /**
  * Validation error class
  */
 export class ValidationError extends Error {
-  constructor(message, details = []) {
-    super(message);
-    this.name = 'ValidationError';
-    this.details = details;
-  }
+	constructor(message, details = []) {
+		super(message);
+		this.name = "ValidationError";
+		this.details = details;
+	}
 }
 
 export default ComposableSecurity;

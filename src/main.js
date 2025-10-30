@@ -1,12 +1,21 @@
 import { HybridStateManager } from "@core/HybridStateManager.js";
 import { ModernIndexedDB } from "@core/storage/ModernIndexedDB.js";
 import GridBootstrap from "@grid/GridBootstrap.js";
+import { AppConfig } from "../environment.config.js";
 
-(async () => {
+const bootstrap = async () => {
+	if (window.nodusApp) {
+		console.warn(
+			"[Nodus] Application already initialized. Skipping bootstrap."
+		);
+		return;
+	}
+
 	console.log("🚀 Nodus Grid Data Layer Test Starting...");
 
 	// Initialize database
-	  const db = new ModernIndexedDB("nodus_offline", "objects", 2);	await db.init();
+	const db = new ModernIndexedDB("nodus_offline", "objects", 2);
+	await db.init();
 
 	// Pre-seed mock data if empty
 	const sample = await db.getObjectsByType("task").catch(() => []);
@@ -47,23 +56,28 @@ import GridBootstrap from "@grid/GridBootstrap.js";
 	}
 
 	// Initialize Hybrid State Manager (no backend)
-	const hsm = new HybridStateManager({
-		offlineEnabled: true,
-		enableSync: false,
-		demoMode: true,
+	window.nodusApp = new HybridStateManager({
+		...AppConfig, // Use the centralized configuration
 		storageConfig: {
+			// Keep specific storage config here for now
 			dbName: "nodus_offline",
 			storeName: "objects",
 			version: 2,
 		},
 	});
-	await hsm.initialize();
+	await window.nodusApp.initialize();
 
 	// Render grid
-	const grid = new GridBootstrap(document.getElementById("app"), db);
+	const grid = new GridBootstrap(
+		document.getElementById("app"),
+		db,
+		window.nodusApp
+	);
 	await grid.render();
 
 	console.log(
 		"✅ Grid ready (offline mode). Check console for data inspection."
 	);
-})();
+};
+
+bootstrap();

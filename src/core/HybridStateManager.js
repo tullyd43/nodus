@@ -1,8 +1,10 @@
 // core/HybridStateManager_Enhanced.js
 // Enhanced HybridStateManager with dynamic storage loading and database schema integration
 
+import { EventFlowEngine } from "@core/EventFlowEngine.js";
 import { BoundedStack } from "@utils/BoundedStack.js";
 import { LRUCache } from "../utils/LRUCache.js";
+import { MetricsRegistry } from "../utils/MetricsRegistry.js";
 import AdaptiveRenderer from "./AdaptiveRenderer.js";
 import { componentRegistry } from "./ComponentDefinition.js";
 import { StorageLoader } from "./storage/StorageLoader.js";
@@ -12,16 +14,17 @@ export class HybridStateManager {
 		this.config = {
 			maxUndoStackSize: config.maxUndoStackSize || 50,
 			maxViewportItems: config.maxViewportItems || 200,
-			performanceMode: config.performanceMode || false,
+			performanceMode: config.performanceMode ?? false,
 			offlineEnabled: config.offlineEnabled || true,
 			embeddingEnabled: config.embeddingEnabled || true,
 
 			// NEW: Dynamic storage configuration
 			storageConfig: {
-				demoMode: config.demoMode || false,
+				demoMode: config.demoMode ?? true,
 				auditLevel: config.auditLevel || "standard",
 				strictValidation: config.strictValidation || false,
 				enableSync: config.enableSync !== false,
+				offlineMode: config.offlineMode ?? config.demoMode ?? false,
 				realtimeSync: config.realtimeSync || false,
 				...config.storageConfig,
 			},
@@ -36,6 +39,7 @@ export class HybridStateManager {
 			undoStack: new BoundedStack(this.config.maxUndoStackSize),
 			redoStack: new BoundedStack(this.config.maxUndoStackSize),
 			pendingOperations: new BoundedStack(100),
+			errors: [],
 			searchIndex: new Map(),
 
 			// UI state
@@ -218,45 +222,57 @@ export class HybridStateManager {
 		// Initialize adaptive renderer (unchanged)
 		this.adaptiveRenderer = new AdaptiveRenderer(this);
 
-		    this.initialized = false;
-		    this.unsubscribeFunctions = [];	}
+		// Initialize metrics registry
+		this.metricsRegistry = new MetricsRegistry();
+
+		this.initialized = false;
+		this.unsubscribeFunctions = [];
+	}
 
 	/**
 	 * NEW: Initialize with dynamic storage system
 	 */
 	async initialize(authContext = {}) {
-		if (this.initialized) return;
+		if (this.initialized) {
+			console.log(
+				"[HybridStateManager] Already initialized. Skipping reinit."
+			);
+			return this;
+		}
 
 		try {
-			// 1. Initialize storage loader first
+			// 1. Initialize storage loader first (so other systems can use it)
 			await this.initializeStorageSystem(authContext);
 
-			// 2. Load schema from database
+			// 2. Initialize event system
+			await this.initializeEventSystem();
+
+			// 3. Load schema from database
 			await this.loadDatabaseSchema();
 
-			// 3. Load type definitions from database schema
+			// 4. Load type definitions from database schema
 			await this.loadTypeDefinitionsFromSchema();
 
-			// 4. Initialize persistent queue
+			// 5. Initialize persistent queue
 			await this.clientState.pendingOperations.initialize?.();
 
-			// 5. Load essential managers (lazy-loaded to keep bundle small)
+			// 6. Load essential managers (lazy-loaded to keep bundle small)
 			await this.loadManager("offline");
 			await this.loadManager("embedding");
 			await this.loadManager("extension");
 			await this.loadManager("validation");
 
 			// 6. Discover server capabilities from extensions
-			await this.discoverServerCapabilities();
+			// await this.discoverServerCapabilities();
 
 			// 7. Load active plugins based on configuration
-			await this.loadActivePlugins();
+			// await this.loadActivePlugins();
 
 			// 8. Load component definitions into adaptive renderer
-			await this.loadComponentDefinitions();
+			// await this.loadComponentDefinitions();
 
 			// 9. Set up MVVM bindings
-			this.setupViewModelBindings();
+			// this.setupViewModelBindings();
 
 			// 10. Start performance monitoring if enabled
 			if (this.config.performanceMode) {
@@ -276,15 +292,91 @@ export class HybridStateManager {
 		}
 	}
 
+	async initializeEventSystem() {
+		if (this.eventFlow?.initialized) return this.eventFlow;
+
+		this.eventFlow = window.eventFlowEngine ?? new EventFlowEngine(this);
+		this.eventFlow.initialized = true;
+
+		// --- Core Event Subscriptions ---
+		this.on("validationError", (data) => this.handleValidationError(data));
+		this.on("syncCompleted", (data) => this.handleSyncCompleted(data));
+		this.on("syncError", (data) => this.handleSyncError(data));
+		this.on("accessDenied", (data) => this.handleAccessDenied(data));
+
+		console.log("[HybridStateManager] Event system initialized");
+		return this.eventFlow;
+	}
+
+	// --- Validation Layer ---
+	handleValidationError(data) {
+		this.clientState.errors.push(data);
+		this.metricsRegistry.increment("validation_errors");
+		this.recordAuditEvent("VALIDATION_ERROR", data);
+	}
+
+	// --- Sync Layer ---
+	handleSyncCompleted(data) {
+		this.metricsRegistry.increment("sync_completed");
+		this.clientState.lastSync = data.timestamp;
+		this.recordAuditEvent("SYNC_COMPLETED", data);
+	}
+
+	handleSyncError(data) {
+		this.metricsRegistry.increment("sync_errors");
+		this.clientState.lastSyncError = data.timestamp;
+		this.recordAuditEvent("SYNC_ERROR", data);
+	}
+
+	// --- Security Layer ---
+	handleAccessDenied(data) {
+		this.metricsRegistry.increment("access_denied");
+		this.recordAuditEvent("ACCESS_DENIED", data);
+	}
+
+	/**
+	 * Records an audit event, persisting it locally in offline/demo mode.
+	 * @param {string} type - The type of the audit event.
+	 * @param {object} payload - The data associated with the event.
+	 */
+	recordAuditEvent(type, payload) {
+		const event = {
+			id: crypto.randomUUID(),
+			type,
+			timestamp: new Date().toISOString(),
+			payload,
+		};
+
+		// In offline/demo mode, persist locally for continuity
+		if (this.config.storageConfig.offlineMode) {
+			const logs = JSON.parse(localStorage.getItem("auditLog") || "[]");
+			logs.push(event);
+			localStorage.setItem("auditLog", JSON.stringify(logs));
+		} else {
+			// Online mode: forward to backend or analytics service
+			this.storage.instance?.logEvent?.(event);
+		}
+
+		console.log(`[HybridStateManager][Audit] ${type}`, payload);
+	}
+
 	/**
 	 * NEW: Initialize dynamic storage system
 	 */
 	async initializeStorageSystem(authContext) {
+		if (this.storage.ready) {
+			console.log(
+				"[HybridStateManager] StorageLoader already initialized. Skipping reinit."
+			);
+			return this.storage;
+		}
+
 		const startTime = performance.now();
 
 		try {
 			// Create storage loader
 			this.storage.loader = new StorageLoader({
+				demoMode: this.config.demoMode, // Pass the top-level flag for consistency
 				baseURL: "/src/core/storage/modules/",
 				preloadModules: this.config.storageConfig.demoMode
 					? ["demo-crypto"]
@@ -781,99 +873,74 @@ export class HybridStateManager {
 		return Array.from(this.schema.classifications);
 	}
 
-  getStorageMetrics() {
-    return {
-      ...this.metrics.storage,
-      storageReady: this.storage.ready,
-      loadedModules: this.storage.instance?.modules || [],
-      schemaLoaded: this.schema.loaded,
-      typeDefinitions: this.typeDefinitions.size,
-    };
-  }
+	getStorageMetrics() {
+		return {
+			...this.metrics.storage,
+			storageReady: this.storage.ready,
+			loadedModules: this.storage.instance?.modules || [],
+			schemaLoaded: this.schema.loaded,
+			typeDefinitions: this.typeDefinitions.size,
+		};
+	}
 
-  on(eventName, listener) {
-    if (!this.listeners.has(eventName)) {
-      this.listeners.set(eventName, []);
-    }
-    this.listeners.get(eventName).push(listener);
+	on(eventName, listener) {
+		if (!this.listeners.has(eventName)) {
+			this.listeners.set(eventName, []);
+		}
+		this.listeners.get(eventName).push(listener);
 
-    const unsubscribe = () => {
-      const listeners = this.listeners.get(eventName);
-      if (listeners) {
-        const index = listeners.indexOf(listener);
-        if (index > -1) {
-          listeners.splice(index, 1);
-        }
-      }
-    };
-    this.unsubscribeFunctions.push(unsubscribe);
-    return unsubscribe;
-  }
+		const unsubscribe = () => {
+			const listeners = this.listeners.get(eventName);
+			if (listeners) {
+				const index = listeners.indexOf(listener);
+				if (index > -1) {
+					listeners.splice(index, 1);
+				}
+			}
+		};
+		this.unsubscribeFunctions.push(unsubscribe);
+		return unsubscribe;
+	}
 
-  emit(eventName, payload) {
-    const listeners = this.listeners.get(eventName);
-    if (listeners) {
-      listeners.forEach(listener => {
-        try {
-          listener(payload);
-        } catch (error) {
-          console.error(`Error in listener for event ${eventName}:`, error);
-        }
-      });
-    }
+	emit(eventName, payload) {
+		const listeners = this.listeners.get(eventName);
+		if (listeners) {
+			listeners.forEach((listener) => {
+				try {
+					listener(payload);
+				} catch (error) {
+					console.error(
+						`Error in listener for event ${eventName}:`,
+						error
+					);
+				}
+			});
+		}
 
-    // Optional bridge to global engine if available
-    if (this.config.bridgeToGlobalEngine && window?.eventFlowEngine?.emit) {
-      try {
-        window.eventFlowEngine.emit(eventName, payload);
-      } catch (err) {
-        console.warn(`[HybridStateManager] Bridge emit failed for ${eventName}:`, err);
-      }
-    }
-  }
+		// Optional bridge to global engine if available
+		if (this.config.bridgeToGlobalEngine && window?.eventFlowEngine?.emit) {
+			try {
+				window.eventFlowEngine.emit(eventName, payload);
+			} catch (err) {
+				console.warn(
+					`[HybridStateManager] Bridge emit failed for ${eventName}:`,
+					err
+				);
+			}
+		}
+	}
 
-  destroy() {
-    this.unsubscribeFunctions.forEach(unsub => {
-      try {
-        unsub?.();
-      } catch (err) {
-        console.warn('[HybridStateManager] Unsubscribe failed:', err);
-      }
-    });
-    this.unsubscribeFunctions.length = 0;
-  }
-	
-	  on(eventName, listener) {
-	    if (!this.listeners.has(eventName)) {
-	      this.listeners.set(eventName, []);
-	    }
-	    this.listeners.get(eventName).push(listener);
-	
-	    const unsubscribe = () => {
-	      const listeners = this.listeners.get(eventName);
-	      if (listeners) {
-	        const index = listeners.indexOf(listener);
-	        if (index > -1) {
-	          listeners.splice(index, 1);
-	        }
-	      }
-	    };
-	    this.unsubscribeFunctions.push(unsubscribe);
-	    return unsubscribe;
-	  }
-	
-	  emit(eventName, payload) {
-	    const listeners = this.listeners.get(eventName);
-	    if (listeners) {
-	      listeners.forEach(listener => {
-	        try {
-	          listener(payload);
-	        } catch (error) {
-	          console.error(`Error in listener for event ${eventName}:`, error);
-	        }
-	      });
-	    }
-	  }
+	destroy() {
+		this.unsubscribeFunctions.forEach((unsub) => {
+			try {
+				unsub?.();
+			} catch (err) {
+				console.warn("[HybridStateManager] Unsubscribe failed:", err);
+			}
+		});
+		this.unsubscribeFunctions.length = 0;
+	}
+
 	// ... Rest of the existing methods remain unchanged ...
 	// (executeAction, mapActionToCommand, executeCommand, etc.)
 
