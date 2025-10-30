@@ -3,7 +3,7 @@
 // Extends your existing HybridStateManager with publish/subscribe support
 
 import { connect } from "nats.ws";
-import { EventBus } from "../utils/EventBus.js";
+
 
 export class HybridStateManager_NATS {
   constructor(config = {}) {
@@ -14,6 +14,12 @@ export class HybridStateManager_NATS {
     };
     this.natsClient = null;
     this.subscriptions = new Map();
+  }
+
+  safeEmit(eventName, detail) {
+    if (typeof window.eventFlowEngine !== 'undefined') {
+      window.eventFlowEngine.emit(eventName, detail);
+    }
   }
 
   async initializeNATS() {
@@ -30,9 +36,7 @@ export class HybridStateManager_NATS {
       );
       await this.subscribeToEvents();
     } catch (err) {
-      console.error("[HybridStateManager_NATS] Connection failed:", err);
-      EventBus.emit("error", err);
-    }
+                this.safeEmit("error", err);    }
   }
 
   async publishCommand(command) {
@@ -52,7 +56,7 @@ export class HybridStateManager_NATS {
         "[HybridStateManager_NATS] Failed to publish command:",
         err,
       );
-      EventBus.emit("error", err);
+      this.safeEmit("error", err);
     }
   }
 
@@ -78,7 +82,7 @@ export class HybridStateManager_NATS {
 
   handleEvent(event) {
     console.log("[HybridStateManager_NATS] Received event:", event.type);
-    EventBus.emit("nats_event", event);
+    this.safeEmit("nats_event", event);
 
     // Integrate event with HybridStateManager core logic
     // Example: update local cache or replay into undo/redo system

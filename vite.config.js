@@ -1,41 +1,30 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-	// Development
+	base: "./",
 	server: {
 		port: 3000,
 		open: true,
+		strictPort: true,
+		watch: { usePolling: true },
 	},
-
-	// Build optimizations
 	build: {
-		target: "es2020",
+		target: "es2022",
+		cssCodeSplit: true,
+		sourcemap: false,
+		minify: "esbuild",
+		assetsInlineLimit: 4096,
 		rollupOptions: {
 			output: {
-				manualChunks: {
-					// Split vendor chunks
-					vendor: ["date-fns", "dexie"],
-					// Core modules
-					core: [
-						"./src/core/EventBus.js",
-						"./src/core/StateManager.js",
-					],
-					// Grid system
-					grid: [
-						"./src/grid/GridSystem.js",
-						"./src/grid/GridRenderer.js",
-					],
+				manualChunks(id) {
+					if (id.includes("node_modules")) return "vendor";
+					if (id.includes("/core/")) return "core";
+					if (id.includes("/grid/")) return "grid";
 				},
 			},
 		},
-		// Keep bundle size reasonable
-		chunkSizeWarningLimit: 600,
+		chunkSizeWarningLimit: 800,
 	},
-
-	// Plugin configuration
-	plugins: [],
-
-	// Alias for cleaner imports
 	resolve: {
 		alias: {
 			"@": "/src",
@@ -45,9 +34,5 @@ export default defineConfig({
 			"@components": "/src/components",
 		},
 	},
-
-	// CSS configuration
-	css: {
-		devSourcemap: true,
-	},
+	css: { devSourcemap: true },
 });

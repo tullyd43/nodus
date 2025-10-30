@@ -155,8 +155,8 @@ export class GridPolicyHelper {
       this.cache.clear();
 
       // Emit policy change event for real-time updates
-      if (typeof EventBus !== "undefined") {
-        EventBus.emit("policyChanged", {
+      if (typeof window.eventFlowEngine !== "undefined") {
+        window.eventFlowEngine.emit("policyChanged", {
           domain: "system",
           key: "grid_performance_mode",
           value: mode,

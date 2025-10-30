@@ -9,7 +9,7 @@ import GridPolicyHelper, {
 } from "./GridPolicyIntegration.js";
 import { getToastManager } from "./GridToastManager.js";
 import AILayoutAssistant from "./AILayoutAssistant.js";
-import EventBus from "../core/EventBus.js";
+
 
 /**
  * Complete enhanced grid system with all optional features
@@ -30,6 +30,7 @@ export class CompleteGridSystem {
     this.toastManager = null;
     this.aiAssistant = null;
     this.initialized = false;
+    this.unsubscribeFunctions = [];
 
     this.init();
   }
@@ -111,14 +112,16 @@ export class CompleteGridSystem {
     );
 
     // Listen for grid events
-    EventBus.on("gridEnhanced", this.onGridEnhanced.bind(this));
-    EventBus.on(
-      "gridPerformanceMode",
-      this.onPerformanceModeChanged.bind(this),
-    );
+    if (window.eventFlowEngine) {
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("gridEnhanced", this.onGridEnhanced.bind(this)));
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on(
+        "gridPerformanceMode",
+        this.onPerformanceModeChanged.bind(this),
+      ));
 
-    if (this.options.enableAI) {
-      EventBus.on("aiLayoutSuggestions", this.onAISuggestions.bind(this));
+      if (this.options.enableAI) {
+        this.unsubscribeFunctions.push(window.eventFlowEngine.on("aiLayoutSuggestions", this.onAISuggestions.bind(this)));
+      }
     }
   }
 
@@ -355,19 +358,21 @@ export class CompleteGridSystem {
 
   setupAnalytics() {
     // Track grid usage patterns
-    EventBus.on("layoutChanged", (data) => {
-      this.trackLayoutChange(data);
-    });
+    if (window.eventFlowEngine) {
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("layoutChanged", (data) => {
+        this.trackLayoutChange(data);
+      }));
 
-    EventBus.on("gridPerformanceMode", (data) => {
-      this.trackPerformanceMode(data);
-    });
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("gridPerformanceMode", (data) => {
+        this.trackPerformanceMode(data);
+      }));
 
-    EventBus.on("policyChanged", (data) => {
-      if (data.domain === "system" && data.key.startsWith("grid_")) {
-        this.trackPolicyChange(data);
-      }
-    });
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("policyChanged", (data) => {
+        if (data.domain === "system" && data.key.startsWith("grid_")) {
+          this.trackPolicyChange(data);
+        }
+      }));
+    }
   }
 
   trackLayoutChange(changeEvent) {
@@ -386,25 +391,31 @@ export class CompleteGridSystem {
     };
 
     // Emit for analytics system
-    EventBus.emit("analyticsEvent", analyticsEvent);
+    if (window.eventFlowEngine) {
+      window.eventFlowEngine.emit("analyticsEvent", analyticsEvent);
+    }
   }
 
   trackPerformanceMode(data) {
-    EventBus.emit("analyticsEvent", {
-      category: "grid_performance",
-      action: data.enabled ? "performance_mode_on" : "performance_mode_off",
-      label: data.reason,
-      value: data.fps || 0,
-    });
+    if (window.eventFlowEngine) {
+      window.eventFlowEngine.emit("analyticsEvent", {
+        category: "grid_performance",
+        action: data.enabled ? "performance_mode_on" : "performance_mode_off",
+        label: data.reason,
+        value: data.fps || 0,
+      });
+    }
   }
 
   trackPolicyChange(data) {
-    EventBus.emit("analyticsEvent", {
-      category: "grid_policy",
-      action: "policy_changed",
-      label: data.key,
-      value: data.value ? 1 : 0,
-    });
+    if (window.eventFlowEngine) {
+      window.eventFlowEngine.emit("analyticsEvent", {
+        category: "grid_policy",
+        action: "policy_changed",
+        label: data.key,
+        value: data.value ? 1 : 0,
+      });
+    }
   }
 
   resetPolicyDefaults() {
@@ -453,9 +464,8 @@ export class CompleteGridSystem {
     }
 
     // Remove event listeners
-    EventBus.off("gridEnhanced", this.onGridEnhanced);
-    EventBus.off("gridPerformanceMode", this.onPerformanceModeChanged);
-    EventBus.off("aiLayoutSuggestions", this.onAISuggestions);
+    this.unsubscribeFunctions.forEach(unsubscribe => unsubscribe());
+    this.unsubscribeFunctions = [];
   }
 }
 

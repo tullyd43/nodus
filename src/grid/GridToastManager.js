@@ -40,9 +40,9 @@ export class GridToastManager {
 
   setupEventListeners() {
     // Listen for layout changes to show save feedback
-    if (typeof EventBus !== "undefined") {
-      EventBus.on("layoutChanged", this.onLayoutChanged.bind(this));
-      EventBus.on(
+    if (typeof window.eventFlowEngine !== "undefined") {
+      window.eventFlowEngine.on("layoutChanged", this.onLayoutChanged.bind(this));
+      window.eventFlowEngine.on(
         "gridPerformanceMode",
         this.onPerformanceModeChanged.bind(this),
       );

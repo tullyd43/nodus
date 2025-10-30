@@ -59,7 +59,7 @@ export class StorageLoader {
     const modules = await this.#loadRequiredModules(requiredModules);
     
     // 3. Create lightweight storage instance
-    const storage = new ModularOfflineStorage(modules);
+    const storage = new ModularOfflineStorage(modules, options);
     
     await storage.init();
     return storage;
@@ -324,15 +324,24 @@ class ModularOfflineStorage {
    #ready = false;
   stateManager = null;
 
-   constructor(modules) {
-     this.#modules = modules;
+   constructor(moduleClasses, config) {
+     this.#modules = {};
+     for (const moduleType in moduleClasses) {
+       if (moduleClasses[moduleType]) {
+         if (moduleType === 'indexeddb') {
+           this.#modules[moduleType] = new moduleClasses[moduleType](config.dbName, config.version, config);
+         } else {
+           this.#modules[moduleType] = new moduleClasses[moduleType](config);
+         }
+       }
+     }
    }
 
    async init() {
      if (this.#ready) return this;
      const initOrder = ['indexeddb', 'crypto', 'security', 'validation', 'sync'];
      for (const moduleType of initOrder) {
-       if (this.#modules[moduleType]) {
+       if (this.#modules[moduleType] && typeof this.#modules[moduleType].init === 'function') {
          await this.#modules[moduleType].init();
        }
      }

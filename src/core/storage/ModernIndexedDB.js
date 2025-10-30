@@ -45,6 +45,7 @@ export class ModernIndexedDB {
         multiEntry: true,
       });
       store.createIndex("syncState", "meta.syncState");
+      store.createIndex("entity_type", "entity_type");
     }
   }
 
@@ -143,8 +144,23 @@ export class ModernIndexedDB {
       const req = index.getAll(classification);
 
       req.onsuccess = () => resolve(req.result || []);
+    });
+  }
+
+  async getObjectsByType(type) {
+    const priv = PRIVATE.get(this);
+    return new Promise((resolve, reject) => {
+      const tx = priv.db.transaction(priv.storeName, "readonly");
+      const index = tx.objectStore(priv.storeName).index("entity_type");
+      const req = index.getAll(type);
+
+      req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => reject(req.error);
     });
+  }
+
+  async saveObject(obj) {
+    return this.put(obj);
   }
 
   close() {

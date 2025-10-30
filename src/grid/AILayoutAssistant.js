@@ -25,9 +25,9 @@ export class AILayoutAssistant {
 
   setupEventListeners() {
     // Listen for layout changes to build pattern database
-    if (typeof EventBus !== "undefined") {
-      EventBus.on("layoutChanged", this.onLayoutChanged.bind(this));
-      EventBus.on("policyChanged", this.onPolicyChanged.bind(this));
+    if (typeof window.eventFlowEngine !== "undefined") {
+      window.eventFlowEngine.on("layoutChanged", this.onLayoutChanged.bind(this));
+      window.eventFlowEngine.on("policyChanged", this.onPolicyChanged.bind(this));
     }
   }
 
@@ -204,7 +204,7 @@ export class AILayoutAssistant {
         this.storeSuggestions(suggestions);
         this.lastSuggestionTime = Date.now();
 
-        EventBus.emit("aiLayoutSuggestions", {
+        window.eventFlowEngine.emit("aiLayoutSuggestions", {
           suggestions: suggestions.slice(0, this.options.maxSuggestions),
           timestamp: Date.now(),
         });
@@ -346,7 +346,7 @@ export class AILayoutAssistant {
 
       // Mark as applied and emit event
       suggestion.applied = true;
-      EventBus.emit("aiSuggestionApplied", { suggestionId, suggestion });
+      window.eventFlowEngine.emit("aiSuggestionApplied", { suggestionId, suggestion });
     } catch (error) {
       console.error("Failed to apply AI suggestion:", error);
       throw error;
@@ -357,7 +357,7 @@ export class AILayoutAssistant {
     const suggestion = this.suggestions.get(suggestionId);
     if (suggestion) {
       suggestion.dismissed = true;
-      EventBus.emit("aiSuggestionDismissed", { suggestionId });
+      window.eventFlowEngine.emit("aiSuggestionDismissed", { suggestionId });
     }
   }
 
@@ -387,7 +387,7 @@ export class AILayoutAssistant {
 
   clearSuggestions() {
     this.suggestions.clear();
-    EventBus.emit("aiSuggestionsCleared");
+    window.eventFlowEngine.emit("aiSuggestionsCleared");
   }
 
   // Analytics and monitoring
@@ -411,7 +411,9 @@ export class AISuggestionPanel {
   }
 
   setupEventListeners() {
-    EventBus.on("aiLayoutSuggestions", this.onSuggestionsReceived.bind(this));
+    if (typeof window.eventFlowEngine !== "undefined") {
+      window.eventFlowEngine.on("aiLayoutSuggestions", this.onSuggestionsReceived.bind(this));
+    }
   }
 
   onSuggestionsReceived(data) {

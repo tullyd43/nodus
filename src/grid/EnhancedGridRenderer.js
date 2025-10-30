@@ -10,7 +10,7 @@
  * - Compliant: Integrates with existing audit/event systems
  */
 
-import EventBus from "../core/EventBus.js";
+
 
 export class EnhancedGridRenderer {
   constructor(gridOptions, stateManager) {
@@ -29,8 +29,15 @@ export class EnhancedGridRenderer {
     this.isResizing = false;
     this.currentDragItem = null;
     this.performanceMode = false; // Start in full-feature mode
+    this.unsubscribeFunctions = [];
 
     this.init();
+  }
+
+  safeEmit(eventName, detail) {
+    if (typeof window.eventFlowEngine !== 'undefined') {
+      window.eventFlowEngine.emit(eventName, detail);
+    }
   }
 
   bindState() {
@@ -47,7 +54,7 @@ export class EnhancedGridRenderer {
     this.setupEventListeners();
     this.isEnhanced = true;
 
-    EventBus.emit("gridEnhanced", { renderer: this });
+    this.safeEmit("gridEnhanced", { renderer: this });
   }
 
   setupModernGridStyles() {
@@ -347,7 +354,7 @@ export class EnhancedGridRenderer {
       blockEl.style.transition = "none";
 
       // Emit event for analytics/audit (follows existing EventBus pattern)
-      EventBus.emit("blockDragStart", {
+      this.safeEmit("blockDragStart", {
         blockId: blockData.blockId,
         position: blockData.position,
       });
@@ -379,15 +386,14 @@ export class EnhancedGridRenderer {
         if (!manualOverride) {
           // Adjust performance mode based on FPS (follows robustness principle)
           if (fps < 30 && !this.performanceMode) {
-            this.enablePerformanceMode();
-            EventBus.emit("gridPerformanceMode", {
+            this.safeEmit("gridPerformanceMode", {
               fps,
               enabled: true,
               reason: "auto",
             });
           } else if (fps > 50 && this.performanceMode) {
             this.disablePerformanceMode();
-            EventBus.emit("gridPerformanceMode", {
+            this.safeEmit("gridPerformanceMode", {
               fps,
               enabled: false,
               reason: "auto",
@@ -404,11 +410,13 @@ export class EnhancedGridRenderer {
       }
     };
 
-    EventBus.on("blockDragStart", () => requestAnimationFrame(monitorFrame));
-    EventBus.on("blockResizeStart", () => requestAnimationFrame(monitorFrame));
+    if (window.eventFlowEngine) {
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("blockDragStart", () => requestAnimationFrame(monitorFrame)));
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("blockResizeStart", () => requestAnimationFrame(monitorFrame)));
 
-    // Listen for policy changes to update performance mode
-    EventBus.on("policyChanged", this.onPerformancePolicyChanged.bind(this));
+      // Listen for policy changes to update performance mode
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("policyChanged", this.onPerformancePolicyChanged.bind(this)));
+    }
   }
 
   checkPerformancePolicyOverride() {
@@ -426,7 +434,7 @@ export class EnhancedGridRenderer {
           } else {
             this.disablePerformanceMode();
           }
-          EventBus.emit("gridPerformanceMode", {
+          this.safeEmit("gridPerformanceMode", {
             enabled: manualMode,
             reason: "policy_override",
           });
@@ -465,10 +473,12 @@ export class EnhancedGridRenderer {
     );
     document.addEventListener("mouseup", this.handleGlobalMouseUp.bind(this));
 
-    // Listen to existing EventBus events (follows existing patterns)
-    EventBus.on("gridRendered", this.onGridRendered.bind(this));
-    EventBus.on("blockAdded", this.onBlockAdded.bind(this));
-    EventBus.on("blockRemoved", this.onBlockRemoved.bind(this));
+    // Listen to existing events from the new EventFlowEngine
+    if (window.eventFlowEngine) {
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("gridRendered", this.onGridRendered.bind(this)));
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("blockAdded", this.onBlockAdded.bind(this)));
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("blockRemoved", this.onBlockRemoved.bind(this)));
+    }
   }
 
   handleGlobalMouseMove(e) {
@@ -533,7 +543,7 @@ export class EnhancedGridRenderer {
     ]);
 
     // Emit completion event (follows existing EventBus pattern)
-    EventBus.emit("blockDragEnd", {
+    this.safeEmit("blockDragEnd", {
       blockId: data.blockId,
       position: data.position,
     });
@@ -565,7 +575,7 @@ export class EnhancedGridRenderer {
       this.triggerLayoutPersistence("resize", data);
     }
 
-    EventBus.emit("blockResizeEnd", {
+    this.safeEmit("blockResizeEnd", {
       /* resize data */
     });
     this.isResizing = false;
@@ -584,7 +594,7 @@ export class EnhancedGridRenderer {
       };
 
       // Emit for any listeners (audit, analytics, etc.)
-      EventBus.emit("layoutChanged", layoutChangeEvent);
+      this.safeEmit("layoutChanged", layoutChangeEvent);
 
       // If onLayoutChange callback provided, use it
       if (this.options?.onLayoutChange) {
@@ -658,7 +668,7 @@ export class EnhancedGridRenderer {
     });
 
     this.isEnhanced = false;
-    EventBus.emit("gridEnhancementDisabled");
+    this.safeEmit("gridEnhancementDisabled");
   }
 
   // Utility methods for external use
@@ -677,6 +687,11 @@ export class EnhancedGridRenderer {
         h: height,
       },
     ]);
+  }
+
+  destroy() {
+    this.unsubscribeFunctions.forEach(unsubscribe => unsubscribe());
+    this.unsubscribeFunctions = [];
   }
 }
 

@@ -5,7 +5,7 @@
  */
 
 import EnhancedGridRenderer from "./EnhancedGridRenderer.js";
-import EventBus from "../core/EventBus.js";
+
 
 /**
  * Example: Enhancing the existing MainView with modern grid capabilities
@@ -17,6 +17,8 @@ export class MainViewWithEnhancedGrid {
     this.elements = {
       gridContainer: document.querySelector(".grid-container"),
     };
+    this.unsubscribeFunctions = [];
+    this.unsubscribeFunctions = [];
 
     // Your existing MainView initialization code would go here
     this.initializeExistingGrid();
@@ -25,14 +27,22 @@ export class MainViewWithEnhancedGrid {
     this.enhanceGrid();
   }
 
+  safeEmit(eventName, detail) {
+    if (typeof window.eventFlowEngine !== 'undefined') {
+      window.eventFlowEngine.emit(eventName, detail);
+    }
+  }
+
   initializeExistingGrid() {
     // This represents your existing grid initialization
     // from main-view.js - keeping it intact
     console.log("Initializing existing grid system...");
 
     // Your existing event listeners
-    EventBus.on("gridChange", this.renderGrid.bind(this));
-    EventBus.on("error", this.handleError.bind(this));
+    if (window.eventFlowEngine) {
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("gridChange", this.renderGrid.bind(this)));
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("error", this.handleError.bind(this)));
+    }
   }
 
   enhanceGrid() {
@@ -67,9 +77,11 @@ export class MainViewWithEnhancedGrid {
     );
 
     // Listen for enhancement events
-    EventBus.on("gridEnhanced", this.onGridEnhanced.bind(this));
-    EventBus.on("blockDragEnd", this.onBlockMoved.bind(this));
-    EventBus.on("layoutChanged", this.onLayoutPersisted.bind(this));
+    if (window.eventFlowEngine) {
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("gridEnhanced", this.onGridEnhanced.bind(this)));
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("blockDragEnd", this.onBlockMoved.bind(this)));
+      this.unsubscribeFunctions.push(window.eventFlowEngine.on("layoutChanged", this.onLayoutPersisted.bind(this)));
+    }
 
     console.log("Grid enhanced with modern capabilities");
   }
@@ -99,7 +111,7 @@ export class MainViewWithEnhancedGrid {
         contentEl.appendChild(widget);
       } catch (err) {
         console.error("Widget render error:", err);
-        EventBus.emit("error", err);
+        this.safeEmit("error", err);
       }
 
       div.appendChild(contentEl);
@@ -116,7 +128,7 @@ export class MainViewWithEnhancedGrid {
       this.attachResizeHandlers(div, handle, block);
     });
 
-    EventBus.emit("gridRendered", gridBlocks);
+    this.safeEmit("gridRendered", gridBlocks);
   }
 
   // Your existing methods - enhanced automatically
@@ -263,7 +275,7 @@ export class MainViewWithEnhancedGrid {
 
   trackLayoutChange(changeEvent) {
     // Optional: Analytics tracking
-    EventBus.emit("analyticsEvent", {
+    this.safeEmit("analyticsEvent", {
       category: "grid_interaction",
       action: changeEvent.changeType,
       label: changeEvent.blockId,
@@ -316,6 +328,14 @@ export class MainViewWithEnhancedGrid {
   handleError(error) {
     // Your existing error handling
     console.error("Grid error:", error);
+  }
+
+  destroy() {
+    this.unsubscribeFunctions.forEach(unsubscribe => unsubscribe());
+    this.unsubscribeFunctions = [];
+    if (this.gridEnhancer) {
+      this.gridEnhancer.destroy();
+    }
   }
 }
 
