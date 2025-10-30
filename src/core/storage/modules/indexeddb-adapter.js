@@ -2,17 +2,50 @@
 // IndexedDB adapter module for offline storage operations
 
 /**
- * IndexedDB Adapter Module
- * Loaded for: all configurations requiring local storage
- * Bundle size: ~3KB (database operations)
+ * @description
+ * Provides a robust, high-performance adapter for the browser's IndexedDB API.
+ * This module is the foundation for the application's offline-first architecture,
+ * enabling reliable local storage and retrieval of all core data structures. It handles
+ * database creation, schema upgrades, and all CRUD (Create, Read, Update, Delete) operations.
+ *
+ * @module IndexedDBAdapter
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API
  */
 export default class IndexedDBAdapter {
+	/**
+	 * @private
+	 * @type {IDBDatabase|null}
+	 */
 	#db;
+	/**
+	 * @private
+	 * @type {string}
+	 */
 	#dbName;
+	/**
+	 * @private
+	 * @type {number}
+	 */
 	#version;
+	/**
+	 * @private
+	 * @type {object}
+	 */
 	#stores;
+	/**
+	 * @private
+	 * @type {boolean}
+	 */
 	#ready = false;
+	/**
+	 * @private
+	 * @type {Map<IDBTransaction, object>}
+	 */
 	#transactions = new Map();
+	/**
+	 * @private
+	 * @type {{reads: number, writes: number, deletes: number, averageReadTime: number, averageWriteTime: number, cacheHits: number, errors: number}}
+	 */
 	#metrics = {
 		reads: 0,
 		writes: 0,
@@ -23,6 +56,13 @@ export default class IndexedDBAdapter {
 		errors: 0,
 	};
 
+	/**
+	 * Creates an instance of IndexedDBAdapter.
+	 * @param {object} [opts={}] - Configuration options for the database.
+	 * @param {string} [opts.dbName='nodus_offline'] - The name of the IndexedDB database.
+	 * @param {number} [opts.version=2] - The schema version of the database.
+	 * @param {object} [opts.stores] - An object defining the object stores and their indexes.
+	 */
 	constructor(opts = {}) {
 		this.#dbName = String(opts.dbName || "nodus_offline");
 		this.#version = Number(opts.version || 2); // Bump version for schema upgrade
@@ -51,6 +91,11 @@ export default class IndexedDBAdapter {
 		console.log(`[IndexedDBAdapter] Loaded for database: ${this.#dbName}`);
 	}
 
+	/**
+	 * Initializes the adapter by opening a connection to the IndexedDB database.
+	 * This method handles database creation and schema upgrades.
+	 * @returns {Promise<this>} The initialized adapter instance.
+	 */
 	async init() {
 		if (this.#ready) return this;
 
@@ -62,7 +107,10 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Store single item
+	 * Stores or updates a single item in the specified object store.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {object} item - The item to store.
+	 * @returns {Promise<IDBValidKey>} A promise that resolves with the key of the stored item.
 	 */
 	async put(storeName, item) {
 		const startTime = performance.now();
@@ -83,7 +131,10 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Store multiple items efficiently
+	 * Stores or updates multiple items in a single transaction for efficiency.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {Array<object>} items - An array of items to store.
+	 * @returns {Promise<IDBValidKey[]>} A promise that resolves with an array of keys for the stored items.
 	 */
 	async putBulk(storeName, items) {
 		const startTime = performance.now();
@@ -111,7 +162,10 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Get single item by key
+	 * Retrieves a single item from the specified object store by its key.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {IDBValidKey} key - The key of the item to retrieve.
+	 * @returns {Promise<object|undefined>} A promise that resolves with the retrieved item, or undefined if not found.
 	 */
 	async get(storeName, key) {
 		const startTime = performance.now();
@@ -132,7 +186,10 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Get multiple items by keys
+	 * Retrieves multiple items from the specified object store by their keys in a single transaction.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {Array<IDBValidKey>} keys - An array of keys to retrieve.
+	 * @returns {Promise<object[]>} A promise that resolves with an array of the found items.
 	 */
 	async getBulk(storeName, keys) {
 		const startTime = performance.now();
@@ -160,7 +217,11 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Get all items from store
+	 * Retrieves all items from an object store.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {IDBValidKey|IDBKeyRange} [query] - An optional key or key range to query.
+	 * @param {number} [count] - The optional maximum number of items to retrieve.
+	 * @returns {Promise<object[]>} A promise that resolves with an array of all items in the store.
 	 */
 	async getAll(storeName, query = null, count = null) {
 		const startTime = performance.now();
@@ -185,7 +246,13 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Query by index
+	 * Performs a query against a specific index in an object store.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {string} indexName - The name of the index to query.
+	 * @param {IDBValidKey|IDBKeyRange} query - The key or key range to query within the index.
+	 * @param {object} [options={}] - Additional options.
+	 * @param {boolean} [options.keys=false] - If true, retrieves only the keys instead of the full objects.
+	 * @returns {Promise<any[]>} A promise that resolves with an array of matching items or keys.
 	 */
 	async queryByIndex(storeName, indexName, query, options = {}) {
 		const startTime = performance.now();
@@ -221,7 +288,10 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Delete item by key
+	 * Deletes a single item from the specified object store by its key.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {IDBValidKey} key - The key of the item to delete.
+	 * @returns {Promise<void>} A promise that resolves when the deletion is complete.
 	 */
 	async delete(storeName, key) {
 		const startTime = performance.now();
@@ -242,7 +312,10 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Delete multiple items
+	 * Deletes multiple items from the specified object store by their keys in a single transaction.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {Array<IDBValidKey>} keys - An array of keys to delete.
+	 * @returns {Promise<void[]>} A promise that resolves when all deletions are complete.
 	 */
 	async deleteBulk(storeName, keys) {
 		const startTime = performance.now();
@@ -270,7 +343,9 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Clear entire store
+	 * Clears all items from an object store.
+	 * @param {string} storeName - The name of the object store to clear.
+	 * @returns {Promise<void>} A promise that resolves when the store is cleared.
 	 */
 	async clear(storeName) {
 		try {
@@ -286,7 +361,10 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Count items in store
+	 * Counts the number of items in an object store, optionally matching a query.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {IDBValidKey|IDBKeyRange} [query] - An optional key or key range to count.
+	 * @returns {Promise<number>} A promise that resolves with the total number of items.
 	 */
 	async count(storeName, query = null) {
 		try {
@@ -304,7 +382,11 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Iterate through store with cursor
+	 * Iterates over items in an object store using a cursor.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {Function} callback - A callback function executed for each item. It receives `(value, key)`. If it returns `false`, iteration stops.
+	 * @param {object} [options={}] - Options for the cursor.
+	 * @returns {Promise<void>} A promise that resolves when iteration is complete.
 	 */
 	async iterate(storeName, callback, options = {}) {
 		try {
@@ -350,7 +432,8 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Get database metrics
+	 * Retrieves performance and state metrics for the database adapter.
+	 * @returns {object} An object containing various metrics.
 	 */
 	getMetrics() {
 		return {
@@ -364,7 +447,7 @@ export default class IndexedDBAdapter {
 	}
 
 	/**
-	 * Close database connection
+	 * Closes the connection to the IndexedDB database.
 	 */
 	close() {
 		if (this.#db) {
@@ -376,6 +459,11 @@ export default class IndexedDBAdapter {
 	}
 
 	// Private methods
+	/**
+	 * Opens and initializes the IndexedDB database, handling version upgrades.
+	 * @private
+	 * @returns {Promise<IDBDatabase>} A promise that resolves with the database instance.
+	 */
 	async #openDatabase() {
 		return new Promise((resolve, reject) => {
 			const request = indexedDB.open(this.#dbName, this.#version);
@@ -390,6 +478,13 @@ export default class IndexedDBAdapter {
 		});
 	}
 
+	/**
+	 * Handles the `upgradeneeded` event to create or modify the database schema.
+	 * @private
+	 * @param {IDBDatabase} db - The database instance.
+	 * @param {number} oldVersion - The old version of the database.
+	 * @param {number|null} newVersion - The new version of the database.
+	 */
 	#handleUpgrade(db, oldVersion, newVersion) {
 		console.log(
 			`[IndexedDBAdapter] Upgrading database from v${oldVersion} to v${newVersion}`
@@ -412,6 +507,14 @@ export default class IndexedDBAdapter {
 		}
 	}
 
+	/**
+	 * A helper method to wrap IndexedDB operations in a transaction.
+	 * @private
+	 * @param {string} storeName - The name of the object store for the transaction.
+	 * @param {IDBTransactionMode} mode - The transaction mode ('readonly' or 'readwrite').
+	 * @param {Function} operation - A function that receives the object store and performs the operation.
+	 * @returns {Promise<any>} A promise that resolves with the result of the operation.
+	 */
 	async #performTransaction(storeName, mode, operation) {
 		if (!this.#ready) {
 			throw new Error("Database not initialized");
@@ -461,6 +564,13 @@ export default class IndexedDBAdapter {
 		});
 	}
 
+	/**
+	 * Updates internal metrics after a database operation.
+	 * @private
+	 * @param {'reads'|'writes'|'deletes'} operation - The type of operation performed.
+	 * @param {number} duration - The duration of the operation in milliseconds.
+	 * @param {number} [itemCount=1] - The number of items affected by the operation.
+	 */
 	#updateMetrics(operation, duration, itemCount = 1) {
 		this.#metrics[operation] += itemCount;
 

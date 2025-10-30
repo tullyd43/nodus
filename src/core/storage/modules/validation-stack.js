@@ -2,323 +2,395 @@
 // Validation stack for composable data validation
 
 /**
- * Validation Stack Module
- * Loaded for: all configurations with validation requirements
- * Bundle size: ~2KB (core validation orchestration)
+ * @description
+ * Orchestrates multiple validation modules (e.g., `StrictValidator`, `CustomValidator`) into a single, cohesive pipeline.
+ * This module is responsible for running all applicable validators against an entity, aggregating the results,
+ * and managing performance features like caching and history tracking. It embodies the **Composability** pillar.
+ *
+ * @module ValidationStack
  */
 export default class ValidationStack {
-  #validators = [];
-  #validationCache = new Map();
-  #validationHistory = [];
-  #config;
-  #metrics = {
-    validationsPerformed: 0,
-    validationsFailed: 0,
-    averageValidationTime: 0,
-    cacheHitRate: 0
-  };
-  stateManager = null;
+	/**
+	 * @private
+	 * @type {Array<object>}
+	 */
+	#validators = [];
+	/**
+	 * @private
+	 * @type {Map<string, object>}
+	 */
+	#validationCache = new Map();
+	/**
+	 * @private
+	 * @type {Array<object>}
+	 */
+	#validationHistory = [];
+	/**
+	 * @private
+	 * @type {object}
+	 */
+	#config;
+	/**
+	 * @private
+	 * @type {{validationsPerformed: number, validationsFailed: number, averageValidationTime: number, cacheHitRate: number}}
+	 */
+	#metrics = {
+		validationsPerformed: 0,
+		validationsFailed: 0,
+		averageValidationTime: 0,
+		cacheHitRate: 0,
+	};
+	/** @type {object|null} */
+	stateManager = null;
 
-  bindStateManager(manager) {
-    this.stateManager = manager;
-  }
+	bindStateManager(manager) {
+		this.stateManager = manager;
+	}
 
-  constructor(validators = [], options = {}) {
-    this.#validators = validators;
-    this.#config = {
-      enableCaching: options.enableCaching !== false,
-      cacheSize: options.cacheSize || 1000,
-      cacheTTL: options.cacheTTL || 5 * 60 * 1000, // 5 minutes
-      trackHistory: options.trackHistory || false,
-      failFast: options.failFast || false,
-      ...options
-    };
+	/**
+	 * Creates an instance of ValidationStack.
+	 * @param {Array<object>} [validators=[]] - An array of validator module instances.
+	 * @param {object} [options={}] - Configuration options for the validation stack.
+	 * @param {boolean} [options.enableCaching=true] - Whether to cache validation results for performance.
+	 * @param {number} [options.cacheTTL=300000] - Time-to-live for cache entries in milliseconds (default: 5 minutes).
+	 * @param {boolean} [options.trackHistory=false] - Whether to keep a history of validation results.
+	 * @param {boolean} [options.failFast=false] - If true, stops validation on the first error.
+	 */
+	constructor(validators = [], options = {}) {
+		this.#validators = validators;
+		this.#config = {
+			enableCaching: options.enableCaching !== false,
+			cacheSize: options.cacheSize || 1000,
+			cacheTTL: options.cacheTTL || 5 * 60 * 1000, // 5 minutes
+			trackHistory: options.trackHistory || false,
+			failFast: options.failFast || false,
+			...options,
+		};
 
-    console.log(`[ValidationStack] Loaded with ${validators.length} validators`);
-  }
+		console.log(
+			`[ValidationStack] Loaded with ${validators.length} validators`
+		);
+	}
 
-  async init() {
-    // Initialize all validators
-    for (const validator of this.#validators) {
-      if (validator.init) {
-        await validator.init();
-      }
-    }
+	/**
+	 * Initializes the validation stack and all of its underlying validator modules.
+	 * @returns {Promise<this>} The initialized instance.
+	 */
+	async init() {
+		// Initialize all validators
+		for (const validator of this.#validators) {
+			if (validator.init) {
+				await validator.init();
+			}
+		}
 
-    console.log('[ValidationStack] Validation stack initialized');
-    return this;
-  }
+		console.log("[ValidationStack] Validation stack initialized");
+		return this;
+	}
 
-  /**
-   * Add validator to the stack
-   */
-  addValidator(validator) {
-    this.#validators.push(validator);
-    
-    if (validator.init) {
-      validator.init();
-    }
-  }
+	/**
+	 * Add validator to the stack
+	 */
+	addValidator(validator) {
+		this.#validators.push(validator);
 
-  /**
-   * Validate entity with all applicable validators
-   */
-  async validate(entity, context = {}) {
-    const startTime = performance.now();
-    const cacheKey = this.#generateCacheKey(entity, context);
-    
-    // Check cache first
-    if (this.#config.enableCaching && this.#validationCache.has(cacheKey)) {
-      const cached = this.#validationCache.get(cacheKey);
-      if (Date.now() < cached.expires) {
-        this.#updateCacheMetrics(true);
-        return cached.result;
-      } else {
-        this.#validationCache.delete(cacheKey);
-      }
-    }
+		if (validator.init) {
+			validator.init();
+		}
+	}
 
-    this.#updateCacheMetrics(false);
+	/**
+	 * Validates an entity by running it through the entire stack of applicable validators.
+	 * @param {object} entity - The entity to validate.
+	 * @param {object} [context={}] - The validation context.
+	 * @returns {Promise<object>} A promise that resolves with an aggregated validation result object.
+	 */
+	async validate(entity, context = {}) {
+		const startTime = performance.now();
+		const cacheKey = this.#generateCacheKey(entity, context);
 
-    // Perform validation
-    const result = await this.#performValidation(entity, context);
-    
-    // Cache result
-    if (this.#config.enableCaching) {
-      this.#validationCache.set(cacheKey, {
-        result,
-        expires: Date.now() + this.#config.cacheTTL
-      });
-      
-      // Cleanup cache if too large
-      if (this.#validationCache.size > this.#config.cacheSize) {
-        this.#cleanupCache();
-      }
-    }
+		// Check cache first
+		if (this.#config.enableCaching && this.#validationCache.has(cacheKey)) {
+			const cached = this.#validationCache.get(cacheKey);
+			if (Date.now() < cached.expires) {
+				this.#updateCacheMetrics(true);
+				return cached.result;
+			} else {
+				this.#validationCache.delete(cacheKey);
+			}
+		}
 
-    // Update metrics
-    const validationTime = performance.now() - startTime;
-    this.#updateValidationMetrics(result.valid, validationTime);
+		this.#updateCacheMetrics(false);
 
-    // Track history if enabled
-    if (this.#config.trackHistory) {
-      this.#addToHistory(entity, result, validationTime);
-    }
+		// Perform validation
+		const result = await this.#performValidation(entity, context);
 
-    if (!result.valid) {
-      this.stateManager?.emit?.('validationError', { entity, errors: result.errors || [] });
-    }
+		// Cache result
+		if (this.#config.enableCaching) {
+			this.#validationCache.set(cacheKey, {
+				result,
+				expires: Date.now() + this.#config.cacheTTL,
+			});
 
-    return result;
-  }
+			// Cleanup cache if too large
+			if (this.#validationCache.size > this.#config.cacheSize) {
+				this.#cleanupCache();
+			}
+		}
 
-  /**
-   * Validate specific field
-   */
-  async validateField(entityType, fieldName, value, context = {}) {
-    const applicableValidators = this.#validators.filter(v => 
-      v.supportsField && v.supportsField(entityType, fieldName)
-    );
+		// Update metrics
+		const validationTime = performance.now() - startTime;
+		this.#updateValidationMetrics(result.valid, validationTime);
 
-    const errors = [];
-    const warnings = [];
+		// Track history if enabled
+		if (this.#config.trackHistory) {
+			this.#addToHistory(entity, result, validationTime);
+		}
 
-    for (const validator of applicableValidators) {
-      try {
-        const result = await validator.validateField(entityType, fieldName, value, context);
-        
-        if (!result.valid) {
-          errors.push(...(result.errors || []));
-          warnings.push(...(result.warnings || []));
-          
-          if (this.#config.failFast) {
-            break;
-          }
-        }
-      } catch (error) {
-        errors.push(`Validator error: ${error.message}`);
-        
-        if (this.#config.failFast) {
-          break;
-        }
-      }
-    }
+		if (!result.valid) {
+			this.stateManager?.emit?.("validationError", {
+				entity,
+				errors: result.errors || [],
+			});
+		}
 
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings,
-      validatedBy: applicableValidators.map(v => v.name || v.constructor.name)
-    };
-  }
+		return result;
+	}
 
-  /**
-   * Get validation metrics
-   */
-  getValidationMetrics() {
-    return {
-      ...this.#metrics,
-      validatorsLoaded: this.#validators.length,
-      cacheSize: this.#validationCache.size,
-      historySize: this.#validationHistory.length
-    };
-  }
+	/**
+	 * Validate specific field
+	 */
+	async validateField(entityType, fieldName, value, context = {}) {
+		const applicableValidators = this.#validators.filter(
+			(v) => v.supportsField && v.supportsField(entityType, fieldName)
+		);
 
-  /**
-   * Get validation history
-   */
-  getValidationHistory(limit = 50) {
-    return this.#validationHistory.slice(-limit);
-  }
+		const errors = [];
+		const warnings = [];
 
-  /**
-   * Clear validation cache
-   */
-  clearCache() {
-    this.#validationCache.clear();
-    console.log('[ValidationStack] Validation cache cleared');
-  }
+		for (const validator of applicableValidators) {
+			try {
+				const result = await validator.validateField(
+					entityType,
+					fieldName,
+					value,
+					context
+				);
 
-  /**
-   * Get loaded validators
-   */
-  getValidators() {
-    return this.#validators.map(v => ({
-      name: v.name || v.constructor.name,
-      type: v.type || 'unknown',
-      supports: v.supports || []
-    }));
-  }
+				if (!result.valid) {
+					errors.push(...(result.errors || []));
+					warnings.push(...(result.warnings || []));
 
-  // Private methods
-  async #performValidation(entity, context) {
-    const errors = [];
-    const warnings = [];
-    const validationResults = [];
+					if (this.#config.failFast) {
+						break;
+					}
+				}
+			} catch (error) {
+				errors.push(`Validator error: ${error.message}`);
 
-    for (const validator of this.#validators) {
-      try {
-        // Check if validator applies to this entity
-        if (validator.supports && !validator.supports(entity, context)) {
-          continue;
-        }
+				if (this.#config.failFast) {
+					break;
+				}
+			}
+		}
 
-        const result = await validator.validate(entity, context);
-        validationResults.push({
-          validator: validator.name || validator.constructor.name,
-          result
-        });
+		return {
+			valid: errors.length === 0,
+			errors,
+			warnings,
+			validatedBy: applicableValidators.map(
+				(v) => v.name || v.constructor.name
+			),
+		};
+	}
 
-        if (!result.valid) {
-          errors.push(...(result.errors || []));
-          warnings.push(...(result.warnings || []));
-          
-          if (this.#config.failFast) {
-            break;
-          }
-        }
-      } catch (error) {
-        const errorMsg = `Validator ${validator.name || validator.constructor.name} failed: ${error.message}`;
-        errors.push(errorMsg);
-        console.error(`[ValidationStack] ${errorMsg}`);
-        
-        if (this.#config.failFast) {
-          break;
-        }
-      }
-    }
+	/**
+	 * Retrieves performance and state metrics for the validation stack.
+	 * @returns {object} An object containing various metrics.
+	 */
+	getValidationMetrics() {
+		return {
+			...this.#metrics,
+			validatorsLoaded: this.#validators.length,
+			cacheSize: this.#validationCache.size,
+			historySize: this.#validationHistory.length,
+		};
+	}
 
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings,
-      validationResults,
-      timestamp: Date.now()
-    };
-  }
+	/**
+	 * Get validation history
+	 */
+	getValidationHistory(limit = 50) {
+		return this.#validationHistory.slice(-limit);
+	}
 
-  #generateCacheKey(entity, context) {
-    // Create deterministic cache key
-    const entityKey = JSON.stringify({
-      id: entity.id,
-      entity_type: entity.entity_type,
-      updated_at: entity.updated_at,
-      // Include relevant context
-      classification: context.classification,
-      user: context.userId
-    });
-    
-    // Simple hash for shorter keys
-    let hash = 0;
-    for (let i = 0; i < entityKey.length; i++) {
-      const char = entityKey.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32-bit integer
-    }
-    
-    return Math.abs(hash).toString(16);
-  }
+	/**
+	 * Clear validation cache
+	 */
+	clearCache() {
+		this.#validationCache.clear();
+		console.log("[ValidationStack] Validation cache cleared");
+	}
 
-  #updateValidationMetrics(isValid, validationTime) {
-    this.#metrics.validationsPerformed++;
-    
-    if (!isValid) {
-      this.#metrics.validationsFailed++;
-    }
+	/**
+	 * Get loaded validators
+	 */
+	getValidators() {
+		return this.#validators.map((v) => ({
+			name: v.name || v.constructor.name,
+			type: v.type || "unknown",
+			supports: v.supports || [],
+		}));
+	}
 
-    // Update average validation time
-    const totalTime = (this.#metrics.averageValidationTime * (this.#metrics.validationsPerformed - 1)) + validationTime;
-    this.#metrics.averageValidationTime = totalTime / this.#metrics.validationsPerformed;
-  }
+	// Private methods
+	/**
+	 * Performs the core validation logic by iterating through validators.
+	 * @private
+	 * @param {object} entity - The entity to validate.
+	 * @param {object} context - The validation context.
+	 * @returns {Promise<object>} The aggregated validation result.
+	 */
+	async #performValidation(entity, context) {
+		const errors = [];
+		const warnings = [];
+		const validationResults = [];
 
-  #updateCacheMetrics(isHit) {
-    const totalRequests = this.#metrics.validationsPerformed + 1;
-    const hits = isHit ? 1 : 0;
-    
-    // Update hit rate (running average)
-    this.#metrics.cacheHitRate = ((this.#metrics.cacheHitRate * (totalRequests - 1)) + hits) / totalRequests;
-  }
+		for (const validator of this.#validators) {
+			try {
+				// Check if validator applies to this entity
+				if (
+					validator.supports &&
+					!validator.supports(entity, context)
+				) {
+					continue;
+				}
 
-  #addToHistory(entity, result, validationTime) {
-    this.#validationHistory.push({
-      entityId: entity.id,
-      entityType: entity.entity_type,
-      valid: result.valid,
-      errorCount: result.errors.length,
-      warningCount: result.warnings.length,
-      validationTime,
-      timestamp: Date.now()
-    });
+				const result = await validator.validate(entity, context);
+				validationResults.push({
+					validator: validator.name || validator.constructor.name,
+					result,
+				});
 
-    // Keep history manageable
-    if (this.#validationHistory.length > 1000) {
-      this.#validationHistory = this.#validationHistory.slice(-500);
-    }
-  }
+				if (!result.valid) {
+					errors.push(...(result.errors || []));
+					warnings.push(...(result.warnings || []));
 
-  #cleanupCache() {
-    const now = Date.now();
-    const toDelete = [];
+					if (this.#config.failFast) {
+						break;
+					}
+				}
+			} catch (error) {
+				const errorMsg = `Validator ${validator.name || validator.constructor.name} failed: ${error.message}`;
+				errors.push(errorMsg);
+				console.error(`[ValidationStack] ${errorMsg}`);
 
-    // Remove expired entries
-    for (const [key, value] of this.#validationCache.entries()) {
-      if (now >= value.expires) {
-        toDelete.push(key);
-      }
-    }
+				if (this.#config.failFast) {
+					break;
+				}
+			}
+		}
 
-    for (const key of toDelete) {
-      this.#validationCache.delete(key);
-    }
+		return {
+			valid: errors.length === 0,
+			errors,
+			warnings,
+			validationResults,
+			timestamp: Date.now(),
+		};
+	}
 
-    // If still too large, remove oldest entries
-    if (this.#validationCache.size > this.#config.cacheSize) {
-      const entries = Array.from(this.#validationCache.entries());
-      const toRemove = entries.slice(0, entries.length - this.#config.cacheSize);
-      
-      for (const [key] of toRemove) {
-        this.#validationCache.delete(key);
-      }
-    }
-  }
+	#generateCacheKey(entity, context) {
+		// Create deterministic cache key
+		const entityKey = JSON.stringify({
+			id: entity.id,
+			entity_type: entity.entity_type,
+			updated_at: entity.updated_at,
+			// Include relevant context
+			classification: context.classification,
+			user: context.userId,
+		});
+
+		// Simple hash for shorter keys
+		let hash = 0;
+		for (let i = 0; i < entityKey.length; i++) {
+			const char = entityKey.charCodeAt(i);
+			hash = (hash << 5) - hash + char;
+			hash = hash & hash; // Convert to 32-bit integer
+		}
+
+		return Math.abs(hash).toString(16);
+	}
+
+	#updateValidationMetrics(isValid, validationTime) {
+		this.#metrics.validationsPerformed++;
+
+		if (!isValid) {
+			this.#metrics.validationsFailed++;
+		}
+
+		// Update average validation time
+		const totalTime =
+			this.#metrics.averageValidationTime *
+				(this.#metrics.validationsPerformed - 1) +
+			validationTime;
+		this.#metrics.averageValidationTime =
+			totalTime / this.#metrics.validationsPerformed;
+	}
+
+	#updateCacheMetrics(isHit) {
+		const totalRequests = this.#metrics.validationsPerformed + 1;
+		const hits = isHit ? 1 : 0;
+
+		// Update hit rate (running average)
+		this.#metrics.cacheHitRate =
+			(this.#metrics.cacheHitRate * (totalRequests - 1) + hits) /
+			totalRequests;
+	}
+
+	#addToHistory(entity, result, validationTime) {
+		this.#validationHistory.push({
+			entityId: entity.id,
+			entityType: entity.entity_type,
+			valid: result.valid,
+			errorCount: result.errors.length,
+			warningCount: result.warnings.length,
+			validationTime,
+			timestamp: Date.now(),
+		});
+
+		// Keep history manageable
+		if (this.#validationHistory.length > 1000) {
+			this.#validationHistory = this.#validationHistory.slice(-500);
+		}
+	}
+
+	#cleanupCache() {
+		const now = Date.now();
+		const toDelete = [];
+
+		// Remove expired entries
+		for (const [key, value] of this.#validationCache.entries()) {
+			if (now >= value.expires) {
+				toDelete.push(key);
+			}
+		}
+
+		for (const key of toDelete) {
+			this.#validationCache.delete(key);
+		}
+
+		// If still too large, remove oldest entries
+		if (this.#validationCache.size > this.#config.cacheSize) {
+			const entries = Array.from(this.#validationCache.entries());
+			const toRemove = entries.slice(
+				0,
+				entries.length - this.#config.cacheSize
+			);
+
+			for (const [key] of toRemove) {
+				this.#validationCache.delete(key);
+			}
+		}
+	}
 }

@@ -2,26 +2,63 @@
 // Composable security with zero-knowledge access control
 
 /**
- * Composable Security Layer
+ * @description
+ * Provides a composable, multi-layered security engine for the application.
+ * This class integrates Mandatory Access Control (MAC) via the Bell-LaPadula model,
+ * Role-Based Access Control (RBAC), and zero-knowledge principles to make fine-grained
+ * access decisions. It is designed to be the central authority for all security checks.
  *
- * ZERO-KNOWLEDGE PRINCIPLES:
+ * @property {import('../security/MACEngine.js').MACEngine|null} #mac - The Mandatory Access Control engine.
+ * @property {import('./modules/aes-crypto.js').default} #crypto - The cryptographic module for handling encryption and proofs.
+ * @property {object|null} #context - The current user's security context.
+ * @property {Map<string, {access: boolean, expires: number}>} #accessCache - A cache for access control decisions.
+ * @property {Array<object>} #auditLog - A log of security-relevant events.
+ * @property {object} #config - The configuration for the security layer.
+ * @property {object} #metrics - Performance and usage metrics.
+ * @property {boolean} #ready - A flag indicating if the layer is initialized.
+ * @property {Map<string, Function[]>} #eventListeners - A map for event listeners.
+ * @property {object|null} stateManager - A reference to the global state manager for emitting events.
+ *
+ * @example
+ * // Zero-Knowledge Principles:
  * - Access decisions made on encrypted hints, not actual data
  * - Classification metadata encrypted alongside content
  * - Server never sees cleartext security levels
  * - Client-side access control with cryptographic proof
  */
 export class ComposableSecurity {
+	/** @private */
 	#mac;
+	/** @private */
 	#crypto;
+	/** @private */
 	#context = null;
+	/** @private */
 	#accessCache = new Map();
+	/** @private */
 	#auditLog = [];
+	/** @private */
 	#config;
+	/** @private */
 	#metrics;
+	/** @private */
 	#ready = false;
+	/** @private */
 	#eventListeners;
+	/** @type {object|null} */
 	stateManager = null;
 
+	/**
+	 * Creates an instance of the ComposableSecurity layer.
+	 * @param {import('./modules/aes-crypto.js').default} crypto - The cryptographic module instance.
+	 * @param {object} [options={}] - Configuration options.
+	 * @param {object} [options.stateManager] - A global state manager for event emission.
+	 * @param {string} [options.auditLevel='standard'] - The level of detail for audit logging.
+	 * @param {number} [options.cacheSize=1000] - The maximum number of entries in the access cache.
+	 * @param {number} [options.cacheTTL=300000] - The time-to-live for cache entries in milliseconds.
+	 * @param {Function} [options.metricsCallback] - A callback for reporting metrics.
+	 * @param {import('../security/MACEngine.js').MACEngine} mac - The Mandatory Access Control engine instance.
+	 */
 	constructor(crypto, options = {}, mac) {
 		const manager = options.stateManager;
 		this.stateManager = manager;
@@ -47,7 +84,8 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Initialize security layer
+	 * Initializes the security layer and starts background tasks like cache cleanup.
+	 * @returns {Promise<this>} The initialized security instance.
 	 */
 	async init() {
 		if (this.#ready) return this;
@@ -64,7 +102,15 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Set user security context with proof verification
+	 * Sets the current user's security context after verifying their authentication proof.
+	 * This context is used for all subsequent access control decisions.
+	 * @param {string} userId - The unique identifier of the user.
+	 * @param {string} clearanceLevel - The user's security clearance level (e.g., 'secret').
+	 * @param {string[]} [compartments=[]] - An array of security compartments the user has access to.
+	 * @param {object} authProof - A cryptographic proof of authentication.
+	 * @param {number} [ttl=14400000] - The time-to-live for this context in milliseconds (default: 4 hours).
+	 * @returns {Promise<this>} The instance with the context set.
+	 * @throws {SecurityError} If the authentication proof is invalid.
 	 */
 	async setContext(
 		userId,
@@ -102,7 +148,9 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Set organization context for multi-tenant security
+	 * Sets the organization context for multi-tenant security policies.
+	 * @param {string} organizationId - The unique identifier of the organization.
+	 * @returns {Promise<this>} The instance with the organization context set.
 	 */
 	async setOrganizationContext(organizationId) {
 		if (!this.#context) {
@@ -119,7 +167,10 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Validate organization access
+	 * Validates if the current user has access to a specific organization.
+	 * @param {string} organizationId - The ID of the organization to check.
+	 * @param {object} securityContext - The user's security context.
+	 * @returns {Promise<boolean>} True if access is permitted, false otherwise.
 	 */
 	async validateOrganizationAccess(organizationId, securityContext) {
 		if (!this.#context) {
@@ -143,6 +194,15 @@ export class ComposableSecurity {
 		return hasAccess;
 	}
 
+	/**
+	 * The primary access control decision point. It first enforces non-bypassable
+	 * Mandatory Access Control (MAC) rules and then evaluates Role-Based Access Control (RBAC) policies.
+	 * @param {object} entity - The data entity being accessed.
+	 * @param {'read'|'write'|'delete'} action - The action being performed.
+	 * @param {object} [context={}] - Additional context, like the store name.
+	 * @returns {Promise<boolean>} True if access is granted.
+	 * @throws {Error} If access is denied by either MAC or RBAC checks.
+	 */
 	async checkAccess(entity, action, context = {}) {
 		const { storeName } = context;
 		try {
@@ -180,7 +240,11 @@ export class ComposableSecurity {
 		}
 	}
 	/**
-	 * Check access to classified data
+	 * Performs a Role-Based Access Control (RBAC) check to determine if the current user
+	 * can access data with a specific classification and set of compartments.
+	 * @param {string} classification - The classification level of the data.
+	 * @param {string[]} [compartments=[]] - An array of compartments required for access.
+	 * @returns {Promise<boolean>} True if access is permitted, false otherwise.
 	 */
 	async canAccess(classification, compartments = []) {
 		if (!this.#context) {
@@ -252,7 +316,11 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Check access using encrypted hints (zero-knowledge)
+	 * Performs a zero-knowledge access check by comparing an encrypted hint from the data
+	 * with a hint generated from the user's context. This allows access decisions without
+	 * decrypting the data's actual security label.
+	 * @param {string} accessHint - The encrypted access hint from the data object.
+	 * @returns {Promise<boolean>} True if the hints suggest access is permitted.
 	 */
 	async canAccessEncrypted(accessHint) {
 		if (!this.#context) {
@@ -267,14 +335,16 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Check if security context is valid
+	 * Checks if the current security context is still valid and has not expired.
+	 * @returns {boolean} True if the context is valid.
 	 */
 	hasValidContext() {
 		return this.#context && Date.now() < this.#context.expires;
 	}
 
 	/**
-	 * Get cache hit rate for performance monitoring
+	 * Gets the cache hit rate for access control decisions, useful for performance monitoring.
+	 * @returns {number} The cache hit rate as a value between 0 and 1.
 	 */
 	getCacheHitRate() {
 		const total = this.#metrics.cacheHits + this.#metrics.cacheMisses;
@@ -282,14 +352,17 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Get recent security events
+	 * Retrieves the most recent security audit events.
+	 * @param {number} [limit=10] - The maximum number of events to return.
+	 * @returns {Array<object>} An array of audit event objects.
 	 */
 	getRecentAuditEvents(limit = 10) {
 		return this.#auditLog.slice(-limit);
 	}
 
 	/**
-	 * Clear security context and sensitive data
+	 * Clears the current security context and purges the access cache.
+	 * @returns {Promise<void>}
 	 */
 	async clear() {
 		this.#context = null;
@@ -304,7 +377,7 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Close and cleanup
+	 * Closes the security layer and cleans up resources.
 	 */
 	close() {
 		this.clear();
@@ -314,7 +387,12 @@ export class ComposableSecurity {
 	// ===== PRIVATE ACCESS CONTROL METHODS =====
 
 	/**
-	 * Perform the RBAC check (after MAC has passed)
+	 * A wrapper to perform the RBAC check after a MAC check has already passed.
+	 * @private
+	 * @param {object} entity - The entity being accessed.
+	 * @param {string} action - The action being performed.
+	 * @param {object} [context={}] - Additional context.
+	 * @returns {Promise<boolean>} The result of the `canAccess` RBAC check.
 	 */
 	async evaluateRBAC(entity, action, context = {}) {
 		const { storeName } = context;
@@ -328,7 +406,11 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Perform the actual access check
+	 * The core logic for an RBAC access check, comparing user clearance and compartments against requirements.
+	 * @private
+	 * @param {string} classification - The required classification level.
+	 * @param {string[]} compartments - The required compartments.
+	 * @returns {boolean} True if access is permitted.
 	 */
 	#performAccessCheck(classification, compartments) {
 		const userClearance = this.#context.clearanceLevel;
@@ -348,7 +430,11 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Check if user has sufficient clearance level
+	 * Checks if the user's clearance level is greater than or equal to the required level.
+	 * @private
+	 * @param {string} userClearance - The user's clearance level.
+	 * @param {string} requiredClearance - The required clearance level.
+	 * @returns {boolean} True if clearance is sufficient.
 	 */
 	#hasSufficientClearance(userClearance, requiredClearance) {
 		const clearanceLevels = [
@@ -371,7 +457,11 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Check if user has required compartments
+	 * Checks if the user's compartments are a superset of the required compartments.
+	 * @private
+	 * @param {Set<string>} userCompartments - The set of the user's compartments.
+	 * @param {string[]} requiredCompartments - An array of required compartments.
+	 * @returns {boolean} True if the user has all required compartments.
 	 */
 	#hasRequiredCompartments(userCompartments, requiredCompartments) {
 		// User must have ALL required compartments
@@ -384,7 +474,9 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Generate access hint for current user context
+	 * Generates an encrypted access hint for the current user's security context.
+	 * @private
+	 * @returns {Promise<string|null>} The generated access hint.
 	 */
 	async #generateUserAccessHint() {
 		if (!this.#context) return null;
@@ -396,7 +488,11 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Compare access hints without revealing actual classifications
+	 * Compares the user's access hint with the data's access hint.
+	 * @private
+	 * @param {string} userHint - The user's generated hint.
+	 * @param {string} dataHint - The hint from the data object.
+	 * @returns {boolean} True if the hints suggest access is permitted.
 	 */
 	#compareAccessHints(userHint, dataHint) {
 		// Simple comparison for demo - production would use more sophisticated crypto
@@ -407,7 +503,11 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Check if user hint indicates higher access level
+	 * A simplified check to see if a user's hint represents a higher access level than the data's hint.
+	 * @private
+	 * @param {string} userHint - The user's hint.
+	 * @param {string} dataHint - The data's hint.
+	 * @returns {boolean} True if the user's hint level is greater than or equal to the data's.
 	 */
 	#hasHigherAccessLevel(userHint, dataHint) {
 		// This is a simplified check - production would use proper cryptographic comparison
@@ -421,7 +521,11 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Check organization membership
+	 * A mock implementation to check if a user belongs to an organization.
+	 * @private
+	 * @param {string} organizationId - The ID of the organization.
+	 * @param {string} userId - The ID of the user.
+	 * @returns {Promise<boolean>} True if the user is a member.
 	 */
 	async #checkOrganizationMembership(organizationId, userId) {
 		// This would typically check against a membership database/cache
@@ -430,7 +534,8 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Setup cache cleanup
+	 * Sets up a periodic interval to clean up expired entries from the access cache.
+	 * @private
 	 */
 	#setupCacheCleanup() {
 		setInterval(() => {
@@ -439,7 +544,8 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Cleanup expired cache entries
+	 * Cleans up expired and oversized entries from the access cache.
+	 * @private
 	 */
 	#cleanupCache() {
 		const now = Date.now();
@@ -470,7 +576,10 @@ export class ComposableSecurity {
 	}
 
 	/**
-	 * Audit security events
+	 * Creates and stores a security audit event.
+	 * @private
+	 * @param {string} eventType - The type of the event (e.g., 'access_denied').
+	 * @param {object} data - The data associated with the event.
 	 */
 	#audit(eventType, data) {
 		const auditEvent = {
@@ -507,7 +616,11 @@ export class ComposableSecurity {
 		}
 	}
 
-	// Event system for composability
+	/**
+	 * Registers an event listener for a specific security event.
+	 * @param {string} event - The name of the event to listen for.
+	 * @param {Function} callback - The callback function to execute.
+	 */
 	on(event, callback) {
 		if (!this.#eventListeners.has(event)) {
 			this.#eventListeners.set(event, []);
@@ -515,6 +628,11 @@ export class ComposableSecurity {
 		this.#eventListeners.get(event).push(callback);
 	}
 
+	/**
+	 * Emits a security event, triggering all registered listeners.
+	 * @param {string} event - The name of the event to emit.
+	 * @param {object} data - The data to pass to the listeners.
+	 */
 	emit(event, data) {
 		if (!this.#eventListeners?.has(event)) return;
 
@@ -530,22 +648,37 @@ export class ComposableSecurity {
 		}
 	}
 
-	// Getters
+	/**
+	 * Gets the current security context.
+	 * @returns {object|null}
+	 */
 	get context() {
 		return this.#context;
 	}
+	/**
+	 * Gets the current metrics.
+	 * @returns {object}
+	 */
 	get metrics() {
 		return { ...this.#metrics };
 	}
+	/**
+	 * Gets the ready state of the security layer.
+	 * @returns {boolean}
+	 */
 	get isReady() {
 		return this.#ready;
 	}
 }
 
 /**
- * Security error class
+ * Custom error class for security-related failures.
  */
 export class SecurityError extends Error {
+	/**
+	 * Creates an instance of SecurityError.
+	 * @param {string} message - The error message.
+	 */
 	constructor(message) {
 		super(message);
 		this.name = "SecurityError";
@@ -553,9 +686,14 @@ export class SecurityError extends Error {
 }
 
 /**
- * Validation error class
+ * Custom error class for validation failures.
  */
 export class ValidationError extends Error {
+	/**
+	 * Creates an instance of ValidationError.
+	 * @param {string} message - The error message.
+	 * @param {Array<string>} [details=[]] - An array of detailed error strings.
+	 */
 	constructor(message, details = []) {
 		super(message);
 		this.name = "ValidationError";

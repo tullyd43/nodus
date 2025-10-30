@@ -48,7 +48,8 @@ export default class CustomValidator {
 	}
 
 	/**
-	 * Add custom validation rule
+	 * Adds a new custom validation rule to the validator's rule set.
+	 * This allows for dynamic extension of validation logic at runtime.
 	 * @param {string} ruleName - A unique name for the rule.
 	 * @param {object} ruleDefinition - The definition of the rule, including its logic and metadata.
 	 */
@@ -63,7 +64,7 @@ export default class CustomValidator {
 	}
 
 	/**
-	 * Remove custom validation rule
+	 * Removes a custom validation rule from the validator's rule set.
 	 * @param {string} ruleName - The name of the rule to remove.
 	 * @returns {boolean} True if the rule was successfully removed, false otherwise.
 	 */
@@ -130,7 +131,7 @@ export default class CustomValidator {
 	}
 
 	/**
-	 * Field-specific validation
+	 * Validates a single field's value against all applicable field-specific custom rules.
 	 * @param {string} entityType - The type of the entity.
 	 * @param {string} fieldName - The name of the field to validate.
 	 * @param {*} value - The value of the field.
@@ -179,7 +180,8 @@ export default class CustomValidator {
 	}
 
 	/**
-	 * Check if validator supports entity
+	 * Checks if this validator has any applicable rules for a given entity.
+	 * This is used by the `ValidationStack` to determine if this validator should run.
 	 * @param {object} entity - The entity to check.
 	 * @param {object} context - The validation context.
 	 * @returns {boolean} True if there are applicable rules for this entity.
@@ -189,7 +191,7 @@ export default class CustomValidator {
 	}
 
 	/**
-	 * Check if validator supports field
+	 * Checks if this validator has any applicable rules for a specific field.
 	 * @param {string} entityType - The type of the entity.
 	 * @param {string} fieldName - The name of the field.
 	 * @returns {boolean} True if there are applicable rules for this field.
@@ -204,7 +206,7 @@ export default class CustomValidator {
 	}
 
 	/**
-	 * Get validation metrics
+	 * Retrieves performance and usage metrics for the custom validator.
 	 * @returns {object} An object containing performance and usage metrics.
 	 */
 	getMetrics() {
@@ -221,7 +223,7 @@ export default class CustomValidator {
 	}
 
 	/**
-	 * Get loaded rules
+	 * Retrieves a list of all currently loaded custom rules.
 	 * @returns {Array<object>} A list of the currently loaded custom rules.
 	 */
 	getRules() {
@@ -534,7 +536,8 @@ export default class CustomValidator {
 }
 
 /**
- * Simple expression evaluation engine
+ * A simple expression evaluation engine for custom validation rules.
+ * @private
  */
 class ValidationRuleEngine {
 	/**
@@ -547,6 +550,7 @@ class ValidationRuleEngine {
 
 	/**
 	 * Initializes the rule engine.
+	 * @private
 	 * @returns {Promise<this>} The initialized engine.
 	 */
 	async init() {
@@ -556,6 +560,7 @@ class ValidationRuleEngine {
 
 	/**
 	 * Evaluates a simple expression with a given set of variables.
+	 * @private
 	 * @param {string} expression - The expression to evaluate (e.g., "status == 'active'").
 	 * @param {object} variables - An object of variables to substitute into the expression.
 	 * @returns {*} The result of the expression evaluation.
@@ -586,7 +591,6 @@ class ValidationRuleEngine {
 
 	/**
 	 * A very basic, unsafe evaluation function for demonstration purposes.
-	 * In a real application, this MUST be replaced with a secure expression parser.
 	 * @private
 	 * @param {string} expression - The expression string to evaluate.
 	 * @returns {*} The result of the evaluation.

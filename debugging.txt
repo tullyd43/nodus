@@ -1,267 +1,583 @@
-Got it. Here’s a crisp, do-now gameplan to finish polyinstantiation + clean up the remaining NATO-SECRET refinements without breaking your current demo flow.
+// src/core/storage/StorageLoader.js
+// ============================================================================
+/**
+ * StorageLoader: dynamic, data-driven storage module orchestration.
+ * - Demo-friendly (demoMode), production-hardened (MAC + crypto) when enabled
+ * - Data-driven module stacks (add/override in AppConfig without code changes)
+ * - Correct Sync orchestration (SyncStack + strategies like realtime/batch)
+ * - Transparent crypto (optional) + polyinstantiation-awareness
+ * - No private class fields (#foo) to keep ESLint / parsers happy
+ *
+ * Expected module URLs (via dynamic import) under baseURL:
+ *   validation-stack.js, strict-validator.js, custom-validator.js
+ *   basic-security.js, enterprise-security.js, nato-security.js, compartment-security.js
+ *   demo-crypto.js, basic-crypto.js, aes-crypto.js, zero-knowledge-crypto.js, key-rotation.js
+ *   indexeddb-adapter.js
+ *   sync-stack.js, realtime-sync.js, batch-sync.js
+ */
 
-Gameplan (executables + minimal diffs)
-0) Lint baseline (already installed)
+import { constantTimeCheck } from '../security/ct.js'; // timing-channel padding
+// These imports are optional: if you don’t wire crypto/MAC yet, StorageLoader still works.
+let ClassificationCrypto = null;
+let InMemoryKeyring = null;
 
-Run these first so you see only new issues from your edits:
-
-# from repo root
-npx eslint . --ext .js,.mjs --fix
-
-1) IndexedDB schema: add the polyinstantiated store (and keep callers happy)
-
-Goal: Ensure we have a dedicated store and indexes for polyinstantiated rows, and keep existing code that still says “objects” or “entities” from breaking.
-
-File: src/core/storage/modules/indexeddb-adapter.js
-
-In your upgrade handler, make sure both exist:
-
-objects_polyinstantiated with indexes: logical_id, classification_level, updated_at
-
-A compatibility alias for legacy callers (either keep “entities” or also create “objects” as a simple mirror if you prefer). If you don’t want duplication, keep “entities” and update any direct “objects” callers to “entities” (see Step 4).
-
-Diff sketch (inside onupgradeneeded):
-
-// create/ensure polyinstantiated store
-if (!db.objectStoreNames.contains('objects_polyinstantiated')) {
-  const os = db.createObjectStore('objects_polyinstantiated', { keyPath: 'id' });
-  os.createIndex('logical_id', 'logical_id');
-  os.createIndex('classification_level', 'classification_level');
-  os.createIndex('updated_at', 'updated_at');
+try {
+  // Lazy-loaded classes (paths should exist in your project)
+  const kr = await import('../security/Keyring.js');
+  InMemoryKeyring = kr.InMemoryKeyring;
+  const cc = await import('../security/ClassificationCrypto.js');
+  ClassificationCrypto = cc.ClassificationCrypto;
+} catch {
+  // Crypto is optional; we’ll degrade gracefully when not present.
 }
 
-// (Optional) ensure 'objects' for compatibility, or correct callers to use 'entities'
-if (!db.objectStoreNames.contains('objects')) {
-  const os = db.createObjectStore('objects', { keyPath: 'id' });
-  os.createIndex('entity_type', 'entity_type');
-  os.createIndex('classification', 'classification');
-  os.createIndex('updated_at', 'updated_at');
-}
+/**
+ * @typedef {object} StorageLoaderConfig
+ * @property {string} [baseURL="/src/core/storage/modules/"] Absolute/served base URL for module scripts.
+ * @property {string[]} [preloadModules=[]] Module ids to preload (e.g., ["demo-crypto"])
+ * @property {boolean} [demoMode=false] If true, uses demo crypto + simple security stack.
+ * @property {object|null} [mac=null] MAC engine with { subject(): Label, label(obj,ctx): Label, enforceNoReadUp(), enforceNoWriteDown() }
+ * @property {boolean} [cacheModules=true] Cache constructors between loads.
+ * @property {object} [moduleStacks] Data-driven stacks by profile.
+ */
 
+/**
+ * @typedef {object} StorageCreationOptions
+ * @property {boolean} [securityEnabled=true]
+ * @property {boolean} [enableSync=false]
+ * @property {boolean} [realtimeSync=false]
+ * @property {boolean} [strictValidation=false]
+ * @property {Array<object>} [customValidators=[]]
+ * @property {object} [indexeddbConfig] { dbName, version, stores[] ... }
+ */
 
-If you keep only entities, update any code calling store "objects" to "entities" (Step 4 shows the touch points).
+/**
+ * @typedef {object} AuthContext
+ * @property {string} [clearanceLevel] e.g. "internal","confidential","secret","nato_secret"
+ * @property {string[]} [compartments]
+ */
 
-Bump the version only if needed. You already upgraded to v1 in logs; set this.#version = 2 and handle the conditional creation in the upgrade function.
+export class StorageLoader {
+  /** @type {Map<string, Function>} */
+  _loadedModules = new Map();
+  /** @type {StorageLoaderConfig} */
+  _config;
+  /** @type {boolean} */
+  _ready = false;
 
-2) Storage: finish polyinstantiation CRUD (merge + write rules)
+  /** Optional event emitter hooks */
+  _listeners = null;
 
-You already added:
+  constructor(options = {}) {
+    this._config = {
+      baseURL: options.baseURL ?? '/src/core/storage/modules/',
+      preloadModules: options.preloadModules ?? [],
+      demoMode: options.demoMode ?? false,
+      mac: options.mac ?? null,
+      cacheModules: options.cacheModules !== false,
+      moduleStacks: options.moduleStacks ?? {
+        demo: {
+          core: ['validation-stack'],
+          security: ['basic-security'],
+          crypto: ['demo-crypto'],
+          sync: []
+        },
+        basic: {
+          core: ['validation-stack'],
+          security: ['basic-security'],
+          crypto: ['basic-crypto'],
+          sync: []
+        },
+        high_security: {
+          core: ['validation-stack'],
+          security: ['enterprise-security'],
+          crypto: ['aes-crypto', 'key-rotation'],
+          sync: []
+        },
+        nato: {
+          core: ['validation-stack'],
+          security: ['nato-security', 'compartment-security'],
+          crypto: ['zero-knowledge-crypto', 'key-rotation'],
+          sync: []
+        }
+      },
+      ...options
+    };
 
-#compareClassifications
+    // Optional crypto router (only if available)
+    this.crypto = ClassificationCrypto
+      ? new ClassificationCrypto({ keyring: new InMemoryKeyring?.() })
+      : null;
 
-get(storeName,id) to fetch/merge by logical_id when storeName === 'objects_polyinstantiated'
+    // Pre-bind MAC for convenience
+    this._mac = this._config.mac || null;
 
-#mergePolyinstantiatedEntities(entities)
-
-Now, finalize put() for poly:
-
-File: src/core/storage/StorageLoader.js (inside class ModularOfflineStorage)
-
-In put(storeName, item):
-
-If storing to objects_polyinstantiated:
-
-Lookup existing by logical_id (via adapter queryByIndex).
-
-Determine if there’s a higher existing classification than the incoming one; if yes → create new row (different instance, do not overwrite).
-
-If same level exists → overwrite that level’s instance.
-
-Create composite id = \${item.logical_id}-${item.classification_level}`` (keeps keyPath simple).
-
-Enforce MAC “no write down” on the container label (you already wired MAC in).
-
-Already in your code (from the screenshot) – keep it; just ensure:
-
-record.id = ${item.logical_id}-${item.classification_level} before indexeddb.put.
-
-instance_data holds the original item payload for that level.
-
-3) Transparent crypto stays off in demo
-
-You’ve got demoMode → demo-crypto. Keep it. No changes needed now. For production you’ll switch to real crypto modules. (We’ll wire constant-time padding below).
-
-
-4) Callers alignment: use the right store
-
-Audit the 3 main touch points:
-
-EventFlowEngine currently queries "objects", "entity_type", "event_flow".
-Either ensure you created an objects store (Step 1) or change to "entities".
-Recommended now: Create objects as compatibility so you don’t touch a bunch of files mid-refactor.
-
-HybridStateManager.saveEntity/loadEntity:
-
-Normal entities → "objects" (compat store) or "entities".
-
-Polyinstantiated entities (those with logical_id + classification_level) → "objects_polyinstantiated".
-
-Add a tiny helper to decide the store:
-
-// HybridStateManager.js (where you call storage.instance.put/get)
-const storeFor = (e) => e?.logical_id && e?.classification_level 
-  ? 'objects_polyinstantiated' 
-  : 'objects'; // or 'entities' if you skipped the alias
-
-await this.storage.instance.put(storeFor(entity), entity);
-
-
-When reading a logical entity that might be polyinstantiated: call
-
-await this.storage.instance.get('objects_polyinstantiated', logicalId);
-
-
-and let your merge logic return the “effective” view for the current subject. (You already coded the MAC filter + merge path.)
-
-5) Constant-time access checks (timing channel padding)
-
-File: src/core/security/ct.js
-
-export async function constantTimeCheck(fn, minMs = 100) {
-  const start = performance.now();
-  let result, err;
-  try { result = await fn(); } catch (e) { err = e; }
-  const elapsed = performance.now() - start;
-  const pad = Math.max(0, minMs - elapsed);
-  await new Promise(r => setTimeout(r, pad));
-  if (err) throw err;
-  return result;
-}
-
-
-Use it in reads that could leak via timing (e.g., ModularOfflineStorage.get when filtering by MAC):
-
-return constantTimeCheck(async () => {
-  const raw = await this.#modules.indexeddb?.get(store, id);
-  if (!raw) return null;
-  const filtered = this.#filterReadable([raw]);
-  return filtered.length ? filtered[0] : null;
-}, 100);
-
-6) Information Flow Tracker (minimal hook)
-
-File: src/core/security/InformationFlowTracker.js
-
-export class InformationFlowTracker {
-  constructor(emit) { this.emit = emit; }
-  derived(fromLabels = [], derivedLabel, meta = {}) {
-    // record derivation edges for audit + downstream policy
-    this.emit?.('infoFlow', { fromLabels, derivedLabel, ...meta, ts: Date.now() });
+    console.log('[StorageLoader] Initialized with demoMode:', this._config.demoMode);
   }
-}
 
-
-Wire it in places where you transform/aggregate (e.g., after merge of poly rows):
-
-this.stateManager?.informationFlow?.derived(
-  readableEntities.map(e => ({ level: e.classification_level, compartments: e.compartments })),
-  { level: highestClassification },
-  { operation: 'poly_merge', logical_id: id }
-);
-
-
-Add to HSM:
-
-// in HybridStateManager constructor
-this.informationFlow = new (await import('@core/security/InformationFlowTracker.js')).InformationFlowTracker(
-  (evt) => this.emit('securityEvent', evt)
-);
-
-7) CDS Workflow skeleton (just enough to unblock)
-
-File: src/core/security/cds.js
-
-export class CrossDomainSolution {
-  constructor({ emit }) { this.emit = emit; }
-  async requestDowngrade({ dataId, fromLevel, toLevel, justification }) {
-    this.emit?.('cdsEvent', { type: 'request_downgrade', dataId, fromLevel, toLevel, justification, ts: Date.now() });
-    // Persist a CDS ticket to the DB (objects: entity_type='cds_ticket')
-    // For now, return a stub ticket id
-    return { ticketId: crypto.randomUUID(), status: 'pending' };
+  // ---------------------------------------------------------------------------
+  // Event system (tiny)
+  on(event, cb) {
+    if (!this._listeners) this._listeners = new Map();
+    if (!this._listeners.has(event)) this._listeners.set(event, []);
+    this._listeners.get(event).push(cb);
   }
-  async requestUpgrade({ dataId, fromLevel, toLevel, source }) {
-    this.emit?.('cdsEvent', { type: 'request_upgrade', dataId, fromLevel, toLevel, source, ts: Date.now() });
-    return { ticketId: crypto.randomUUID(), status: 'pending' };
+  emit(event, data) {
+    if (!this._listeners?.has(event)) return;
+    for (const cb of this._listeners.get(event)) {
+      try { cb(data); } catch (e) { console.error('[StorageLoader] Event handler error:', e); }
+    }
   }
-}
 
-
-Wire it in HSM so UI can drive the workflow later.
-
-8) Non-repudiation (PKI) placeholder that won’t block demo
-
-You already added CryptoDomain etc. For now, add a stable interface:
-
-File: src/core/security/NonRepudiation.js
-
-export class NonRepudiation {
-  async signAction({ userId, action, label }) {
-    // demo: create a detached JWS-like stub
-    const payload = JSON.stringify({ userId, action, label, ts: Date.now() });
-    const signature = btoa(payload); // replace with real JWS later
-    return { signature, algorithm: 'demo-stub', timestamp: new Date().toISOString() };
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  async init() {
+    if (this._ready) return this;
+    await this._loadCoreValidation();
+    // Preload requested modules (best-effort; ignore failures in demo/dev)
+    for (const name of this._config.preloadModules) {
+      try { await this._loadModule(name); } catch (e) { console.warn('[StorageLoader] Preload failed:', name, e); }
+    }
+    this._ready = true;
+    console.log('[StorageLoader] Ready with dynamic module loading');
+    return this;
   }
+
+  /**
+   * @param {AuthContext} [authContext={}]
+   * @param {StorageCreationOptions} [options={}]
+   */
+  async createStorage(authContext = {}, options = {}) {
+    if (!this._ready) await this.init();
+
+    const needs = await this._analyzeRequirements(authContext, options);
+    const classes = await this._loadRequiredModules(needs);
+
+    const storage = new ModularOfflineStorage(classes, {
+      demoMode: !!this._config.demoMode,
+      mac: this._mac,
+      crypto: this.crypto, // optional
+      indexeddb: options.indexeddbConfig // pass to adapter
+    });
+
+    await storage.init();
+    return storage;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Requirements analysis (data-driven, profile-based)
+  async _analyzeRequirements(authContext, options) {
+    // 1) demo
+    if (this._config.demoMode) {
+      return { ...this._config.moduleStacks.demo };
+    }
+
+    // 2) security profile (RBAC+classification-based)
+    const level = String(authContext?.clearanceLevel || 'internal').toLowerCase();
+    let profile = 'basic';
+    if (this._isNATO(level)) profile = 'nato';
+    else if (this._isHigh(level)) profile = 'high_security';
+
+    const base = JSON.parse(JSON.stringify(this._config.moduleStacks[profile] || this._config.moduleStacks.basic));
+
+    // 3) validation flags
+    if (options.strictValidation) {
+      base.core = Array.from(new Set([...(base.core || []), 'strict-validator']));
+    }
+    if (options.customValidators?.length) {
+      base.core = Array.from(new Set([...(base.core || []), 'custom-validator']));
+    }
+
+    // 4) sync flags (sync-stack orchestrates its strategies)
+    base.sync = base.sync || [];
+    if (options.enableSync === true) {
+      base.sync = Array.from(new Set(['sync-stack', ...(base.sync || [])]));
+      if (options.realtimeSync) base.sync.push('realtime-sync');
+      else base.sync.push('batch-sync');
+    }
+
+    // Always need IndexedDB adapter
+    base.indexeddb = ['indexeddb-adapter'];
+    return base;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stack loaders
+  async _loadRequiredModules(requirements) {
+    const modules = {
+      validation: await this._loadValidationStack(requirements.core || []),
+      security: await this._loadSecurityStack(requirements.security || []),
+      crypto: await this._loadCryptoStack(requirements.crypto || []),
+      sync: await this._loadSyncStack(requirements.sync || []),
+      indexeddb: await this._ensureIndexedDB(requirements.indexeddb || ['indexeddb-adapter'])
+    };
+    return modules;
+  }
+
+  async _loadValidationStack(req) {
+    const ValidationStack = await this._loadModule('validation-stack');
+    const validators = [];
+
+    if (req.includes('strict-validator')) {
+      try { validators.push(await this._loadModule('strict-validator')); } catch (e) { console.warn('[StorageLoader] strict-validator missing:', e); }
+    }
+    if (req.includes('custom-validator')) {
+      try { validators.push(await this._loadModule('custom-validator')); } catch (e) { console.warn('[StorageLoader] custom-validator missing:', e); }
+    }
+
+    return new ValidationStack(validators);
+  }
+
+  async _loadSecurityStack(req) {
+    if (!req?.length) return null;
+    let SecurityClass = null;
+    const extras = [];
+
+    for (const r of req) {
+      if (r === 'basic-security' || r === 'enterprise-security' || r === 'nato-security') {
+        SecurityClass = await this._loadModule(r);
+      } else {
+        // supplementary (e.g., compartment-security)
+        try { extras.push(await this._loadModule(r)); } catch (e) { console.warn('[StorageLoader] security extra missing:', r, e); }
+      }
+    }
+    return SecurityClass ? new SecurityClass(extras) : null;
+  }
+
+  async _loadCryptoStack(req) {
+    if (!req?.length) return null;
+    let CryptoClass = null;
+    const extras = [];
+
+    for (const r of req) {
+      if (r === 'demo-crypto' || r === 'basic-crypto' || r === 'aes-crypto' || r === 'zero-knowledge-crypto') {
+        CryptoClass = await this._loadModule(r);
+      } else {
+        try { extras.push(await this._loadModule(r)); } catch (e) { console.warn('[StorageLoader] crypto extra missing:', r, e); }
+      }
+    }
+    return CryptoClass ? new CryptoClass(extras) : null;
+  }
+
+  async _loadSyncStack(req) {
+    if (!req?.length) return null;
+    if (!req.includes('sync-stack')) return null; // guard: only build if requested
+
+    const SyncStack = await this._loadModule('sync-stack');
+    const strategies = [];
+
+    for (const r of req) {
+      if (r === 'sync-stack') continue;
+      if (r === 'realtime-sync' || r === 'batch-sync') {
+        try { strategies.push(await this._loadModule(r)); } catch (e) { console.warn('[StorageLoader] sync strategy missing:', r, e); }
+      }
+    }
+    return new SyncStack(strategies);
+  }
+
+  async _ensureIndexedDB(req) {
+    // Require at least the adapter
+    const name = (req[0] || 'indexeddb-adapter');
+    return await this._loadModule(name);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Single module loader (+ cache)
+  async _loadModule(moduleName) {
+    if (this._loadedModules.has(moduleName)) {
+      return this._loadedModules.get(moduleName);
+    }
+    console.log('[StorageLoader] Loading module:', moduleName);
+
+    const url = `${this._config.baseURL}${moduleName}.js`;
+    try {
+      const mod = await import(/* @vite-ignore */ url);
+      const Klass = mod.default || mod[this._toPascalCase(moduleName)];
+      if (!Klass) throw new Error('No default or named export found');
+      if (this._config.cacheModules) this._loadedModules.set(moduleName, Klass);
+      return Klass;
+    } catch (e) {
+      console.error('[StorageLoader] Failed to load module', moduleName, e);
+      throw new Error(`Module loading failed: ${moduleName}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Minimal core validation (always present immediately)
+  async _loadCoreValidation() {
+    if (this._loadedModules.has('core-validation')) return;
+
+    class CoreValidation {
+      validateBasic(entity) {
+        const errors = [];
+        if (!entity || typeof entity !== 'object') errors.push('Invalid entity');
+        if (!entity?.id) errors.push('Missing id');
+        if (!entity?.entity_type) errors.push('Missing entity_type');
+        return { valid: errors.length === 0, errors };
+      }
+    }
+    this._loadedModules.set('core-validation', CoreValidation);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  _isNATO(level) {
+    return ['nato_restricted', 'nato_confidential', 'nato_secret', 'cosmic_top_secret'].includes(level);
+  }
+  _isHigh(level) {
+    return ['confidential', 'secret', 'top_secret'].includes(level);
+  }
+  _toPascalCase(s) {
+    return String(s).split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+  }
+
+  // Getters
+  get isReady() { return this._ready; }
+  get loadedModules() { return Array.from(this._loadedModules.keys()); }
 }
 
+// ============================================================================
+// ModularOfflineStorage
+// ============================================================================
+class ModularOfflineStorage {
+  constructor(moduleClasses, config) {
+    this._modules = {};
+    this._ready = false;
 
-Call it from your audit trail code just before persisting an audit record.
+    this._mac = config.mac || null;
+    this._crypto = config.crypto || null;
+    this._demo = !!config.demoMode;
 
+    this.stateManager = null; // HSM may bind later
 
+    // Instantiate modules
+    for (const type of Object.keys(moduleClasses)) {
+      const Cls = moduleClasses[type];
+      if (!Cls) continue;
 
-9) ESLint blockers you still have (quick wins)
+      if (type === 'indexeddb') {
+        // Pass IndexedDB config only to adapter
+        this._modules[type] = new Cls(config.indexeddb || {});
+      } else if (typeof Cls === 'function') {
+        this._modules[type] = new Cls({});
+      } else {
+        // Some stacks may already be instances
+        this._modules[type] = Cls;
+      }
+    }
+  }
 
-Private fields must be declared at top of the class:
+  on(event, cb) {
+    if (!this._listeners) this._listeners = new Map();
+    if (!this._listeners.has(event)) this._listeners.set(event, []);
+    this._listeners.get(event).push(cb);
+  }
+  emit(event, data) {
+    if (!this._listeners?.has(event)) return;
+    for (const cb of this._listeners.get(event)) {
+      try { cb(data); } catch (e) { console.error('[ModularOfflineStorage] Event error:', e); }
+    }
+  }
 
-File: src/core/storage/SyncLayer.js
+  async init() {
+    if (this._ready) return this;
+    // Deterministic init order
+    const order = ['indexeddb', 'crypto', 'security', 'validation', 'sync'];
+    for (const k of order) {
+      const m = this._modules[k];
+      if (m?.init && typeof m.init === 'function') {
+        await m.init();
+      }
+    }
+    this._ready = true;
+    console.log('[ModularOfflineStorage] Initialized with dynamic modules');
+    return this;
+  }
 
-export default class SyncLayer {
-  #autoSyncInterval = null;  // ✅ declare it here
-  //...
+  bindStateManager(hsm) {
+    this.stateManager = hsm;
+    for (const m of Object.values(this._modules)) {
+      if (typeof m?.bindStateManager === 'function') m.bindStateManager(hsm);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // MAC helpers
+  _subject() {
+    return this._mac?.subject?.() || { level: 'unclassified', compartments: new Set() };
+  }
+  _label(obj, { storeName } = {}) {
+    if (!obj || typeof obj !== 'object') return { level: 'unclassified', compartments: new Set() };
+    const isPoly = storeName === 'objects_polyinstantiated' || 'classification_level' in obj;
+    const level = (isPoly ? obj.classification_level : obj.classification) || 'unclassified';
+    const compartments = new Set(obj.compartments || []);
+    return { level, compartments };
+  }
+
+  _rank(level) {
+    const order = ['unclassified', 'confidential', 'secret', 'nato_secret', 'top_secret', 'cosmic_top_secret'];
+    const i = order.indexOf(String(level || '').toLowerCase());
+    return i < 0 ? 0 : i;
+  }
+
+  _mergePolyRows(rows) {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    // Prefer highest classification row as “base”
+    const sorted = [...rows].sort((a, b) => this._rank(b.classification_level) - this._rank(a.classification_level));
+    const base = { ...sorted[0] };
+    // Merge instance_data shallowly from higher -> lower (higher wins)
+    for (let i = 1; i < sorted.length; i++) {
+      const d = sorted[i]?.instance_data || {};
+      for (const k of Object.keys(d)) {
+        if (!(k in base.instance_data)) base.instance_data[k] = d[k];
+      }
+    }
+    base.merged_at = new Date().toISOString();
+
+    // Info flow (optional)
+    this.stateManager?.informationFlow?.derived(
+      rows.map(r => ({ level: r.classification_level, compartments: r.compartments })),
+      { level: base.classification_level },
+      { operation: 'poly_merge', logical_id: base.logical_id }
+    );
+
+    return base;
+  }
+
+  // -------------------------------------------------------------------------
+  // Writes (transparent encryption if crypto & not demo)
+  async put(storeName, item) {
+    const idx = this._modules.indexeddb;
+    if (!idx?.put) throw new Error('IndexedDB adapter not loaded');
+
+    // MAC write (no write down)
+    if (this._mac) {
+      this._mac.enforceNoWriteDown(this._subject(), this._label(item, { storeName }), { storeName });
+    }
+
+    let record = { ...item };
+    if (!this._demo && this._crypto) {
+      // Encrypt either whole record or instance_data for poly
+      const isPoly = storeName === 'objects_polyinstantiated';
+      const label = this._label(item, { storeName });
+
+      if (isPoly && record.instance_data) {
+        const pt = new TextEncoder().encode(JSON.stringify(record.instance_data));
+        const env = await this._crypto.encrypt(label, pt);
+        record = { ...record, encrypted: true, ciphertext: env.ciphertext, iv: env.iv, alg: env.alg, kid: env.kid, tag: env.tag };
+        delete record.instance_data;
+      } else {
+        const pt = new TextEncoder().encode(JSON.stringify(record));
+        const env = await this._crypto.encrypt(label, pt);
+        // Keep the original record's metadata, but replace its content with the envelope.
+        const id = record.id;
+        record = { ...item }; // Start fresh from the original item to preserve all fields.
+        record.id = id; // Ensure ID is preserved.
+        record.envelope = env;
+        record.encrypted = true;
+      }
+    }
+
+    const res = await idx.put(storeName, record);
+    this.stateManager?.emit?.('entitySaved', { store: storeName, item: record });
+    return res;
+  }
+
+  // -------------------------------------------------------------------------
+  // Reads (constant-time guarded; transparent decryption; poly merge)
+  async get(storeName, id) {
+    const idx = this._modules.indexeddb;
+    if (!idx?.get) throw new Error('IndexedDB adapter not loaded');
+
+    return constantTimeCheck(async () => {
+      // Poly store: read all rows for logical_id and MAC-filter them
+      if (storeName === 'objects_polyinstantiated') {
+        const rows = await idx.queryByIndex(storeName, 'logical_id', id);
+        const readable = this._filterReadable(rows || [], storeName);
+        const dec = await Promise.all(readable.map(r => this._maybeDecryptPoly(r)));
+        return this._mergePolyRows(dec);
+      }
+
+      // Normal store
+      const raw = await idx.get(storeName, id);
+      if (!raw) return null;
+
+      // MAC read (no read up)
+      if (this._mac) {
+        this._mac.enforceNoReadUp(this._subject(), this._label(raw, { storeName }), { storeName });
+      }
+      return this._maybeDecryptNormal(raw);
+    }, 100);
+  }
+
+  async delete(storeName, id) {
+    const idx = this._modules.indexeddb;
+    if (!idx?.delete) throw new Error('IndexedDB adapter not loaded');
+
+    // Only delete if subject can read (prevents info leak)
+    const item = await this.get(storeName, id);
+    if (!item) return;
+
+    // Treat delete like write wrt MAC (container policy)
+    if (this._mac) {
+      this._mac.enforceNoWriteDown(this._subject(), this._label(item, { storeName }), { storeName });
+    }
+
+    const res = await idx.delete(storeName, id);
+    this.stateManager?.emit?.('entityDeleted', { store: storeName, id });
+    return res;
+  }
+
+  async query(storeName, index, value) {
+    const idx = this._modules.indexeddb;
+    if (!idx?.queryByIndex) throw new Error('IndexedDB adapter not loaded');
+    const out = await idx.queryByIndex(storeName, index, value);
+    return this._filterReadable(out || [], storeName);
+  }
+
+  async getAll(storeName) {
+    const idx = this._modules.indexeddb;
+    if (!idx?.getAll) throw new Error('IndexedDB adapter not loaded');
+    const out = await idx.getAll(storeName);
+    return this._filterReadable(out || [], storeName);
+  }
+
+  // -------------------------------------------------------------------------
+  async _maybeDecryptPoly(row) {
+    if (this._demo || !this._crypto || !row?.encrypted) return row;
+    const label = this._label(row, { storeName: 'objects_polyinstantiated' });
+    const pt = await this._crypto.decrypt(label, {
+      ciphertext: row.ciphertext,
+      iv: row.iv, alg: row.alg, kid: row.kid, tag: row.tag
+    });
+    const instance_data = JSON.parse(new TextDecoder().decode(pt));
+    const clean = { ...row };
+    delete clean.ciphertext; delete clean.iv; delete clean.alg; delete clean.kid; delete clean.tag; delete clean.encrypted;
+    return { ...clean, instance_data };
+  }
+
+  async _maybeDecryptNormal(row) {
+    if (this._demo || !this._crypto || !row?.encrypted) return row;
+    const label = this._label(row);
+    const pt = await this._crypto.decrypt(label, row.envelope);
+    const obj = JSON.parse(new TextDecoder().decode(pt));
+    return obj;
+  }
+
+  _filterReadable(list, storeName) {
+    if (!Array.isArray(list)) return [];
+    if (!this._mac) return list; // dev fallback when MAC not wired
+    const s = this._subject();
+    const out = [];
+    for (const it of list) {
+      try {
+        this._mac.enforceNoReadUp(s, this._label(it, { storeName }), { storeName });
+        out.push(it);
+      } catch { /* not readable */ }
+    }
+    return out;
+  }
+
+  get modules() { return Object.keys(this._modules); }
 }
-
-
-File: src/core/storage/modules/batch-sync.js
-
-export default class BatchSync {
-  #flushQueue = null;  // ✅ declare it here (or #syncQueue if that’s the one you meant)
-  #syncQueue = [];
-  //...
-}
-
-
-Empty block:
-
-File: src/utils/MetricsReporter.js (line ~489)
-
-- if (something) { }
-+ if (something) { /* intentionally empty: metric suppressed in demo */ }
-
-
-Browser globals errors (performance, navigator, localStorage, etc.):
-Already fixed by the flat config using env: { browser: true }. If any remain, add file-level pragmas where it’s node-only or test-only:
-
-/* eslint-env browser */
-
-
-Undefined symbols like showGridToast
-Either import it or guard with window?.showGridToast?.(...).
-
-When done:
-
-npx eslint . --ext .js,.mjs --fix
-
-10) Smoke test checklist (quick)
-
-Demo mode true: confirm logs show demo-crypto loaded and no encryption errors.
-
-Seed two rows for the same logical_id at different classification_levels in objects_polyinstantiated.
-
-Call get('objects_polyinstantiated', logicalId):
-
-With subject at confidential: only merge levels ≤ confidential.
-
-With subject at secret: merged data prefers fields from secret where overlapping.
-
-Observe EventFlowEngine no longer complains about missing stores.
-
-ESLint returns zero errors (warnings OK for now).

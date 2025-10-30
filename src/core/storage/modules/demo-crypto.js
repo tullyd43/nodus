@@ -1,23 +1,31 @@
 // src/core/storage/modules/demo-crypto.js
 
 /**
- * A demonstration cryptography module.
+ * @description
  * This class provides non-secure, placeholder implementations for encryption and decryption,
  * primarily for demonstration or testing purposes where actual security is not required.
- * It should NOT be used in a production environment.
+ *
+ * @warning This module provides **NO SECURITY** and should never be used in a production environment.
+ * @module DemoCrypto
  */
 export default class DemoCrypto {
 	/**
 	 * Creates an instance of DemoCrypto.
-	 * @param {object} config - Configuration options for the module.
+	 * @param {object} [config={}] - Configuration options for the module.
 	 */
-	constructor(config) {
+	constructor(config = {}) {
+		/**
+		 * @private
+		 * @type {object}
+		 */
 		this.config = config;
 		console.log("[DemoCrypto] Initialized with config:", config);
 	}
 
 	/**
-	 * "Encrypts" data by wrapping it in a string representation. This is not real encryption.
+	 * @description
+	 * "Encrypts" data by wrapping it in a string representation. This is not real encryption and provides no confidentiality.
+	 *
 	 * @param {*} data - The data to be "encrypted".
 	 * @returns {Promise<string>} A string representing the "encrypted" data.
 	 */
@@ -27,7 +35,9 @@ export default class DemoCrypto {
 	}
 
 	/**
-	 * "Decrypts" data by parsing the string representation. This is not real decryption.
+	 * @description
+	 * "Decrypts" data by parsing the string representation created by the `encrypt` method. This is not real decryption.
+	 *
 	 * @param {string} encryptedData - The "encrypted" data string.
 	 * @returns {Promise<*>} The original data.
 	 */

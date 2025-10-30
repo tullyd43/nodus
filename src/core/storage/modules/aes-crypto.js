@@ -2,9 +2,15 @@
 // AES crypto module for enterprise security
 
 /**
- * AES Crypto Module
- * Loaded for: confidential, secret classifications
- * Bundle size: ~3KB (balanced security/performance)
+ * @description
+ * Provides enterprise-grade cryptographic services using the Web Crypto API.
+ * This module is responsible for encrypting and decrypting data using AES-GCM,
+ * deriving a strong encryption key from user credentials via PBKDF2.
+ * It is designed for environments requiring strong data-at-rest protection.
+ *
+ * @module AESCrypto
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto
+ * @see https://en.wikipedia.org/wiki/Galois/Counter_Mode
  * Provides enterprise-grade encryption using AES-GCM. It derives a key from user credentials
  * and uses it for symmetric encryption and decryption operations.
  */
@@ -12,12 +18,18 @@ export default class AESCrypto {
 	/** @private */
 	#key;
 	/** @private */
-	#keyVersion = 1;
+	#keyVersion;
 	/** @private */
 	#ready = false;
-	/** @private */
+	/**
+	 * @private
+	 * @type {object|null}
+	 */
 	#authContext;
-	/** @private */
+	/**
+	 * @private
+	 * @type {{encryptionCount: number, decryptionCount: number, latencySum: number}}
+	 */
 	#metrics = {
 		encryptionCount: 0,
 		decryptionCount: 0,
@@ -29,6 +41,7 @@ export default class AESCrypto {
 	 * @param {Array<Object>} [additionalModules=[]] - A list of additional modules, not used in this implementation.
 	 */
 	constructor(additionalModules = []) {
+		this.#keyVersion = 1;
 		console.log("[AESCrypto] Loaded for enterprise-grade encryption");
 	}
 
@@ -50,7 +63,7 @@ export default class AESCrypto {
 	/**
 	 * Encrypts data using AES-GCM.
 	 * @param {any} data - The plaintext data to encrypt.
-	 * @returns {Promise<object>} An object containing the encrypted data, initialization vector (iv), and metadata.
+	 * @returns {Promise<{data: Uint8Array, iv: Uint8Array, version: number, alg: string, encrypted: boolean}>} An envelope object containing the ciphertext (`data`), initialization vector (`iv`), and metadata.
 	 * @throws {Error} If the crypto module is not initialized or if encryption fails.
 	 */
 	async encrypt(data) {
@@ -81,7 +94,10 @@ export default class AESCrypto {
 
 			return result;
 		} catch (error) {
-			throw new Error("AES encryption failed");
+			console.error("AES encryption failed:", error);
+			throw new Error(
+				`AES encryption failed. Ensure data is serializable. Error: ${error.message}`
+			);
 		}
 	}
 
@@ -113,7 +129,10 @@ export default class AESCrypto {
 
 			return result;
 		} catch (error) {
-			throw new Error("AES decryption failed");
+			console.error("AES decryption failed:", error);
+			throw new Error(
+				`AES decryption failed. This may be due to a wrong key, corrupted data, or invalid IV. Error: ${error.message}`
+			);
 		}
 	}
 
@@ -159,6 +178,20 @@ export default class AESCrypto {
 		return authProof.signature === expectedSignature;
 	}
 
+	/**
+	 * Rotates the encryption key by incrementing the key version and re-deriving the key.
+	 * This is a critical security function for forward secrecy. The old key is securely destroyed.
+	 * @returns {Promise<{oldVersion: number, newVersion: number}>} An object containing the old and new key versions.
+	 */
+	async rotateKeys() {
+		const oldVersion = this.#keyVersion;
+		this.#keyVersion++;
+		this.#key = await this.#deriveKey();
+		console.log(
+			`[AESCrypto] Keys rotated from v${oldVersion} to v${this.#keyVersion}`
+		);
+		return { oldVersion, newVersion: this.#keyVersion };
+	}
 	/**
 	 * Gets the current version of the encryption key.
 	 * @returns {number} The key version.
@@ -222,7 +255,7 @@ export default class AESCrypto {
 			{
 				name: "PBKDF2",
 				salt: new TextEncoder().encode(
-					"aes-salt-" + this.#authContext.userId
+					`aes-salt-${this.#authContext.userId}-v${this.#keyVersion}`
 				),
 				iterations: 100000,
 				hash: "SHA-256",

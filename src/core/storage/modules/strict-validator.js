@@ -2,16 +2,29 @@
 // Strict validation module for high-security environments
 
 /**
- * Strict Validator Module
- * Loaded for: strict validation requirements, security-critical data
- * Bundle size: ~3KB (comprehensive validation rules)
+ * @description
+ * A comprehensive validation module for high-security environments.
+ * It enforces strict rules related to security classifications, compliance standards (like GDPR/HIPAA),
+ * business logic, and data integrity (checking for patterns like SQL injection or XSS).
+ * This module is a key component of the **Compliance** and **Robustness** pillars.
+ *
+ * @module StrictValidator
  */
 export default class StrictValidator {
-	/** @private */
+	/**
+	 * @private
+	 * @type {object}
+	 */
 	#securityRules;
-	/** @private */
+	/**
+	 * @private
+	 * @type {object}
+	 */
 	#complianceRules;
-	/** @private */
+	/**
+	 * @private
+	 * @type {object}
+	 */
 	#businessRules;
 
 	/**
@@ -31,7 +44,7 @@ export default class StrictValidator {
 	}
 
 	/**
-	 * Initializes the validator.
+	 * Initializes the strict validator module.
 	 * @returns {Promise<this>} The initialized validator instance.
 	 */
 	async init() {
@@ -40,7 +53,8 @@ export default class StrictValidator {
 	}
 
 	/**
-	 * Main validation entry point
+	 * Validates an entity against a comprehensive set of security, compliance, and business rules.
+	 * This is the main entry point for the validator.
 	 * @param {object} entity - The entity to validate.
 	 * @param {object} [context={}] - The validation context.
 	 * @returns {Promise<object>} A validation result object.
@@ -78,7 +92,7 @@ export default class StrictValidator {
 	}
 
 	/**
-	 * Field-specific validation
+	 * Performs validation for a single field against strict security and format rules.
 	 * @param {string} entityType - The type of the entity.
 	 * @param {string} fieldName - The name of the field to validate.
 	 * @param {*} value - The value of the field.
@@ -140,7 +154,8 @@ export default class StrictValidator {
 	}
 
 	/**
-	 * Check if validator supports entity/field
+	 * Checks if this validator should be applied to a given entity.
+	 * In strict mode, it applies to all entities.
 	 * @param {object} entity - The entity to check.
 	 * @param {object} context - The validation context.
 	 * @returns {boolean} True if the entity is supported.
@@ -151,7 +166,7 @@ export default class StrictValidator {
 	}
 
 	/**
-	 * Checks if the validator supports a specific field.
+	 * Checks if this validator should be applied to a given field.
 	 * @param {string} entityType - The type of the entity.
 	 * @param {string} fieldName - The name of the field.
 	 * @returns {boolean} True if the field is supported.
@@ -226,12 +241,6 @@ export default class StrictValidator {
 		return { errors, warnings };
 	}
 
-	/**
-	 * Validates compliance-related aspects of an entity (e.g., GDPR, HIPAA).
-	 * @private
-	 * @param {object} entity - The entity to validate.
-	 * @returns {Promise<{errors: string[], warnings: string[]}>} The validation errors and warnings.
-	 */
 	async #validateCompliance(entity) {
 		const errors = [];
 		const warnings = [];
@@ -287,12 +296,6 @@ export default class StrictValidator {
 		return { errors, warnings };
 	}
 
-	/**
-	 * Validates business logic and rules for an entity.
-	 * @private
-	 * @param {object} entity - The entity to validate.
-	 * @returns {Promise<{errors: string[], warnings: string[]}>} The validation errors and warnings.
-	 */
 	async #validateBusinessRules(entity) {
 		const errors = [];
 		const warnings = [];
@@ -341,12 +344,6 @@ export default class StrictValidator {
 		return { errors, warnings };
 	}
 
-	/**
-	 * Validates the integrity of the data, checking for malicious patterns.
-	 * @private
-	 * @param {object} entity - The entity to validate.
-	 * @returns {Promise<{errors: string[], warnings: string[]}>} The validation errors and warnings.
-	 */
 	async #validateDataIntegrity(entity) {
 		const errors = [];
 		const warnings = [];
@@ -390,12 +387,6 @@ export default class StrictValidator {
 	}
 
 	// Helper methods
-	/**
-	 * Initializes security-related validation rules.
-	 * @private
-	 * @param {object} options - Configuration options.
-	 * @returns {object} The security rules configuration.
-	 */
 	#initializeSecurityRules(options) {
 		return {
 			fields: {
@@ -420,12 +411,6 @@ export default class StrictValidator {
 		};
 	}
 
-	/**
-	 * Initializes compliance-related validation rules.
-	 * @private
-	 * @param {object} options - Configuration options.
-	 * @returns {object} The compliance rules configuration.
-	 */
 	#initializeComplianceRules(options) {
 		return {
 			gdpr: {
@@ -451,12 +436,6 @@ export default class StrictValidator {
 		};
 	}
 
-	/**
-	 * Initializes business-related validation rules.
-	 * @private
-	 * @param {object} options - Configuration options.
-	 * @returns {object} The business rules configuration.
-	 */
 	#initializeBusinessRules(options) {
 		return {
 			requiredFields: {
@@ -468,12 +447,6 @@ export default class StrictValidator {
 		};
 	}
 
-	/**
-	 * Checks if a compartment marking is valid.
-	 * @private
-	 * @param {string} compartment - The compartment to validate.
-	 * @returns {boolean} True if the compartment is valid.
-	 */
 	#isValidCompartment(compartment) {
 		const validCompartments = [
 			"NATO",
@@ -490,12 +463,6 @@ export default class StrictValidator {
 		return validCompartments.includes(compartment);
 	}
 
-	/**
-	 * Calculates an integrity hash for an entity to detect tampering.
-	 * @private
-	 * @param {object} entity - The entity to hash.
-	 * @returns {Promise<string>} The calculated SHA-256 hash.
-	 */
 	async #calculateIntegrityHash(entity) {
 		// Simple integrity hash calculation
 		const dataToHash = JSON.stringify({
@@ -514,12 +481,6 @@ export default class StrictValidator {
 			.join("");
 	}
 
-	/**
-	 * Checks if an entity contains personal data fields.
-	 * @private
-	 * @param {object} entity - The entity to check.
-	 * @returns {boolean} True if personal data is found.
-	 */
 	#containsPersonalData(entity) {
 		const personalFields = this.#complianceRules.gdpr.personalDataFields;
 		return personalFields.some(
@@ -527,12 +488,6 @@ export default class StrictValidator {
 		);
 	}
 
-	/**
-	 * Checks if an entity contains health data fields.
-	 * @private
-	 * @param {object} entity - The entity to check.
-	 * @returns {boolean} True if health data is found.
-	 */
 	#containsHealthData(entity) {
 		const healthFields = this.#complianceRules.hipaa.healthDataFields;
 		return healthFields.some(
@@ -540,24 +495,12 @@ export default class StrictValidator {
 		);
 	}
 
-	/**
-	 * Gets the list of required fields for a given entity type.
-	 * @private
-	 * @param {string} entityType - The type of the entity.
-	 * @returns {string[]} An array of required field names.
-	 */
 	#getRequiredFields(entityType) {
 		return (
 			this.#businessRules.requiredFields[entityType] || ["entity_type"]
 		);
 	}
 
-	/**
-	 * Validates an email address format.
-	 * @private
-	 * @param {string} email - The email to validate.
-	 * @returns {boolean} True if the email format is valid.
-	 */
 	#isValidEmail(email) {
 		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 		return emailRegex.test(email);
@@ -565,21 +508,12 @@ export default class StrictValidator {
 
 	/**
 	 * Validates a phone number format.
-	 * @private
-	 * @param {string} phone - The phone number to validate.
-	 * @returns {boolean} True if the phone format is valid.
 	 */
 	#isValidPhone(phone) {
 		const phoneRegex = /^[+]?[1-9][\d]{0,15}$/;
 		return phoneRegex.test(phone.replace(/[\s\-()]/g, ""));
 	}
 
-	/**
-	 * Extracts all string fields from an entity.
-	 * @private
-	 * @param {object} entity - The entity to extract fields from.
-	 * @returns {Array<[string, string]>} An array of [key, value] pairs for string fields.
-	 */
 	#getTextFields(entity) {
 		const textFields = [];
 		for (const [key, value] of Object.entries(entity)) {
@@ -590,12 +524,6 @@ export default class StrictValidator {
 		return textFields;
 	}
 
-	/**
-	 * Checks for common SQL injection patterns in a string.
-	 * @private
-	 * @param {string} text - The text to check.
-	 * @returns {boolean} True if a potential SQL injection pattern is found.
-	 */
 	#containsSQLInjection(text) {
 		const sqlPatterns = [
 			/(\bUNION\b|\bSELECT\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b)/i,
@@ -606,12 +534,6 @@ export default class StrictValidator {
 		return sqlPatterns.some((pattern) => pattern.test(text));
 	}
 
-	/**
-	 * Checks for common Cross-Site Scripting (XSS) patterns in a string.
-	 * @private
-	 * @param {string} text - The text to check.
-	 * @returns {boolean} True if a potential XSS pattern is found.
-	 */
 	#containsXSS(text) {
 		const xssPatterns = [
 			/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
@@ -623,24 +545,12 @@ export default class StrictValidator {
 		return xssPatterns.some((pattern) => pattern.test(text));
 	}
 
-	/**
-	 * Checks for non-printable characters that might indicate binary data in a text field.
-	 * @private
-	 * @param {string} text - The text to check.
-	 * @returns {boolean} True if binary data is suspected.
-	 */
 	#containsBinaryData(text) {
 		// This regex specifically targets non-whitespace ASCII control characters (0x00-0x08, 0x0B-0x0C, 0x0E-0x1F)
 		// and the DEL character (0x7F), which are typically unexpected in clean text fields.
 		return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(text);
 	}
 
-	/**
-	 * Validates if a value appears to be sensitive data and whether it is encrypted.
-	 * @private
-	 * @param {*} value - The value to validate.
-	 * @returns {boolean} True if the data is not sensitive or appears to be encrypted.
-	 */
 	#validateSensitiveData(value) {
 		// Check if sensitive data is properly formatted/encrypted
 		if (typeof value !== "string") return true;
