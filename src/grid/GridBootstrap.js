@@ -1,8 +1,21 @@
 /**
- * Nodus Adaptive Grid Bootstrap
- * Lightweight custom grid renderer using native web standards.
+ * @file GridBootstrap.js
+ * @description A lightweight, adaptive grid renderer that uses native web standards to display data from an IndexedDB source.
+ * It provides a simple, responsive layout for a collection of items.
+ */
+
+/**
+ * @class GridBootstrap
+ * @classdesc Manages the rendering and basic interaction for a simple, adaptive grid of items.
  */
 export class GridBootstrap {
+	/**
+	 * Creates an instance of GridBootstrap.
+	 * @param {HTMLElement} container - The DOM element that will contain the grid.
+	 * @param {import('../core/storage/ModernIndexedDB.js').default} db - An instance of ModernIndexedDB for data retrieval.
+	 * @param {import('../core/HybridStateManager.js').default} stateManager - The application's state manager for event emission.
+	 * @param {object} [options={}] - Configuration options for the grid.
+	 */
 	constructor(container, db, stateManager, options = {}) {
 		this.container = container;
 		this.db = db; // ModernIndexedDB instance
@@ -22,6 +35,11 @@ export class GridBootstrap {
 		if (this.options.responsive) this.#initAdaptiveListeners();
 	}
 
+	/**
+	 * Fetches data from the database and renders the grid cells into the container.
+	 * @public
+	 * @returns {Promise<void>}
+	 */
 	async render() {
 		this.container.innerHTML = "";
 		this.container.classList.add("nodus-grid");
@@ -51,6 +69,11 @@ export class GridBootstrap {
 		this.updateGridTemplate();
 	}
 
+	/**
+	 * Updates the grid container's CSS grid template based on the number of cells and configuration.
+	 * @public
+	 * @returns {void}
+	 */
 	updateGridTemplate() {
 		const cellCount = this.cells.size || 1;
 		const cols = Math.min(
@@ -63,6 +86,13 @@ export class GridBootstrap {
 		this.container.style.gap = this.#computeGap();
 	}
 
+	/**
+	 * Attaches event listeners for click and drag-and-drop operations to a grid cell.
+	 * @public
+	 * @param {HTMLElement} cell - The DOM element for the grid cell.
+	 * @param {object} item - The data item associated with the cell.
+	 * @returns {void}
+	 */
 	attachCellEvents(cell, item) {
 		cell.addEventListener("click", () => {
 			this.stateManager.emit("grid.cell.selected", item);
@@ -82,6 +112,11 @@ export class GridBootstrap {
 		});
 	}
 
+	/**
+	 * Computes the CSS gap value based on the configured density.
+	 * @private
+	 * @returns {string} The CSS gap value (e.g., '1rem').
+	 */
 	#computeGap() {
 		switch (this.options.density) {
 			case "compact":
@@ -93,6 +128,11 @@ export class GridBootstrap {
 		}
 	}
 
+	/**
+	 * Initializes listeners for responsive behavior, such as window resizing and UI preference changes.
+	 * @private
+	 * @returns {void}
+	 */
 	#initAdaptiveListeners() {
 		const resizeObserver = new ResizeObserver(() => {
 			this.#updateResponsiveLayout();
@@ -107,6 +147,11 @@ export class GridBootstrap {
 		});
 	}
 
+	/**
+	 * Updates the grid's density based on the current window width.
+	 * @private
+	 * @returns {void}
+	 */
 	#updateResponsiveLayout() {
 		const width = window.innerWidth;
 		if (width < 600) this.options.density = "compact";

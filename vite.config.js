@@ -1,11 +1,13 @@
 import { defineConfig } from "vite";
 
+// Vitest config is integrated here
 export default defineConfig({
+	publicDir: "public",
 	base: "./",
 	server: {
 		port: 3000,
 		open: true,
-		strictPort: true,
+		strictPort: false, // Allow Vite to find the next available port if 3000 is busy
 		watch: { usePolling: true },
 	},
 	build: {
@@ -35,4 +37,11 @@ export default defineConfig({
 		},
 	},
 	css: { devSourcemap: true },
+	// --- Vitest Configuration ---
+	test: {
+		globals: true, // Use Vitest's globals (describe, test, expect)
+		environment: "jsdom", // Simulate a browser environment for tests
+		include: ["tests/unit/**/*.test.js"], // Specify where to find unit tests
+		setupFiles: [], // Optional: for global test setup
+	},
 });

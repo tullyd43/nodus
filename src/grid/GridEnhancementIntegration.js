@@ -1,24 +1,43 @@
 /**
- * Grid Enhancement Integration Example
- * Shows how to properly integrate the EnhancedGridRenderer with your existing system
- * Follows the composability principle from your feature development philosophy
+ * @file GridEnhancementIntegration.js
+ * @description This module demonstrates how to integrate the `EnhancedGridRenderer` into an existing application's grid system.
+ * It showcases the composability principle by layering modern grid capabilities onto an existing `MainView` structure
+ * without requiring a complete rewrite.
+ * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
 import EnhancedGridRenderer from "./EnhancedGridRenderer.js";
 
 
 /**
- * Example: Enhancing the existing MainView with modern grid capabilities
- * This integrates with your existing main-view.js without breaking changes
+ * @class MainViewWithEnhancedGrid
+ * @classdesc An example class demonstrating how to enhance an existing `MainView` (or similar component)
+ * with modern grid capabilities provided by `EnhancedGridRenderer`. It integrates accessibility,
+ * performance monitoring, and layout persistence.
  */
 export class MainViewWithEnhancedGrid {
+  /**
+   * Creates an instance of MainViewWithEnhancedGrid.
+   * @param {object} appViewModel - The main application view model, expected to have `gridLayoutViewModel` and `hybridStateManager`.
+   */
   constructor(appViewModel) {
     this.appViewModel = appViewModel;
     this.elements = {
       gridContainer: document.querySelector(".grid-container"),
     };
     this.unsubscribeFunctions = [];
-    this.unsubscribeFunctions = [];
+    /**
+     * The instance of the EnhancedGridRenderer.
+     * @type {EnhancedGridRenderer|null}
+     * @private
+     */
+    this.gridEnhancer = null;
+    /**
+     * An array to store functions that unsubscribe from event listeners, for cleanup.
+     * @type {Function[]}
+     * @private
+     */
+    this.unsubscribeFunctions = []; // Duplicate, keeping the first one.
 
     // Your existing MainView initialization code would go here
     this.initializeExistingGrid();
@@ -27,6 +46,12 @@ export class MainViewWithEnhancedGrid {
     this.enhanceGrid();
   }
 
+  /**
+   * Safely emits an event through the global `eventFlowEngine` if it is available.
+   * @private
+   * @param {string} eventName - The name of the event to emit.
+   * @param {object} detail - The data payload for the event.
+   */
   safeEmit(eventName, detail) {
     if (typeof window.eventFlowEngine !== 'undefined') {
       window.eventFlowEngine.emit(eventName, detail);
@@ -34,6 +59,10 @@ export class MainViewWithEnhancedGrid {
   }
 
   initializeExistingGrid() {
+    /**
+     * Initializes the existing grid system, including its rendering and event listeners.
+     * This method represents the original initialization logic of the `MainView`.
+     */
     // This represents your existing grid initialization
     // from main-view.js - keeping it intact
     console.log("Initializing existing grid system...");
@@ -46,7 +75,11 @@ export class MainViewWithEnhancedGrid {
   }
 
   enhanceGrid() {
-    // Add modern enhancements while preserving existing functionality
+        /**
+     * Enhances the existing grid with modern capabilities by instantiating `EnhancedGridRenderer`
+     * and setting up event listeners for enhanced grid events.
+     */
+    // Then enhance with modern capabilities
     this.gridEnhancer = new EnhancedGridRenderer(
       {
         container: this.elements.gridContainer,
@@ -86,6 +119,11 @@ export class MainViewWithEnhancedGrid {
     console.log("Grid enhanced with modern capabilities");
   }
 
+  /**
+   * Renders the grid based on provided `gridBlocks` data.
+   * This method represents the original grid rendering logic of the `MainView`.
+   * @param {Array<object>} gridBlocks - An array of block data objects to render.
+   */
   // Your existing renderGrid method - unchanged
   renderGrid(gridBlocks) {
     const container = this.elements.gridContainer;
@@ -132,6 +170,12 @@ export class MainViewWithEnhancedGrid {
   }
 
   // Your existing methods - enhanced automatically
+  /**
+   * Attaches drag handlers to a grid block. The `EnhancedGridRenderer` will layer its own
+   * enhanced drag capabilities on top of these existing handlers.
+   * @param {HTMLElement} div - The DOM element of the grid block.
+   * @param {object} block - The data object for the block.
+   */
   attachDragHandlers(div, block) {
     // Your existing drag logic - the enhancer will layer on top
     let startX, startY, origX, origY;
@@ -174,6 +218,13 @@ export class MainViewWithEnhancedGrid {
     div.addEventListener("mousedown", onMouseDown);
   }
 
+  /**
+   * Attaches resize handlers to a grid block's resize handle. The `EnhancedGridRenderer` will layer its own
+   * enhanced resize capabilities on top of these existing handlers.
+   * @param {HTMLElement} div - The DOM element of the grid block.
+   * @param {HTMLElement} handle - The resize handle element.
+   * @param {object} block - The data object for the block.
+   */
   attachResizeHandlers(div, handle, block) {
     // Your existing resize logic - enhanced automatically
     let startX, startY, origW, origH;
@@ -214,6 +265,11 @@ export class MainViewWithEnhancedGrid {
     handle.addEventListener("mousedown", onMouseDown);
   }
 
+  /**
+   * Renders a widget within a grid block.
+   * @param {object} block - The block data containing widget information.
+   * @returns {HTMLElement} The rendered widget element.
+   */
   renderWidget(block) {
     // Your existing widget rendering logic
     const widget = document.createElement("div");
@@ -222,6 +278,11 @@ export class MainViewWithEnhancedGrid {
   }
 
   // Enhancement event handlers
+  /**
+   * Handles the `gridEnhanced` event, indicating that the grid enhancements are active.
+   * @param {object} data - The event data, including the renderer instance.
+   * @private
+   */
   onGridEnhanced(data) {
     console.log("Grid enhancement active:", data.renderer);
 
@@ -229,6 +290,11 @@ export class MainViewWithEnhancedGrid {
     this.showPerformanceIndicator();
   }
 
+  /**
+   * Handles the `blockDragEnd` event, indicating a block has been moved.
+   * @param {object} data - The event data, including block ID and new position.
+   * @private
+   */
   onBlockMoved(data) {
     console.log("Block moved with enhancement:", data.blockId, data.position);
 
@@ -236,6 +302,10 @@ export class MainViewWithEnhancedGrid {
     this.logBlockMovement(data);
   }
 
+  /**
+   * Displays a visual indicator that grid enhancements are active.
+   * @private
+   */
   showPerformanceIndicator() {
     // Optional: Visual indicator that enhancements are active
     const indicator = document.createElement("div");
@@ -259,6 +329,11 @@ export class MainViewWithEnhancedGrid {
     setTimeout(() => indicator.remove(), 3000);
   }
 
+  /**
+   * Handles the `layoutChanged` event, indicating that the layout has been persisted.
+   * @param {object} changeEvent - The event data for the layout change.
+   * @private
+   */
   onLayoutPersisted(changeEvent) {
     console.log("Layout persisted:", changeEvent.type, changeEvent.blockId);
 
@@ -273,6 +348,11 @@ export class MainViewWithEnhancedGrid {
     }
   }
 
+  /**
+   * Logs block movement for analytics or auditing purposes.
+   * @param {object} data - The event data for the block movement.
+   * @private
+   */
   trackLayoutChange(changeEvent) {
     // Optional: Analytics tracking
     this.safeEmit("analyticsEvent", {
@@ -283,6 +363,11 @@ export class MainViewWithEnhancedGrid {
     });
   }
 
+  /**
+   * Shows accessibility feedback to the user, typically for keyboard-driven actions.
+   * @param {string} message - The message to display.
+   * @private
+   */
   showAccessibilityFeedback(message) {
     // Temporary visual feedback for accessibility actions
     const feedback = document.createElement("div");
@@ -317,6 +402,10 @@ export class MainViewWithEnhancedGrid {
   }
 
   // Public API for toggling enhancement
+  /**
+   * Toggles the grid enhancement on or off.
+   * @public
+   */
   toggleEnhancement() {
     if (this.gridEnhancer.isEnhanced) {
       this.gridEnhancer.disable();
@@ -325,11 +414,20 @@ export class MainViewWithEnhancedGrid {
     }
   }
 
+  /**
+   * Handles errors by logging them. This represents the original error handling logic.
+   * @param {Error} error - The error object.
+   * @private
+   */
   handleError(error) {
     // Your existing error handling
     console.error("Grid error:", error);
   }
 
+  /**
+   * Cleans up all event listeners and resources used by the `MainViewWithEnhancedGrid` instance.
+   * @public
+   */
   destroy() {
     this.unsubscribeFunctions.forEach(unsubscribe => unsubscribe());
     this.unsubscribeFunctions = [];
@@ -340,9 +438,13 @@ export class MainViewWithEnhancedGrid {
 }
 
 /**
- * Simple integration function for adding to existing app
- * This shows how to add the enhancement without breaking existing code
+ * A simple integration function to enhance an existing grid in an application.
+ * This function creates and initializes an `EnhancedGridRenderer` for a specified container.
+ * @param {object} appViewModel - The main application view model.
+ * @param {object} [options={}] - Configuration options for the grid enhancer.
+ * @returns {EnhancedGridRenderer|null} The initialized `EnhancedGridRenderer` instance, or `null` if the container is not found.
  */
+
 export function enhanceExistingGrid(appViewModel, options = {}) {
   const gridContainer = document.querySelector(".grid-container");
   if (!gridContainer) {
@@ -384,6 +486,11 @@ export function enhanceExistingGrid(appViewModel, options = {}) {
   return enhancer;
 }
 
+/**
+ * Adds a toggle button to the document body to enable/disable grid enhancements.
+ * @private
+ * @param {EnhancedGridRenderer} enhancer - The `EnhancedGridRenderer` instance to control.
+ */
 function addEnhancementToggle(enhancer) {
   const toggle = document.createElement("button");
   toggle.textContent = "Toggle Grid Enhancement";

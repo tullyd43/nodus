@@ -1,19 +1,20 @@
 // src/core/storage/StorageLoader.js
 // ============================================================================
 /**
- * StorageLoader: dynamic, data-driven storage module orchestration.
- * - Demo-friendly (demoMode), production-hardened (MAC + crypto) when enabled
- * - Data-driven module stacks (add/override in AppConfig without code changes)
- * - Correct Sync orchestration (SyncStack + strategies like realtime/batch)
- * - Transparent crypto (optional) + polyinstantiation-awareness
- * - No private class fields (#foo) to keep ESLint / parsers happy
+ * @file StorageLoader.js
+ * @description Provides dynamic, data-driven storage module orchestration.
+ * This class is responsible for loading and assembling the correct stack of storage modules
+ * (e.g., security, cryptography, synchronization) based on the application's configuration
+ * and the user's security context. It acts as a factory for the `ModularOfflineStorage` class.
  *
- * Expected module URLs (via dynamic import) under baseURL:
- *   validation-stack.js, strict-validator.js, custom-validator.js
- *   basic-security.js, enterprise-security.js, nato-security.js, compartment-security.js
- *   demo-crypto.js, basic-crypto.js, aes-crypto.js, zero-knowledge-crypto.js, key-rotation.js
- *   indexeddb-adapter.js
- *   sync-stack.js, realtime-sync.js, batch-sync.js
+ * @property {Map<string, Function>} _loadedModules - A cache for loaded module constructors.
+ * @property {StorageLoaderConfig} _config - The configuration for the loader.
+ * @property {boolean} _ready - A flag indicating if the loader is initialized.
+ * @property {Map<string, Function[]>|null} _listeners - A map for event listeners.
+ * @property {import('../security/ClassificationCrypto.js').ClassificationCrypto|null} crypto - The crypto router instance.
+ * @property {import('../security/MACEngine.js').MACEngine|null} _mac - The Mandatory Access Control engine instance.
+ *
+ * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
 import { constantTimeCheck } from "../security/ct.js"; // timing-channel padding
@@ -44,12 +45,21 @@ try {
 
 /**
  * @typedef {object} StorageLoaderConfig
- * @property {string} [baseURL="/src/core/storage/modules/"] Absolute/served base URL for module scripts.
- * @property {string[]} [preloadModules=[]] Module ids to preload (e.g., ["demo-crypto"])
- * @property {boolean} [demoMode=false] If true, uses demo crypto + simple security stack.
- * @property {import('../security/MACEngine.js').MACEngine|null} [mac=null] MAC engine with { subject(): Label, label(obj,ctx): Label, enforceNoReadUp(), enforceNoWriteDown() }
- * @property {boolean} [cacheModules=true] Cache constructors between loads.
- * @property {object} [moduleStacks] Data-driven stacks by profile.
+ * @property {string} [baseURL="/src/core/storage/modules/"] - The base URL for dynamically loading module scripts.
+ * @property {string[]} [preloadModules=[]] - An array of module IDs to preload during initialization.
+ * @property {boolean} [demoMode=false] - If true, uses a simplified, non-secure stack for demonstration purposes.
+ * @property {import('../security/MACEngine.js').MACEngine|null} [mac=null] - An instance of the MAC engine for enforcing access control.
+ * @property {boolean} [cacheModules=true] - Whether to cache loaded module constructors for performance.
+ * @property {object} [moduleStacks] - A data-driven definition of module stacks for different security profiles.
+ */
+
+/**
+ * @typedef {object} StorageCreationOptions
+ * @property {boolean} [strictValidation] - If true, enables stricter validation rules.
+ * @property {object[]} [customValidators] - An array of custom validator definitions.
+ * @property {boolean} [enableSync] - If true, enables the data synchronization layer.
+ * @property {boolean} [realtimeSync] - If true, uses a real-time sync strategy instead of batching.
+ * @property {object} [indexeddbConfig] - Configuration options to pass to the IndexedDB adapter.
  */
 
 /**
@@ -65,14 +75,34 @@ try {
  * **Composability** and **Extensibility** pillars by using a data-driven approach to build module stacks.
  */
 export class StorageLoader {
+	/**
+	 * A cache for loaded module constructors.
+	 * @type {Map<string, Function>}
+	 * @private
+	 */
 	/** @type {Map<string, Function>} */
 	_loadedModules = new Map();
+	/**
+	 * The configuration for the loader.
+	 * @type {StorageLoaderConfig}
+	 * @private
+	 */
 	/** @type {StorageLoaderConfig} */
 	_config;
+	/**
+	 * A flag indicating if the loader is initialized.
+	 * @type {boolean}
+	 * @private
+	 */
 	/** @type {boolean} */
 	_ready = false;
 
 	/** Optional event emitter hooks */
+	/**
+	 * A map for event listeners.
+	 * @type {Map<string, Function[]>|null}
+	 * @private
+	 */
 	_listeners = null;
 
 	/**
@@ -135,6 +165,7 @@ export class StorageLoader {
 	// Event system (tiny)
 	/**
 	 * Registers a callback for a specific event.
+	 * @public
 	 * @param {string} event - The name of the event.
 	 * @param {Function} cb - The callback function to execute.
 	 */
@@ -143,12 +174,13 @@ export class StorageLoader {
 		if (!this._listeners.has(event)) this._listeners.set(event, []);
 		this._listeners.get(event).push(cb);
 	}
+	/**
+	 * Emits an event, triggering all registered listeners.
+	 * @public
+	 * @param {string} event - The name of the event to emit.
+	 * @param {*} data - The data to pass to the listeners.
+	 */
 	emit(event, data) {
-		/**
-		 * Emits an event, triggering all registered listeners.
-		 * @param {string} event - The name of the event to emit.
-		 * @param {*} data - The data to pass to the listeners.
-		 */
 		if (!this._listeners?.has(event)) return;
 		for (const cb of this._listeners.get(event)) {
 			try {
@@ -163,6 +195,7 @@ export class StorageLoader {
 	// Lifecycle
 	/**
 	 * Initializes the StorageLoader by preloading core modules.
+	 * @public
 	 * @returns {Promise<this>} The initialized StorageLoader instance.
 	 */
 	async init() {
@@ -183,6 +216,7 @@ export class StorageLoader {
 
 	/**
 	 * Creates and initializes a `ModularOfflineStorage` instance with a dynamically assembled stack of modules.
+	 * @public
 	 * @param {AuthContext} [authContext={}]
 	 * @param {StorageCreationOptions} [options={}]
 	 * @returns {Promise<ModularOfflineStorage>} A promise that resolves with an initialized `ModularOfflineStorage` instance.
@@ -511,7 +545,8 @@ export class StorageLoader {
 
 	// Getters
 	/**
-	 * Gets the ready state of the StorageLoader.
+	 * Gets the ready state of the `StorageLoader`.
+	 * @public
 	 * @returns {boolean}
 	 */
 	get isReady() {
@@ -519,6 +554,7 @@ export class StorageLoader {
 	}
 	/**
 	 * Gets a list of all loaded module names.
+	 * @public
 	 * @returns {string[]}
 	 */
 	get loadedModules() {
@@ -537,6 +573,13 @@ export class StorageLoader {
  */
 class ModularOfflineStorage {
 	/**
+	 * @private
+	 * @type {object}
+	 */
+	_modules = {};
+	/** @private @type {boolean} */
+	_ready = false;
+	/**
 	 * Creates an instance of ModularOfflineStorage.
 	 * @param {object} moduleClasses - An object containing the loaded module classes or instances.
 	 * @param {object} config - Configuration options for the storage.
@@ -546,9 +589,6 @@ class ModularOfflineStorage {
 	 * @param {object} [config.indexeddb] - Configuration for the IndexedDB adapter.
 	 */
 	constructor(moduleClasses, config) {
-		this._modules = {};
-		this._ready = false;
-
 		this._mac = config.mac || null;
 		this._crypto = config.crypto || null;
 		this._demo = !!config.demoMode;
@@ -572,17 +612,22 @@ class ModularOfflineStorage {
 		}
 	}
 
+	/**
+	 * Registers a callback for a specific event.
+	 * @param {string} event - The name of the event.
+	 * @param {Function} cb - The callback function to execute.
+	 */
 	on(event, cb) {
 		if (!this._listeners) this._listeners = new Map();
 		if (!this._listeners.has(event)) this._listeners.set(event, []);
 		this._listeners.get(event).push(cb);
 	}
+	/**
+	 * Emits an event, triggering all registered listeners.
+	 * @param {string} event - The name of the event to emit.
+	 * @param {*} data - The data to pass to the listeners.
+	 */
 	emit(event, data) {
-		/**
-		 * Emits an event, triggering all registered listeners.
-		 * @param {string} event - The name of the event to emit.
-		 * @param {*} data - The data to pass to the listeners.
-		 */
 		if (!this._listeners?.has(event)) return;
 		for (const cb of this._listeners.get(event)) {
 			try {
@@ -595,6 +640,7 @@ class ModularOfflineStorage {
 
 	/**
 	 * Initializes all loaded modules in a deterministic order.
+	 * @public
 	 * @returns {Promise<this>} The initialized storage instance.
 	 */
 	async init() {
@@ -614,6 +660,7 @@ class ModularOfflineStorage {
 
 	/**
 	 * Binds a state manager to this instance and all sub-modules that support it.
+	 * @public
 	 * @param {object} hsm - The Hybrid State Manager instance.
 	 */
 	bindStateManager(hsm) {
@@ -687,20 +734,51 @@ class ModularOfflineStorage {
 	_mergePolyRows(rows) {
 		if (!Array.isArray(rows) || rows.length === 0) return null;
 
-		// Prefer highest classification row as “base”
+		// 1. Sort rows from highest classification to lowest. This is crucial.
 		const sorted = [...rows].sort(
 			(a, b) =>
 				this._rank(b.classification_level) -
 				this._rank(a.classification_level)
 		);
+
+		// 2. The highest classification row serves as the base for top-level properties.
 		const base = { ...sorted[0] };
-		// Merge instance_data shallowly from higher -> lower (higher wins)
-		for (let i = 1; i < sorted.length; i++) {
-			const d = sorted[i]?.instance_data || {};
-			for (const k of Object.keys(d)) {
-				if (!(k in base.instance_data)) base.instance_data[k] = d[k];
-			}
+		if (!base.instance_data) {
+			base.instance_data = {};
 		}
+
+		// 3. Perform a deep merge of `instance_data` from all readable rows.
+		// The `reduce` starts with the `instance_data` of the highest-classification row
+		// and progressively merges data from lower-classification rows.
+		// The `(acc, ...)` logic ensures that for any given key, the value from the
+		// highest-classification source is preserved.
+		const mergedInstanceData = sorted.reduce(
+			(acc, currentRow) => {
+				const currentData = currentRow.instance_data || {};
+
+				// Deep merge `currentData` into `acc` without overwriting existing keys in `acc`.
+				const deepMerge = (target, source) => {
+					for (const key in source) {
+						if (
+							typeof source[key] === "object" &&
+							source[key] !== null &&
+							!Array.isArray(source[key])
+						) {
+							if (!target[key]) target[key] = {};
+							deepMerge(target[key], source[key]);
+						} else if (!(key in target)) {
+							target[key] = source[key];
+						}
+					}
+				};
+
+				deepMerge(acc, currentData);
+				return acc;
+			},
+			{ ...base.instance_data }
+		);
+
+		base.instance_data = mergedInstanceData;
 		base.merged_at = new Date().toISOString();
 
 		// Info flow (optional)
@@ -721,6 +799,7 @@ class ModularOfflineStorage {
 	/**
 	 * Stores an item, applying MAC enforcement and transparent encryption.
 	 * Handles polyinstantiation for the 'objects_polyinstantiated' store.
+	 * @public
 	 * @param {string} storeName - The name of the IndexedDB object store.
 	 * @param {object} item - The item to store.
 	 * @returns {Promise<IDBValidKey>} The key of the stored item.
@@ -763,7 +842,9 @@ class ModularOfflineStorage {
 				const pt = new TextEncoder().encode(
 					JSON.stringify(record.instance_data)
 				);
-				const env = await this._crypto.encrypt(label, pt);
+				// AAD binds the ciphertext to its classification metadata.
+				const aad = new TextEncoder().encode(JSON.stringify(label));
+				const env = await this._crypto.encrypt(label, pt, aad);
 				record = {
 					...record,
 					encrypted: true,
@@ -776,11 +857,9 @@ class ModularOfflineStorage {
 				delete record.instance_data;
 			} else {
 				const pt = new TextEncoder().encode(JSON.stringify(record));
-				const env = await this._crypto.encrypt(label, pt);
-				// Keep the original record's metadata, but replace its content with the envelope.
-				const id = record.id;
-				record = { ...item }; // Start fresh from the original item to preserve all fields.
-				record.id = id; // Ensure ID is preserved.
+				// AAD binds the ciphertext to its classification metadata.
+				const aad = new TextEncoder().encode(JSON.stringify(label));
+				const env = await this._crypto.encrypt(label, pt, aad);
 				record.envelope = env;
 				record.encrypted = true;
 			}
@@ -799,6 +878,7 @@ class ModularOfflineStorage {
 	/**
 	 * Retrieves an item, applying MAC enforcement and transparent decryption.
 	 * Handles polyinstantiation by merging all readable instances.
+	 * @public
 	 * @param {string} storeName - The name of the IndexedDB object store.
 	 * @param {IDBValidKey} id - The ID of the item to retrieve.
 	 * @returns {Promise<object|null>} The decrypted and merged item, or null.
@@ -840,6 +920,7 @@ class ModularOfflineStorage {
 
 	/**
 	 * Deletes an item after enforcing MAC rules.
+	 * @public
 	 * @param {string} storeName - The name of the object store.
 	 * @param {IDBValidKey} id - The ID of the item to delete.
 	 * @returns {Promise<void>}
@@ -848,26 +929,77 @@ class ModularOfflineStorage {
 		const idx = this._modules.indexeddb;
 		if (!idx?.delete) throw new Error("IndexedDB adapter not loaded");
 
-		// Only delete if subject can read (prevents info leak)
-		const item = await this.get(storeName, id);
-		if (!item) return;
+		return constantTimeCheck(async () => {
+			// Polyinstantiated delete: find all readable instances and delete them.
+			if (storeName === "objects_polyinstantiated") {
+				const logicalId = id; // For polyinstantiated, 'id' parameter refers to logical_id
+				const rows = await idx.queryByIndex(
+					storeName,
+					"logical_id",
+					logicalId
+				);
+				const readableRows = this._filterReadable(
+					rows || [],
+					storeName
+				);
 
-		// Treat delete like write wrt MAC (container policy)
-		if (this._mac) {
-			this._mac.enforceNoWriteDown(
-				this._subject(),
-				this._label(item, { storeName }),
-				{ storeName }
-			);
-		}
+				if (readableRows.length === 0) return; // Nothing to delete.
 
-		const res = await idx.delete(storeName, id);
-		this.stateManager?.emit?.("entityDeleted", { store: storeName, id });
-		return res;
+				// MAC check: Treat delete like a write. User must dominate all readable instances.
+				if (this._mac) {
+					const subject = this._subject();
+					for (const row of readableRows) {
+						this._mac.enforceNoWriteDown(
+							subject,
+							this._label(row, { storeName }),
+							{
+								storeName,
+								operation: "delete",
+							}
+						);
+					}
+				}
+
+				// Delete each readable row by its actual primary key.
+				const deletePromises = readableRows.map((row) =>
+					idx.delete(storeName, row.id)
+				);
+				await Promise.all(deletePromises);
+
+				this.stateManager?.emit?.("entityDeleted", {
+					store: storeName,
+					id: logicalId,
+				});
+				return;
+			}
+
+			// Standard delete: check permissions on the single item and delete.
+			const item = await this.get(storeName, id); // get already uses constantTimeCheck
+			if (!item) return; // Item doesn't exist or is not readable.
+
+			// MAC check: Treat delete like a write.
+			if (this._mac) {
+				this._mac.enforceNoWriteDown(
+					this._subject(),
+					this._label(item, { storeName }),
+					{
+						storeName,
+						operation: "delete",
+					}
+				);
+			}
+
+			await idx.delete(storeName, id);
+			this.stateManager?.emit?.("entityDeleted", {
+				store: storeName,
+				id: id,
+			});
+		}, 100);
 	}
 
 	/**
 	 * Queries an IndexedDB store by index, filtering results based on MAC rules.
+	 * @public
 	 * @param {string} storeName - The name of the object store.
 	 * @param {string} index - The name of the index to query.
 	 * @param {IDBValidKey|IDBKeyRange} value - The value or range to query for.
@@ -876,20 +1008,83 @@ class ModularOfflineStorage {
 	async query(storeName, index, value) {
 		const idx = this._modules.indexeddb;
 		if (!idx?.queryByIndex) throw new Error("IndexedDB adapter not loaded");
-		const out = await idx.queryByIndex(storeName, index, value);
-		return this._filterReadable(out || [], storeName);
+
+		return constantTimeCheck(async () => {
+			const out = await idx.queryByIndex(storeName, index, value);
+			const readable = this._filterReadable(out || [], storeName);
+			const decrypted = await Promise.all(
+				readable.map((r) => {
+					if (storeName === "objects_polyinstantiated") {
+						return this._maybeDecryptPoly(r);
+					}
+					return this._maybeDecryptNormal(r);
+				})
+			);
+			return decrypted;
+		}, 100);
 	}
 
 	/**
 	 * Retrieves all items from a store, filtering results based on MAC rules.
+	 * @public
 	 * @param {string} storeName - The name of the object store.
 	 * @returns {Promise<object[]>} An array of all readable items.
 	 */
 	async getAll(storeName) {
 		const idx = this._modules.indexeddb;
 		if (!idx?.getAll) throw new Error("IndexedDB adapter not loaded");
-		const out = await idx.getAll(storeName);
-		return this._filterReadable(out || [], storeName);
+
+		return constantTimeCheck(async () => {
+			const out = await idx.getAll(storeName);
+			const readable = this._filterReadable(out || [], storeName);
+			const decrypted = await Promise.all(
+				readable.map((r) => {
+					if (storeName === "objects_polyinstantiated") {
+						return this._maybeDecryptPoly(r);
+					}
+					return this._maybeDecryptNormal(r);
+				})
+			);
+			return decrypted;
+		}, 100);
+	}
+
+	/**
+	 * Retrieves all readable historical versions of a polyinstantiated entity.
+	 * @public
+	 * @param {string} storeName - The name of the object store (must be 'objects_polyinstantiated').
+	 * @param {string} logicalId - The logical ID of the entity.
+	 * @returns {Promise<object[]>} An array of historical versions, sorted by update time.
+	 */
+	async getHistory(storeName, logicalId) {
+		if (storeName !== "objects_polyinstantiated") {
+			return []; // History is only supported for polyinstantiated entities.
+		}
+
+		const idx = this._modules.indexeddb;
+		if (!idx?.queryByIndex) throw new Error("IndexedDB adapter not loaded");
+
+		return constantTimeCheck(async () => {
+			// 1. Fetch all physical rows for the logical ID.
+			const allRows = await idx.queryByIndex(
+				storeName,
+				"logical_id",
+				logicalId
+			);
+
+			// 2. Filter out rows the user cannot read based on MAC policy.
+			const readableRows = this._filterReadable(allRows || [], storeName);
+
+			// 3. Decrypt the instance_data for each readable row.
+			const decryptedVersions = await Promise.all(
+				readableRows.map((row) => this._maybeDecryptPoly(row))
+			);
+
+			// 4. Sort by update timestamp, newest first.
+			return decryptedVersions.sort(
+				(a, b) => new Date(b.updated_at) - new Date(a.updated_at)
+			);
+		}, 100);
 	}
 
 	// -------------------------------------------------------------------------
@@ -904,13 +1099,19 @@ class ModularOfflineStorage {
 		const label = this._label(row, {
 			storeName: "objects_polyinstantiated",
 		});
-		const pt = await this._crypto.decrypt(label, {
-			ciphertext: row.ciphertext,
-			iv: row.iv,
-			alg: row.alg,
-			kid: row.kid,
-			tag: row.tag,
-		});
+		// AAD must match the label used during encryption to pass verification.
+		const aad = new TextEncoder().encode(JSON.stringify(label));
+		const pt = await this._crypto.decrypt(
+			label,
+			{
+				ciphertext: row.ciphertext,
+				iv: row.iv,
+				alg: row.alg,
+				kid: row.kid,
+				tag: row.tag,
+			},
+			aad
+		);
 		const instance_data = JSON.parse(new TextDecoder().decode(pt));
 		const clean = { ...row };
 		delete clean.ciphertext;
@@ -931,7 +1132,9 @@ class ModularOfflineStorage {
 	async _maybeDecryptNormal(row) {
 		if (this._demo || !this._crypto || !row?.encrypted) return row;
 		const label = this._label(row);
-		const pt = await this._crypto.decrypt(label, row.envelope);
+		// AAD must match the label used during encryption to pass verification.
+		const aad = new TextEncoder().encode(JSON.stringify(label));
+		const pt = await this._crypto.decrypt(label, row.envelope, aad);
 		const obj = JSON.parse(new TextDecoder().decode(pt));
 		return obj;
 	}
@@ -963,6 +1166,7 @@ class ModularOfflineStorage {
 
 	/**
 	 * Gets the names of all loaded modules.
+	 * @public
 	 * @returns {string[]}
 	 */
 	get modules() {

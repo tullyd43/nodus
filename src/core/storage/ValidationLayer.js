@@ -1,32 +1,72 @@
+/* eslint-disable no-unused-private-class-members */
 // core/validation/ValidationLayer.js
 // Universal schema validation with composable rules
 
 /**
- * Validation Layer - Separate from Sync Layer
- *
- * PURPOSE:
- * - Schema validation ensures data integrity
- * - Type checking prevents corruption
- * - Business rule enforcement
- * - Security validation (separate from access control)
- *
- * NOT A SYNC LAYER:
- * - Validation happens before storage/transmission
- * - Sync layer handles conflict resolution and merging
- * - This is about data correctness, sync is about consistency
+ * @file ValidationLayer.js
+ * @description Provides a universal schema validation layer with composable rules.
+ * This layer is responsible for ensuring data integrity, type checking, business rule enforcement,
+ * and security validation before data is persisted or transmitted. It is distinct from the sync layer,
+ * which handles data consistency across systems.
+ */
+
+/**
+ * @class ValidationLayer
+ * @classdesc Orchestrates a stack of validation modules to perform comprehensive data validation.
+ * It supports base schema checks, type-specific rules, security constraints, and custom business logic.
  */
 export class ValidationLayer {
+	/**
+	 * @private
+	 * @type {Map<string, Function>}
+	 */
 	#validators = new Map();
+	/**
+	 * @private
+	 * @type {Map<string, Function>}
+	 */
 	#customRules = new Map();
+	/**
+	 * @private
+	 * @type {object}
+	 */
 	#metrics;
+	/**
+	 * @private
+	 * @type {object}
+	 */
 	#config;
+	/**
+	 * @private
+	 * @type {boolean}
+	 */
 	#ready = false;
 
+	/**
+	 * A reference to the application's HybridStateManager for event emission.
+	 * @type {import('../HybridStateManager.js').HybridStateManager|null}
+	 */
+	/** @type {import('../HybridStateManager.js').HybridStateManager|null} */
 	stateManager = null;
+	/**
+	 * Binds the HybridStateManager to this instance.
+	 * @param {import('../HybridStateManager.js').HybridStateManager} manager - The state manager instance.
+	 * @public
+	 * @returns {void}
+	 */
 	bindStateManager(manager) {
 		this.stateManager = manager;
 	}
 
+	/**
+	 * Creates an instance of ValidationLayer.
+	 * @param {object} [options={}] - Configuration options for the validation layer.
+	 * @param {boolean} [options.strictMode=true] - If true, validation failures in custom rules will be treated as errors.
+	 * @param {string} [options.performanceMode='balanced'] - Performance tuning for validation ('balanced' or 'thorough').
+	 * @param {object} [options.customValidators={}] - A map of custom field validators to register on initialization.
+	 * @param {number} [options.maxErrors=10] - The maximum number of validation errors to return.
+	 * @param {number} [options.asyncTimeout=5000] - Timeout in milliseconds for asynchronous validation rules.
+	 */
 	constructor(options = {}) {
 		this.#config = {
 			strictMode: options.strictMode !== false,
@@ -50,7 +90,9 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Initialize validation system
+	 * Initializes the validation layer and any asynchronous validators.
+	 * @public
+	 * @returns {Promise<this>} The initialized ValidationLayer instance.
 	 */
 	async init() {
 		if (this.#ready) return this;
@@ -64,7 +106,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate entity against universal schema + custom rules
+	 * Validates a full entity against the base schema, type-specific rules, security constraints, and custom business rules.
+	 * @public
+	 * @param {object} entity - The entity object to validate.
+	 * @returns {Promise<{valid: boolean, errors: string[], warnings: string[], metadata: object}>} A promise that resolves with a comprehensive validation result.
 	 */
 	async validateEntity(entity) {
 		if (!this.#ready) throw new Error("ValidationLayer not initialized");
@@ -140,7 +185,12 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate field value against field definition
+	 * Validates a single field's value against its definition, including type, format, and range checks.
+	 * @public
+	 * @param {string} fieldName - The name of the field to validate.
+	 * @param {*} value - The value of the field.
+	 * @param {object} fieldDefinition - The definition object for the field, containing type, format, and other constraints.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result for the field.
 	 */
 	validateField(fieldName, value, fieldDefinition) {
 		const errors = [];
@@ -215,7 +265,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Add custom validation rule
+	 * Registers a new custom validation rule function.
+	 * @public
+	 * @param {string} name - A unique name for the rule.
+	 * @param {Function} rule - The validation function, which should accept an entity and return `{valid: boolean, errors: string[]}`.
 	 */
 	addValidationRule(name, rule) {
 		if (typeof rule !== "function") {
@@ -227,7 +280,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Add field validator
+	 * Registers a new custom field validator function.
+	 * @public
+	 * @param {string} name - A unique name for the validator.
+	 * @param {Function} validator - The validator function, which accepts a value and field definition.
 	 */
 	addFieldValidator(name, validator) {
 		if (typeof validator !== "function") {
@@ -239,7 +295,9 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Get validation statistics
+	 * Retrieves performance and usage statistics for the validation layer.
+	 * @public
+	 * @returns {object} An object containing various metrics.
 	 */
 	getStats() {
 		return {
@@ -251,14 +309,17 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Get average validation latency
+	 * Gets the average validation latency in milliseconds.
+	 * @public
+	 * @returns {number} The average latency.
 	 */
 	getAverageLatency() {
 		return this.#metrics.averageLatency;
 	}
 
 	/**
-	 * Cleanup resources
+	 * Cleans up resources by clearing all registered validators and rules.
+	 * @public
 	 */
 	cleanup() {
 		this.#validators.clear();
@@ -269,7 +330,10 @@ export class ValidationLayer {
 	// ===== PRIVATE VALIDATION METHODS =====
 
 	/**
-	 * Validate base entity schema (universal)
+	 * Validates an entity against the universal base schema, checking for required fields like `id` and `entity_type`.
+	 * @private
+	 * @param {object} entity - The entity to validate.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result.
 	 */
 	#validateBaseSchema(entity) {
 		const errors = [];
@@ -317,7 +381,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate entity type-specific fields
+	 * Routes an entity to its type-specific validation method (e.g., `_validateTaskEntity`).
+	 * @private
+	 * @param {object} entity - The entity to validate.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result.
 	 */
 	#validateEntityType(entity) {
 		switch (entity.entity_type) {
@@ -336,7 +403,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate security-related fields
+	 * Validates security-related fields, such as classification and compartment markings.
+	 * @private
+	 * @param {object} entity - The entity to validate.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result.
 	 */
 	#validateSecurity(entity) {
 		const errors = [];
@@ -387,7 +457,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate task entity
+	 * Validates fields specific to a 'task' entity.
+	 * @private
+	 * @param {object} entity - The task entity.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result.
 	 */
 	#validateTaskEntity(entity) {
 		const errors = [];
@@ -428,7 +501,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate document entity
+	 * Validates fields specific to a 'document' entity.
+	 * @private
+	 * @param {object} entity - The document entity.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result.
 	 */
 	#validateDocumentEntity(entity) {
 		const errors = [];
@@ -465,7 +541,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate event entity
+	 * Validates fields specific to an 'event' entity.
+	 * @private
+	 * @param {object} entity - The event entity.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result.
 	 */
 	#validateEventEntity(entity) {
 		const errors = [];
@@ -494,7 +573,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate user entity
+	 * Validates fields specific to a 'user' entity.
+	 * @private
+	 * @param {object} entity - The user entity.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result.
 	 */
 	#validateUserEntity(entity) {
 		const errors = [];
@@ -516,7 +598,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate custom business rules
+	 * Executes all registered custom business rules against an entity.
+	 * @private
+	 * @param {object} entity - The entity to validate.
+	 * @returns {Promise<{valid: boolean, errors: string[]}>} The aggregated result of all custom rules.
 	 */
 	async #validateCustomRules(entity) {
 		const errors = [];
@@ -558,7 +643,10 @@ export class ValidationLayer {
 	}
 
 	/**
-	 * Validate cross-field relationships
+	 * Validates relationships and dependencies between different fields within an entity.
+	 * @private
+	 * @param {object} entity - The entity to validate.
+	 * @returns {{valid: boolean, errors: string[]}} The validation result.
 	 */
 	#validateCrossFields(entity) {
 		const errors = [];
@@ -603,6 +691,13 @@ export class ValidationLayer {
 
 	// ===== PRIVATE HELPER METHODS =====
 
+	/**
+	 * Validates a field's value against an expected JavaScript type.
+	 * @private
+	 * @param {string} fieldName - The name of the field.
+	 * @param {*} value - The value to check.
+	 * @param {string} expectedType - The expected type (e.g., 'string', 'number', 'array').
+	 */
 	#validateFieldType(fieldName, value, expectedType) {
 		const errors = [];
 		const actualType = typeof value;
@@ -618,6 +713,13 @@ export class ValidationLayer {
 		return { valid: errors.length === 0, errors };
 	}
 
+	/**
+	 * Validates a field's value against a predefined format (e.g., 'email', 'uuid').
+	 * @private
+	 * @param {string} fieldName - The name of the field.
+	 * @param {string} value - The value to check.
+	 * @param {string} format - The expected format.
+	 */
 	#validateFieldFormat(fieldName, value, format) {
 		const errors = [];
 
@@ -651,6 +753,13 @@ export class ValidationLayer {
 		return { valid: errors.length === 0, errors };
 	}
 
+	/**
+	 * Validates if a field's value (or length) is within a specified min/max range.
+	 * @private
+	 * @param {string} fieldName - The name of the field.
+	 * @param {*} value - The value to check.
+	 * @param {object} fieldDefinition - The field definition containing `min` and/or `max` properties.
+	 */
 	#validateFieldRange(fieldName, value, fieldDefinition) {
 		const errors = [];
 
@@ -710,17 +819,32 @@ export class ValidationLayer {
 		return { valid: errors.length === 0, errors };
 	}
 
+	/**
+	 * Checks if a string is a valid UUID.
+	 * @private
+	 * @param {string} value - The string to check.
+	 */
 	#isValidUUID(value) {
 		const uuidRegex =
 			/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 		return uuidRegex.test(value);
 	}
 
+	/**
+	 * Checks if a string is a valid email address.
+	 * @private
+	 * @param {string} value - The string to check.
+	 */
 	#isValidEmail(value) {
 		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 		return emailRegex.test(value);
 	}
 
+	/**
+	 * Checks if a string is a valid URL.
+	 * @private
+	 * @param {string} value - The string to check.
+	 */
 	#isValidURL(value) {
 		try {
 			new URL(value);
@@ -730,11 +854,21 @@ export class ValidationLayer {
 		}
 	}
 
+	/**
+	 * Checks if a string is a valid ISO 8601 timestamp.
+	 * @private
+	 * @param {string} value - The string to check.
+	 */
 	#isValidTimestamp(value) {
 		const date = new Date(value);
 		return !isNaN(date.getTime()) && date.toISOString() === value;
 	}
 
+	/**
+	 * Initializes a set of base validators for common formats like email, UUID, and URL.
+	 * @private
+	 * @returns {void}
+	 */
 	#initializeBaseValidators() {
 		// Add basic field validators
 		this.#validators.set("email", (value) => ({
@@ -753,17 +887,36 @@ export class ValidationLayer {
 		}));
 	}
 
+	/**
+	 * Loads custom field validators provided in the constructor options.
+	 * @private
+	 * @param {object} customValidators - A map of validator names to functions.
+	 * @returns {void}
+	 */
 	#loadCustomValidators(customValidators) {
 		for (const [name, validator] of Object.entries(customValidators)) {
 			this.addFieldValidator(name, validator);
 		}
 	}
 
+	/**
+	 * A stub for initializing asynchronous validators in the future.
+	 * @private
+	 * @returns {Promise<void>}
+	 */
 	async #initializeAsyncValidators() {
 		// Initialize any async validators here
 		// For now, all validators are synchronous
 	}
 
+	/**
+	 * Records metrics after a validation operation.
+	 * @private
+	 * @param {boolean} success - Whether the validation passed.
+	 * @param {number} latency - The duration of the validation in milliseconds.
+	 * @param {string[]} errors - Any validation errors that occurred.
+	 * @returns {void}
+	 */
 	#recordValidation(success, latency, errors) {
 		this.#metrics.validationCount++;
 		if (!success) {
@@ -788,6 +941,11 @@ export class ValidationLayer {
 			this.#metrics.validationCount;
 	}
 
+	/**
+	 * Gets the names of all custom rules that were executed.
+	 * @private
+	 * @returns {string[]} An array of executed rule names.
+	 */
 	#getExecutedRules() {
 		return Array.from(this.#metrics.ruleExecutions.keys());
 	}

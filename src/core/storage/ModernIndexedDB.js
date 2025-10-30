@@ -1,252 +1,254 @@
-// core/storage/ModernIndexedDB.js
-// Simplified, modern, performance-focused IndexedDB wrapper
+// src/core/storage/ModernIndexedDB.js
 
 /**
- * A WeakMap to hold private instance data, ensuring true privacy for database properties.
- * @private
- * @type {WeakMap<ModernIndexedDB, object>}
+ * @typedef {object} Migration
+ * @property {number} version - The database version this migration applies to.
+ * @property {function(IDBDatabase, IDBTransaction): void} migrate - The migration function.
  */
-const PRIVATE = new WeakMap();
 
 /**
- * @description A simplified, modern, and performance-focused wrapper for the IndexedDB API.
- * It provides a minimal, promise-based interface for common database operations,
- * tailored for the application's specific storage needs.
+ * A modern, promise-based wrapper for IndexedDB with support for schema migrations.
  */
 export class ModernIndexedDB {
+	/** @private @type {string} */
+	#dbName;
+	/** @private @type {string} */
+	#storeName;
+	/** @private @type {number} */
+	#version;
+	/** @private @type {IDBDatabase|null} */
+	#db = null;
+	/** @private @type {boolean} */
+	#isReady = false;
+	/** @private @type {Migration[]} */
+	#migrations;
+
 	/**
-	 * Creates an instance of the ModernIndexedDB wrapper.
+	 * Creates an instance of ModernIndexedDB.
 	 * @param {string} dbName - The name of the database.
-	 * @param {string} storeName - The name of the primary object store this instance will manage.
-	 * @param {number} [version=1] - The version of the database schema.
+	 * @param {string} storeName - The name of the primary object store.
+	 * @param {number} version - The current version of the database schema.
+	 * @param {Migration[]} [migrations=[]] - An array of migration scripts.
 	 */
-	constructor(dbName, storeName, version = 1) {
-		// Use WeakMap for truly private data
-		PRIVATE.set(this, {
-			dbName,
-			storeName,
-			version,
-			db: null,
-			ready: false,
-		});
+	constructor(dbName, storeName, version, migrations = []) {
+		this.#dbName = dbName;
+		this.#storeName = storeName;
+		this.#version = version;
+		this.#migrations = migrations.sort((a, b) => a.version - b.version);
 	}
 
 	/**
-	 * Initializes the database connection.
-	 * This must be called before any other database operations are performed.
-	 * @returns {Promise<this>} A promise that resolves with the initialized instance.
+	 * Initializes the database connection and runs necessary migrations.
+	 * @returns {Promise<void>}
 	 */
 	async init() {
-		const priv = PRIVATE.get(this);
-		if (priv.ready) return this;
+		if (this.#isReady) return;
 
-		priv.db = await new Promise((resolve, reject) => {
-			const req = indexedDB.open(priv.dbName, priv.version);
-			req.onerror = () => reject(req.error);
-			req.onsuccess = () => resolve(req.result);
-			req.onupgradeneeded = this.#handleUpgrade.bind(this);
+		return new Promise((resolve, reject) => {
+			const request = indexedDB.open(this.#dbName, this.#version);
+
+			request.onerror = (event) => {
+				console.error(
+					`[ModernIndexedDB] Database error: ${event.target.error}`
+				);
+				reject(event.target.error);
+			};
+
+			request.onsuccess = (event) => {
+				this.#db = event.target.result;
+				this.#isReady = true;
+				console.log(
+					`[ModernIndexedDB] Database '${this.#dbName}' opened successfully.`
+				);
+				resolve();
+			};
+
+			request.onupgradeneeded = (event) => {
+				console.log(
+					`[ModernIndexedDB] Upgrading database from version ${event.oldVersion} to ${event.newVersion}.`
+				);
+				const db = event.target.result;
+				const transaction = event.target.transaction;
+
+				// Run all migrations between the old and new version.
+				this.#migrations.forEach(({ version, migrate }) => {
+					if (
+						version > event.oldVersion &&
+						version <= event.newVersion
+					) {
+						try {
+							console.log(
+								`[ModernIndexedDB] Applying migration for version ${version}.`
+							);
+							migrate(db, transaction);
+						} catch (error) {
+							console.error(
+								`[ModernIndexedDB] Migration for version ${version} failed:`,
+								error
+							);
+							transaction.abort();
+							reject(error);
+						}
+					}
+				});
+
+				// Ensure the primary object store exists if it's the first version.
+				if (event.oldVersion < 1) {
+					if (!db.objectStoreNames.contains(this.#storeName)) {
+						db.createObjectStore(this.#storeName, {
+							keyPath: "id",
+						});
+						console.log(
+							`[ModernIndexedDB] Created object store '${this.#storeName}'.`
+						);
+					}
+				}
+			};
 		});
-
-		priv.ready = true;
-		return this;
 	}
 
 	/**
-	 * Handles the `upgradeneeded` event to create or update the database schema.
-	 * This method is bound to the class instance and should not be called directly.
-	 * @private
-	 * @param {IDBVersionChangeEvent} event - The event object from the `onupgradeneeded` handler.
+	 * Gets a value by its key.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {IDBValidKey} key - The key of the item to retrieve.
+	 * @returns {Promise<any>} The retrieved item, or undefined.
 	 */
-	#handleUpgrade(event) {
-		const priv = PRIVATE.get(this);
-		const db = event.target.result;
+	async get(storeName, key) {
+		if (!this.#isReady) throw new Error("Database not initialized.");
+		return new Promise((resolve, reject) => {
+			const transaction = this.#db.transaction(storeName, "readonly");
+			const store = transaction.objectStore(storeName);
+			const request = store.get(key);
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = (event) => reject(event.target.error);
+		});
+	}
 
-		if (!db.objectStoreNames.contains(priv.storeName)) {
-			const store = db.createObjectStore(priv.storeName, {
-				keyPath: "id",
-			});
+	/**
+	 * Gets all values from a store.
+	 * @param {string} storeName - The name of the object store.
+	 * @returns {Promise<any[]>} An array of all items in the store.
+	 */
+	async getAll(storeName) {
+		if (!this.#isReady) throw new Error("Database not initialized.");
+		return new Promise((resolve, reject) => {
+			const transaction = this.#db.transaction(storeName, "readonly");
+			const store = transaction.objectStore(storeName);
+			const request = store.getAll();
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = (event) => reject(event.target.error);
+		});
+	}
 
-			// Only essential indexes for Nodus
-			store.createIndex("classification", "meta.classification");
-			store.createIndex("compartments", "meta.compartments", {
-				multiEntry: true,
+	/**
+	 * Adds or updates a value in the store.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {any} value - The value to store.
+	 * @returns {Promise<IDBValidKey>} The key of the stored item.
+	 */
+	async put(storeName, value) {
+		if (!this.#isReady) throw new Error("Database not initialized.");
+		return new Promise((resolve, reject) => {
+			const transaction = this.#db.transaction(storeName, "readwrite");
+			const store = transaction.objectStore(storeName);
+			const request = store.put(value);
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = (event) => reject(event.target.error);
+		});
+	}
+
+	/**
+	 * Adds or updates multiple values in a single transaction.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {any[]} values - An array of values to store.
+	 * @returns {Promise<void>}
+	 */
+	async putBulk(storeName, values) {
+		if (!this.#isReady) throw new Error("Database not initialized.");
+		return new Promise((resolve, reject) => {
+			const transaction = this.#db.transaction(storeName, "readwrite");
+			const store = transaction.objectStore(storeName);
+			transaction.oncomplete = () => resolve();
+			transaction.onerror = (event) => reject(event.target.error);
+
+			values.forEach((value) => {
+				store.put(value);
 			});
-			store.createIndex("syncState", "meta.syncState");
-			store.createIndex("entity_type", "entity_type");
+		});
+	}
+
+	/**
+	 * Deletes a value by its key.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {IDBValidKey} key - The key of the item to delete.
+	 * @returns {Promise<void>}
+	 */
+	async delete(storeName, key) {
+		if (!this.#isReady) throw new Error("Database not initialized.");
+		return new Promise((resolve, reject) => {
+			const transaction = this.#db.transaction(storeName, "readwrite");
+			const store = transaction.objectStore(storeName);
+			const request = store.delete(key);
+			request.onsuccess = () => resolve();
+			request.onerror = (event) => reject(event.target.error);
+		});
+	}
+
+	/**
+	 * Clears all data from a store.
+	 * @param {string} storeName - The name of the object store.
+	 * @returns {Promise<void>}
+	 */
+	async clear(storeName) {
+		if (!this.#isReady) throw new Error("Database not initialized.");
+		return new Promise((resolve, reject) => {
+			const transaction = this.#db.transaction(storeName, "readwrite");
+			const store = transaction.objectStore(storeName);
+			const request = store.clear();
+			request.onsuccess = () => resolve();
+			request.onerror = (event) => reject(event.target.error);
+		});
+	}
+
+	/**
+	 * Queries a store by an index.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {string} indexName - The name of the index to query.
+	 * @param {IDBValidKey | IDBKeyRange} query - The query value or range.
+	 * @returns {Promise<any[]>} An array of matching items.
+	 */
+	async queryByIndex(storeName, indexName, query) {
+		if (!this.#isReady) throw new Error("Database not initialized.");
+		return new Promise((resolve, reject) => {
+			const transaction = this.#db.transaction(storeName, "readonly");
+			const store = transaction.objectStore(storeName);
+			const index = store.index(indexName);
+			const request = index.getAll(query);
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = (event) => reject(event.target.error);
+		});
+	}
+
+	/**
+	 * Closes the database connection.
+	 */
+	close() {
+		if (this.#db) {
+			this.#db.close();
+			this.#db = null;
+			this.#isReady = false;
+			console.log(
+				`[ModernIndexedDB] Database '${this.#dbName}' connection closed.`
+			);
 		}
 	}
 
 	/**
-	 * Adds or updates an item in the object store.
-	 * @param {object} item - The item to store. It must have a property matching the store's `keyPath`.
-	 * @returns {Promise<IDBValidKey>} A promise that resolves with the key of the stored item.
+	 * Gets the ready state of the database.
+	 * @returns {boolean}
 	 */
-	async put(item) {
-		return this.#operation("put", item);
-	}
-	/**
-	 * Retrieves an item from the object store by its key.
-	 * @param {IDBValidKey} id - The key of the item to retrieve.
-	 * @returns {Promise<object|undefined>} A promise that resolves with the item, or undefined if not found.
-	 */
-	async get(id) {
-		return this.#operation("get", id);
-	}
-	/**
-	 * Deletes an item from the object store by its key.
-	 * @param {IDBValidKey} id - The key of the item to delete.
-	 * @returns {Promise<void>} A promise that resolves when the operation is complete.
-	 */
-	async delete(id) {
-		return this.#operation("delete", id);
-	}
-	/**
-	 * Clears all items from the object store.
-	 * @returns {Promise<void>} A promise that resolves when the operation is complete.
-	 */
-	async clear() {
-		return this.#operation("clear");
-	}
-	/**
-	 * Counts the total number of items in the object store.
-	 * @returns {Promise<number>} A promise that resolves with the total count.
-	 */
-	async count() {
-		return this.#operation("count");
-	}
-
-	/**
-	 * A private helper method that centralizes transaction logic for single-item operations,
-	 * adhering to the DRY (Don't Repeat Yourself) principle.
-	 * @private
-	 * @param {'put'|'get'|'delete'|'clear'|'count'} method - The name of the operation to perform.
-	 * @param {*} [data] - The data or key required for the operation.
-	 * @returns {Promise<any>} A promise that resolves with the result of the operation.
-	 * @throws {Error} If the database is not initialized or if an unknown method is provided.
-	 */
-	async #operation(method, data) {
-		const priv = PRIVATE.get(this);
-		if (!priv.ready) throw new Error("Not initialized");
-
-		return new Promise((resolve, reject) => {
-			const tx = priv.db.transaction(
-				priv.storeName,
-				method === "put" || method === "delete" || method === "clear"
-					? "readwrite"
-					: "readonly"
-			);
-			const store = tx.objectStore(priv.storeName);
-
-			let req;
-			switch (method) {
-				case "put":
-					req = store.put(data);
-					break;
-				case "get":
-					req = store.get(data);
-					break;
-				case "delete":
-					req = store.delete(data);
-					break;
-				case "clear":
-					req = store.clear();
-					break;
-				case "count":
-					req = store.count();
-					break;
-				default:
-					reject(new Error(`Unknown operation: ${method}`));
-					return;
-			}
-
-			req.onsuccess = () => resolve(req.result);
-			req.onerror = () => reject(req.error);
-		});
-	}
-
-	/**
-	 * Adds or updates multiple items in the object store in a single transaction for performance.
-	 * @param {object[]} items - An array of items to store.
-	 * @returns {Promise<IDBValidKey[]>} A promise that resolves with an array of keys for the stored items.
-	 */
-	async putBulk(items) {
-		const priv = PRIVATE.get(this);
-		if (!priv.ready) throw new Error("Not initialized");
-
-		return new Promise((resolve, reject) => {
-			const tx = priv.db.transaction(priv.storeName, "readwrite");
-			const store = tx.objectStore(priv.storeName);
-
-			const results = [];
-			let pending = items.length;
-
-			if (pending === 0) {
-				resolve([]);
-				return;
-			}
-
-			items.forEach((item, i) => {
-				const req = store.put(item);
-				req.onsuccess = () => {
-					results[i] = req.result;
-					if (--pending === 0) resolve(results);
-				};
-				req.onerror = () => reject(req.error);
-			});
-		});
-	}
-
-	/**
-	 * Retrieves all items that match a specific classification level.
-	 * @param {string} classification - The classification level to query for.
-	 * @returns {Promise<object[]>} A promise that resolves with an array of matching items.
-	 */
-	async queryByClassification(classification) {
-		const priv = PRIVATE.get(this);
-		return new Promise((resolve, reject) => {
-			const tx = priv.db.transaction(priv.storeName, "readonly");
-			const index = tx
-				.objectStore(priv.storeName)
-				.index("classification");
-			const req = index.getAll(classification);
-
-			req.onsuccess = () => resolve(req.result || []);
-		});
-	}
-
-	/**
-	 * Retrieves all objects of a specific entity type.
-	 * @param {string} type - The `entity_type` to query for.
-	 * @returns {Promise<object[]>} A promise that resolves with an array of matching objects.
-	 */
-	async getObjectsByType(type) {
-		const priv = PRIVATE.get(this);
-		return new Promise((resolve, reject) => {
-			const tx = priv.db.transaction(priv.storeName, "readonly");
-			const index = tx.objectStore(priv.storeName).index("entity_type");
-			const req = index.getAll(type);
-
-			req.onsuccess = () => resolve(req.result || []);
-			req.onerror = () => reject(req.error);
-		});
-	}
-
-	/**
-	 * A convenience alias for the `put` method.
-	 * @param {object} obj - The object to save.
-	 * @returns {Promise<IDBValidKey>} A promise that resolves with the key of the saved object.
-	 */
-	async saveObject(obj) {
-		return this.put(obj);
-	}
-
-	/**
-	 * Closes the database connection and marks the instance as not ready.
-	 */
-	close() {
-		const priv = PRIVATE.get(this);
-		priv.db?.close();
-		priv.ready = false;
+	get isReady() {
+		return this.#isReady;
 	}
 }
 

@@ -1,49 +1,74 @@
 // ui/admin/DatabaseOptimizationControlPanel.js
 // Complete admin control panel for database optimization management
 
+/**
+ * @class DatabaseOptimizationControlPanel
+ * @classdesc A UI component that provides a comprehensive administrative interface for managing
+ * and monitoring the `DatabaseOptimizer`. It displays metrics, suggestions, and allows administrators
+ * to apply or roll back optimizations.
+ */
 export class DatabaseOptimizationControlPanel {
-  constructor(optimizer, container) {
-    this.optimizer = optimizer;
-    this.container = container;
-    this.currentView = "dashboard";
-    this.refreshInterval = null;
-    this.data = {
-      dashboard: null,
-      suggestions: [],
-      applied: [],
-      metrics: null,
-      health: null,
-    };
+	/**
+	 * Creates an instance of DatabaseOptimizationControlPanel.
+	 * @param {import('../core/DatabaseOptimizer.js').DatabaseOptimizer} optimizer - The DatabaseOptimizer instance to manage.
+	 * @param {HTMLElement} container - The DOM element to render the control panel into.
+	 */
+	constructor(optimizer, container) {
+		/** @type {import('../core/DatabaseOptimizer.js').DatabaseOptimizer} */
+		this.optimizer = optimizer;
+		/** @type {HTMLElement} */
+		this.container = container;
+		/** @type {string} */
+		this.currentView = "dashboard";
+		/** @type {number|null} */
+		this.refreshInterval = null;
+		/** @type {object} */
+		this.data = {
+			dashboard: null,
+			suggestions: [],
+			applied: [],
+			metrics: null,
+			health: null,
+		};
 
-    // Real-time update settings
-    this.updateInterval = 30000; // 30 seconds
-    this.charts = {};
-  }
+		// Real-time update settings
+		/** @type {number} */
+		this.updateInterval = 30000; // 30 seconds
+		/** @type {object} */
+		this.charts = {};
+	}
 
-  /**
-   * Initialize the complete control panel
-   */
-  async initialize() {
-    try {
-      console.log("🎛️ Initializing Database Optimization Control Panel...");
+	/**
+	 * Initializes the control panel by rendering its structure, loading initial data,
+	 * setting up event listeners, and starting real-time updates.
+	 * @public
+	 * @returns {Promise<void>}
+	 */
+	async initialize() {
+		try {
+			console.log(
+				"🎛️ Initializing Database Optimization Control Panel..."
+			);
 
-      this.render();
-      await this.loadAllData();
-      this.setupEventListeners();
-      this.startRealTimeUpdates();
+			this.render();
+			await this.loadAllData();
+			this.setupEventListeners();
+			this.startRealTimeUpdates();
 
-      console.log("✅ Control Panel initialized");
-    } catch (error) {
-      console.error("Failed to initialize control panel:", error);
-      this.showError("Failed to initialize control panel", error.message);
-    }
-  }
+			console.log("✅ Control Panel initialized");
+		} catch (error) {
+			console.error("Failed to initialize control panel:", error);
+			this.showError("Failed to initialize control panel", error.message);
+		}
+	}
 
-  /**
-   * Render the complete panel structure
-   */
-  render() {
-    this.container.innerHTML = `
+	/**
+	 * Renders the main structure of the control panel, including the header, navigation,
+	 * and content area, and injects the necessary CSS styles.
+	 * @public
+	 */
+	render() {
+		this.container.innerHTML = `
       <div class="db-optimization-panel">
         <!-- Header -->
         <div class="panel-header">
@@ -499,111 +524,122 @@ export class DatabaseOptimizationControlPanel {
       </style>
     `;
 
-    // Set up global click handlers
-    this.container.addEventListener("click", (e) => {
-      if (e.target.matches("[onclick]")) {
-        const method = e.target
-          .getAttribute("onclick")
-          .match(/this\.(\w+)\('?([^']*)'?\)/);
-        if (method && this[method[1]]) {
-          e.preventDefault();
-          this[method[1]](method[2] || undefined);
-        }
-      }
-    });
-  }
+		// Set up global click handlers
+		this.container.addEventListener("click", (e) => {
+			if (e.target.matches("[onclick]")) {
+				const method = e.target
+					.getAttribute("onclick")
+					.match(/this\.(\w+)\('?([^']*)'?\)/);
+				if (method && this[method[1]]) {
+					e.preventDefault();
+					this[method[1]](method[2] || undefined);
+				}
+			}
+		});
+	}
 
-  /**
-   * Load all data for the panel
-   */
-  async loadAllData() {
-    try {
-      const [dashboard, suggestions, applied, metrics, health] =
-        await Promise.all([
-          this.loadDashboardData(),
-          this.optimizer.getPendingSuggestions(),
-          this.optimizer.getAppliedOptimizations(),
-          this.optimizer.getEnhancedMetrics(),
-          this.optimizer.getHealthStatus(),
-        ]);
+	/**
+	 * Asynchronously loads all necessary data from the optimizer for all views.
+	 * @public
+	 * @returns {Promise<void>}
+	 */
+	async loadAllData() {
+		try {
+			const [dashboard, suggestions, applied, metrics, health] =
+				await Promise.all([
+					this.loadDashboardData(),
+					this.optimizer.getPendingSuggestions(),
+					this.optimizer.getAppliedOptimizations(),
+					this.optimizer.getEnhancedMetrics(),
+					this.optimizer.getHealthStatus(),
+				]);
 
-      this.data = { dashboard, suggestions, applied, metrics, health };
-      this.updateHealthIndicator();
-      this.updateBadges();
-      this.renderCurrentView();
-    } catch (error) {
-      console.error("Failed to load panel data:", error);
-      this.showError("Failed to load data", error.message);
-    }
-  }
+			this.data = { dashboard, suggestions, applied, metrics, health };
+			this.updateHealthIndicator();
+			this.updateBadges();
+			this.renderCurrentView();
+		} catch (error) {
+			console.error("Failed to load panel data:", error);
+			this.showError("Failed to load data", error.message);
+		}
+	}
 
-  /**
-   * Load dashboard-specific data
-   */
-  async loadDashboardData() {
-    try {
-      return await this.optimizer.getPerformanceMetrics();
-    } catch (error) {
-      console.error("Failed to load dashboard data:", error);
-      return null;
-    }
-  }
+	/**
+	 * Loads the data specifically required for the dashboard view.
+	 * @private
+	 * @returns {Promise<object|null>} A promise that resolves with the dashboard data, or null on failure.
+	 */
+	async loadDashboardData() {
+		try {
+			return await this.optimizer.getPerformanceMetrics();
+		} catch (error) {
+			console.error("Failed to load dashboard data:", error);
+			return null;
+		}
+	}
 
-  /**
-   * Switch between panel views
-   */
-  switchView(view) {
-    // Update navigation
-    this.container.querySelectorAll(".nav-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.view === view);
-    });
+	/**
+	 * Switches the currently displayed view in the control panel.
+	 * @public
+	 * @param {string} view - The name of the view to switch to (e.g., 'dashboard', 'suggestions').
+	 * @returns {void}
+	 */
+	switchView(view) {
+		// Update navigation
+		this.container.querySelectorAll(".nav-tab").forEach((tab) => {
+			tab.classList.toggle("active", tab.dataset.view === view);
+		});
 
-    this.currentView = view;
-    this.renderCurrentView();
-  }
+		this.currentView = view;
+		this.renderCurrentView();
+	}
 
-  /**
-   * Render the current view content
-   */
-  renderCurrentView() {
-    const content = this.container.querySelector("#panel-content");
+	/**
+	 * Renders the content for the currently active view into the content area.
+	 * @private
+	 * @returns {void}
+	 */
+	renderCurrentView() {
+		const content = this.container.querySelector("#panel-content");
 
-    switch (this.currentView) {
-      case "dashboard":
-        content.innerHTML = this.renderDashboardView();
-        this.initializeDashboardCharts();
-        break;
-      case "suggestions":
-        content.innerHTML = this.renderSuggestionsView();
-        break;
-      case "applied":
-        content.innerHTML = this.renderAppliedView();
-        break;
-      case "performance":
-        content.innerHTML = this.renderPerformanceView();
-        this.initializePerformanceCharts();
-        break;
-      case "maintenance":
-        content.innerHTML = this.renderMaintenanceView();
-        break;
-      default:
-        content.innerHTML =
-          '<div class="alert alert-error">Unknown view: ' +
-          this.currentView +
-          "</div>";
-    }
-  }
+		switch (this.currentView) {
+			case "dashboard":
+				content.innerHTML = this.renderDashboardView();
+				this.initializeDashboardCharts();
+				break;
+			case "suggestions":
+				content.innerHTML = this.renderSuggestionsView();
+				break;
+			case "applied":
+				content.innerHTML = this.renderAppliedView();
+				break;
+			case "performance":
+				content.innerHTML = this.renderPerformanceView();
+				this.initializePerformanceCharts();
+				break;
+			case "maintenance":
+				content.innerHTML = this.renderMaintenanceView();
+				break;
+			default:
+				content.innerHTML =
+					'<div class="alert alert-error">Unknown view: ' +
+					this.currentView +
+					"</div>";
+		}
+	}
 
-  /**
-   * Render dashboard view
-   */
-  renderDashboardView() {
-    const metrics = this.data.metrics;
-    if (!metrics) {
-      return '<div class="alert alert-warning">No metrics data available</div>';
-    }
+	/**
+	 * Renders the HTML content for the dashboard view.
+	 * @private
+	 * @returns {string} The HTML string for the dashboard view.
+	 */
+	renderDashboardView() {
+		const metrics = this.data.metrics;
+		if (!metrics) {
+			return '<div class="alert alert-warning">No metrics data available</div>';
+		}
 
-    return `
+		return `
       <div class="dashboard-grid">
         <div class="metric-card">
           <h3>🚀 Query Performance</h3>
@@ -663,24 +699,26 @@ export class DatabaseOptimizationControlPanel {
         View pending suggestions to improve performance, or check the performance tab for detailed analytics.
       </div>
     `;
-  }
+	}
 
-  /**
-   * Render suggestions view
-   */
-  renderSuggestionsView() {
-    if (!this.data.suggestions || this.data.suggestions.length === 0) {
-      return `
+	/**
+	 * Renders the HTML content for the suggestions view, displaying a table of pending optimizations.
+	 * @private
+	 * @returns {string} The HTML string for the suggestions view.
+	 */
+	renderSuggestionsView() {
+		if (!this.data.suggestions || this.data.suggestions.length === 0) {
+			return `
         <div class="alert alert-success">
           <strong>🎉 No pending suggestions!</strong>
           Your database is well-optimized. New suggestions will appear automatically as query patterns change.
         </div>
       `;
-    }
+		}
 
-    const suggestionsTable = this.data.suggestions
-      .map(
-        (suggestion) => `
+		const suggestionsTable = this.data.suggestions
+			.map(
+				(suggestion) => `
       <tr>
         <td>${suggestion.table_name}</td>
         <td><code>${suggestion.jsonb_path}</code></td>
@@ -702,11 +740,11 @@ export class DatabaseOptimizationControlPanel {
           </div>
         </td>
       </tr>
-    `,
-      )
-      .join("");
+    `
+			)
+			.join("");
 
-    return `
+		return `
       <div class="alert alert-info">
         <strong>💡 Optimization Suggestions</strong><br>
         These suggestions are automatically generated based on query patterns. Review and apply them to improve performance.
@@ -729,24 +767,26 @@ export class DatabaseOptimizationControlPanel {
         </tbody>
       </table>
     `;
-  }
+	}
 
-  /**
-   * Render applied optimizations view
-   */
-  renderAppliedView() {
-    if (!this.data.applied || this.data.applied.length === 0) {
-      return `
+	/**
+	 * Renders the HTML content for the applied optimizations view, displaying a table of completed optimizations.
+	 * @private
+	 * @returns {string} The HTML string for the applied optimizations view.
+	 */
+	renderAppliedView() {
+		if (!this.data.applied || this.data.applied.length === 0) {
+			return `
         <div class="alert alert-info">
           <strong>📊 No optimizations applied yet</strong><br>
           Applied optimizations will appear here once you approve suggestions.
         </div>
       `;
-    }
+		}
 
-    const appliedTable = this.data.applied
-      .map(
-        (opt) => `
+		const appliedTable = this.data.applied
+			.map(
+				(opt) => `
       <tr>
         <td>${opt.table_name}</td>
         <td><code>${opt.target_field}</code></td>
@@ -768,15 +808,15 @@ export class DatabaseOptimizationControlPanel {
           </div>
         </td>
       </tr>
-    `,
-      )
-      .join("");
+    `
+			)
+			.join("");
 
-    const totalGain = this.data.applied
-      .filter((opt) => opt.performance_gain > 0)
-      .reduce((sum, opt) => sum + opt.performance_gain, 0);
+		const totalGain = this.data.applied
+			.filter((opt) => opt.performance_gain > 0)
+			.reduce((sum, opt) => sum + opt.performance_gain, 0);
 
-    return `
+		return `
       <div class="alert alert-success">
         <strong>✅ Optimization Impact</strong><br>
         ${this.data.applied.length} optimizations applied with an average performance gain of ${(totalGain / Math.max(this.data.applied.length, 1)).toFixed(1)}%.
@@ -800,167 +840,253 @@ export class DatabaseOptimizationControlPanel {
         </tbody>
       </table>
     `;
-  }
+	}
 
-  /**
-   * Helper methods
-   */
-  getHealthColor() {
-    switch (this.data.health) {
-      case "healthy":
-        return "#10b981";
-      case "idle":
-        return "#6b7280";
-      case "unhealthy":
-        return "#ef4444";
-      default:
-        return "#f59e0b";
-    }
-  }
+	/**
+	 * Gets the appropriate color for the health indicator based on the current health status.
+	 * @private
+	 * @returns {string} A CSS color string.
+	 */
+	getHealthColor() {
+		switch (this.data.health) {
+			case "healthy":
+				return "#10b981";
+			case "idle":
+				return "#6b7280";
+			case "unhealthy":
+				return "#ef4444";
+			default:
+				return "#f59e0b";
+		}
+	}
 
-  getHealthIcon() {
-    switch (this.data.health) {
-      case "healthy":
-        return "🟢";
-      case "idle":
-        return "🟡";
-      case "unhealthy":
-        return "🔴";
-      default:
-        return "🟠";
-    }
-  }
+	/**
+	 * Gets the appropriate icon for the health indicator based on the current health status.
+	 * @private
+	 * @returns {string} An emoji icon string.
+	 */
+	getHealthIcon() {
+		switch (this.data.health) {
+			case "healthy":
+				return "🟢";
+			case "idle":
+				return "🟡";
+			case "unhealthy":
+				return "🔴";
+			default:
+				return "🟠";
+		}
+	}
 
-  updateHealthIndicator() {
-    const dot = this.container.querySelector("#status-dot");
-    const text = this.container.querySelector("#status-text");
+	/**
+	 * Updates the health indicator UI element with the current status and color.
+	 * @private
+	 * @returns {void}
+	 */
+	updateHealthIndicator() {
+		const dot = this.container.querySelector("#status-dot");
+		const text = this.container.querySelector("#status-text");
 
-    if (dot && text) {
-      dot.className = `status-dot ${this.data.health || "warning"}`;
-      text.textContent = `System ${this.data.health || "Unknown"}`;
-    }
-  }
+		if (dot && text) {
+			dot.className = `status-dot ${this.data.health || "warning"}`;
+			text.textContent = `System ${this.data.health || "Unknown"}`;
+		}
+	}
 
-  updateBadges() {
-    const suggestionsBadge = this.container.querySelector("#suggestions-badge");
-    const appliedBadge = this.container.querySelector("#applied-badge");
+	/**
+	 * Updates the notification badges on the navigation tabs with the latest counts.
+	 * @private
+	 * @returns {void}
+	 */
+	updateBadges() {
+		const suggestionsBadge =
+			this.container.querySelector("#suggestions-badge");
+		const appliedBadge = this.container.querySelector("#applied-badge");
 
-    if (suggestionsBadge) {
-      suggestionsBadge.textContent = this.data.suggestions?.length || 0;
-    }
+		if (suggestionsBadge) {
+			suggestionsBadge.textContent = this.data.suggestions?.length || 0;
+		}
 
-    if (appliedBadge) {
-      appliedBadge.textContent = this.data.applied?.length || 0;
-    }
-  }
+		if (appliedBadge) {
+			appliedBadge.textContent = this.data.applied?.length || 0;
+		}
+	}
 
-  /**
-   * Action handlers
-   */
-  async applySuggestion(suggestionId) {
-    if (!confirm("Are you sure you want to apply this optimization?")) return;
+	/**
+	 * Handles the action to apply a pending optimization suggestion.
+	 * @public
+	 * @param {string} suggestionId - The ID of the suggestion to apply.
+	 * @returns {Promise<void>}
+	 */
+	async applySuggestion(suggestionId) {
+		if (!confirm("Are you sure you want to apply this optimization?"))
+			return;
 
-    try {
-      await this.optimizer.applyOptimization(suggestionId, "admin_panel");
-      this.showSuccess("Optimization applied successfully");
-      await this.refreshAllData();
-    } catch (error) {
-      this.showError("Failed to apply optimization", error.message);
-    }
-  }
+		try {
+			await this.optimizer.applyOptimization(suggestionId, "admin_panel");
+			this.showSuccess("Optimization applied successfully");
+			await this.refreshAllData();
+		} catch (error) {
+			this.showError("Failed to apply optimization", error.message);
+		}
+	}
 
-  async rollbackOptimization(optimizationId) {
-    if (!confirm("Are you sure you want to rollback this optimization?"))
-      return;
+	/**
+	 * Handles the action to roll back a previously applied optimization.
+	 * @public
+	 * @param {string} optimizationId - The ID of the optimization to roll back.
+	 */
+	async rollbackOptimization(optimizationId) {
+		if (!confirm("Are you sure you want to rollback this optimization?"))
+			return;
 
-    try {
-      await this.optimizer.rollbackOptimization(optimizationId);
-      this.showSuccess("Optimization rolled back successfully");
-      await this.refreshAllData();
-    } catch (error) {
-      this.showError("Failed to rollback optimization", error.message);
-    }
-  }
+		try {
+			await this.optimizer.rollbackOptimization(optimizationId);
+			this.showSuccess("Optimization rolled back successfully");
+			await this.refreshAllData();
+		} catch (error) {
+			this.showError("Failed to rollback optimization", error.message);
+		}
+	}
 
-  async refreshAllData() {
-    await this.loadAllData();
-    this.showSuccess("Data refreshed successfully");
-  }
+	/**
+	 * Manually triggers a refresh of all data displayed in the control panel.
+	 * @public
+	 * @returns {Promise<void>}
+	 */
+	async refreshAllData() {
+		await this.loadAllData();
+		this.showSuccess("Data refreshed successfully");
+	}
 
-  /**
-   * Start real-time updates
-   */
-  startRealTimeUpdates() {
-    this.refreshInterval = setInterval(() => {
-      this.loadAllData().catch((err) =>
-        console.error("Auto-refresh failed:", err),
-      );
-    }, this.updateInterval);
-  }
+	/**
+	 * Starts a periodic interval to automatically refresh the panel's data.
+	 * @private
+	 */
+	startRealTimeUpdates() {
+		this.refreshInterval = setInterval(() => {
+			this.loadAllData().catch((err) =>
+				console.error("Auto-refresh failed:", err)
+			);
+		}, this.updateInterval);
+	}
 
-  /**
-   * Utility methods
-   */
-  showSuccess(message) {
-    this.showNotification(message, "success");
-  }
+	/**
+	 * Displays a success notification.
+	 * @public
+	 * @param {string} message - The message to display.
+	 */
+	showSuccess(message) {
+		this.showNotification(message, "success");
+	}
 
-  showError(title, message) {
-    this.showNotification(`${title}: ${message}`, "error");
-  }
+	/**
+	 * Displays an error notification.
+	 * @public
+	 * @param {string} title - The title of the error message.
+	 * @param {string} message - The detailed error message.
+	 */
+	showError(title, message) {
+		this.showNotification(`${title}: ${message}`, "error");
+	}
 
-  showNotification(message, type) {
-    // Simple notification system
-    const notification = document.createElement("div");
-    notification.className = `alert alert-${type}`;
-    notification.style.cssText =
-      "position: fixed; top: 20px; right: 20px; z-index: 10000; min-width: 300px;";
-    notification.textContent = message;
+	/**
+	 * Creates and displays a temporary notification element on the screen.
+	 * @public
+	 * @param {string} message - The message to display.
+	 * @param {'success'|'error'|'info'|'warning'} type - The type of notification.
+	 */
+	showNotification(message, type) {
+		// Simple notification system
+		const notification = document.createElement("div");
+		notification.className = `alert alert-${type}`;
+		notification.style.cssText =
+			"position: fixed; top: 20px; right: 20px; z-index: 10000; min-width: 300px;";
+		notification.textContent = message;
 
-    document.body.appendChild(notification);
+		document.body.appendChild(notification);
 
-    setTimeout(() => {
-      notification.remove();
-    }, 5000);
-  }
+		setTimeout(() => {
+			notification.remove();
+		}, 5000);
+	}
 
-  /**
-   * Cleanup
-   */
-  destroy() {
-    if (this.refreshInterval) {
-      clearInterval(this.refreshInterval);
-    }
-  }
+	/**
+	 * Cleans up resources, such as clearing the refresh interval, when the panel is no longer needed.
+	 * @public
+	 */
+	destroy() {
+		if (this.refreshInterval) {
+			clearInterval(this.refreshInterval);
+		}
+	}
 
-  // Placeholder methods for additional functionality
-  renderPerformanceView() {
-    return '<div class="alert alert-info">Performance charts coming soon!</div>';
-  }
-  renderMaintenanceView() {
-    return '<div class="alert alert-info">Maintenance tools coming soon!</div>';
-  }
-  initializeDashboardCharts() {
-    /* Chart initialization */
-  }
-  initializePerformanceCharts() {
-    /* Performance charts */
-  }
-  updateChart() {
-    /* Chart updates */
-  }
-  viewSuggestion() {
-    /* View SQL modal */
-  }
-  rejectSuggestion() {
-    /* Reject suggestion */
-  }
-  viewOptimizationDetails() {
-    /* View details modal */
-  }
-  exportReport() {
-    /* Export functionality */
-  }
+	// Placeholder methods for additional functionality
+	/**
+	 * Renders the placeholder content for the performance view.
+	 * @private
+	 * @returns {string} HTML string for the placeholder.
+	 */
+	renderPerformanceView() {
+		return '<div class="alert alert-info">Performance charts coming soon!</div>';
+	}
+	/**
+	 * Renders the placeholder content for the maintenance view.
+	 * @private
+	 * @returns {string} HTML string for the placeholder.
+	 */
+	renderMaintenanceView() {
+		return '<div class="alert alert-info">Maintenance tools coming soon!</div>';
+	}
+	/**
+	 * Placeholder for initializing dashboard charts.
+	 * @private
+	 */
+	initializeDashboardCharts() {
+		/* Chart initialization */
+	}
+	/**
+	 * Placeholder for initializing performance charts.
+	 * @private
+	 */
+	initializePerformanceCharts() {
+		/* Performance charts */
+	}
+	/**
+	 * Placeholder for updating a chart's data.
+	 * @private
+	 */
+	updateChart() {
+		/* Chart updates */
+	}
+	/**
+	 * Placeholder for viewing the SQL of a suggestion.
+	 * @private
+	 */
+	viewSuggestion() {
+		/* View SQL modal */
+	}
+	/**
+	 * Placeholder for rejecting a suggestion.
+	 * @private
+	 */
+	rejectSuggestion() {
+		/* Reject suggestion */
+	}
+	/**
+	 * Placeholder for viewing the details of an applied optimization.
+	 * @private
+	 */
+	viewOptimizationDetails() {
+		/* View details modal */
+	}
+	/**
+	 * Placeholder for exporting a report.
+	 * @private
+	 */
+	exportReport() {
+		/* Export functionality */
+	}
 }
 
 export default DatabaseOptimizationControlPanel;

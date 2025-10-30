@@ -1,6 +1,18 @@
 // schemas/PluginManifestSchema.js
 // Complete plugin manifest schema definition for declarative plugin system
 
+/**
+ * @file Defines the schema for the `plugin.json` manifest files.
+ * @module PluginManifestSchema
+ * @description This file provides a comprehensive schema definition for the declarative plugin system.
+ * It outlines the structure and validation rules for plugin manifests, ensuring consistency and robustness.
+ */
+
+/**
+ * The complete schema definition for a plugin manifest.
+ * This object is used for validation and documentation of the plugin manifest structure.
+ * @type {object}
+ */
 export const PluginManifestSchema = {
   // Core plugin metadata
   id: {
@@ -484,6 +496,10 @@ export const PluginManifestSchema = {
 };
 
 /**
+ * A collection of example plugin manifests for reference and testing.
+ * @type {{simpleWidget: object, complexIntegration: object}}
+ */
+/**
  * Example plugin manifests for reference
  */
 export const ExampleManifests = {
@@ -677,6 +693,11 @@ export const ExampleManifests = {
 };
 
 /**
+ * Validates a plugin manifest against a set of core rules.
+ * @param {object} manifest - The plugin manifest object to validate.
+ * @returns {{valid: boolean, errors: string[], warnings: string[]}} An object indicating if the manifest is valid, along with any errors or warnings.
+ */
+/**
  * Manifest validation function
  */
 export function validateManifest(manifest) {
@@ -757,6 +778,11 @@ export function validateManifest(manifest) {
   };
 }
 
+/**
+ * Creates a new plugin manifest object from a predefined template.
+ * @param {'simple'|'complex'} [type='simple'] - The type of template to use.
+ * @returns {object} A new manifest object based on the selected template.
+ */
 /**
  * Create manifest from template
  */

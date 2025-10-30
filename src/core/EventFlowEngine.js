@@ -1,16 +1,36 @@
 // core/EventFlowEngine.js
 // Replaces EventBus singleton with composable, entity-driven event flows
 
+/**
+ * @class EventFlowEngine
+ * @classdesc Orchestrates a declarative, entity-driven event processing system.
+ * It replaces a traditional event bus with a more powerful system where "flows"
+ * (defined as data) are triggered by events, evaluated against conditions, and execute actions.
+ */
 export class EventFlowEngine {
+	/**
+	 * Creates an instance of EventFlowEngine.
+	 * @param {import('./HybridStateManager.js').HybridStateManager} stateManager - The main state manager instance.
+	 */
 	constructor(stateManager) {
+		/** @type {import('./HybridStateManager.js').HybridStateManager} */
 		this.stateManager = stateManager;
+		/** @private @type {Map<string, object>} */
 		this.flows = new Map();
+		/** @private @type {Map<string, Function>} */
 		this.conditions = new Map();
+		/** @private @type {Map<string, Function>} */
 		this.actionHandlers = new Map();
+		/** @private @type {object[]} */
 		this.eventQueue = [];
+		/** @private @type {boolean} */
 		this.processing = false;
 
-		// Performance metrics
+		/**
+		 * Performance and usage metrics for the engine.
+		 * @private
+		 * @type {{eventsProcessed: number, flowsExecuted: number, conditionsEvaluated: number, averageProcessingTime: number, processingTimes: number[], errorCount: number}}
+		 */
 		this.metrics = {
 			eventsProcessed: 0,
 			flowsExecuted: 0,
@@ -20,15 +40,25 @@ export class EventFlowEngine {
 			errorCount: 0,
 		};
 
-		// Flow execution state
+		/**
+		 * Tracks the current stack of executing flows to prevent infinite loops.
+		 * @private
+		 * @type {string[]}
+		 */
 		this.executionStack = [];
+		/**
+		 * The maximum depth for nested flow executions.
+		 * @private
+		 * @type {number}
+		 */
 		this.maxExecutionDepth = 10; // Prevent infinite loops
 
 		this.initialize();
 	}
 
 	/**
-	 * Initialize the event flow engine
+	 * Initializes the EventFlowEngine by loading flows from storage and registering default handlers.
+	 * @returns {Promise<void>}
 	 */
 	async initialize() {
 		// Load event flows from stored entities
@@ -49,13 +79,18 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Load event flows from stored entities
+	 * Loads event flow definitions from the persistent storage.
+	 * @private
+	 * @returns {Promise<void>}
 	 */
 	async loadEventFlows() {
 		try {
-			const flows = await this.stateManager.storage.instance
-				?.query("objects", "entity_type", "event_flow"); // ✅ store='objects'
-			for (const entity of (flows || [])) {
+			const flows = await this.stateManager.storage.instance?.query(
+				"objects",
+				"entity_type",
+				"event_flow"
+			); // ✅ store='objects'
+			for (const entity of flows || []) {
 				this.registerFlow(entity.data || entity.content || entity); // tolerate shapes
 			}
 		} catch (err) {
@@ -64,7 +99,9 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Register an event flow
+	 * Registers a new event flow definition with the engine.
+	 * @param {object} flowDefinition - The definition object for the flow.
+	 * @returns {object} The registered flow object.
 	 */
 	registerFlow(flowDefinition) {
 		const flow = {
@@ -90,7 +127,9 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Index flow by its trigger events for fast lookup
+	 * Indexes a flow by its trigger events for efficient lookup during event emission.
+	 * @private
+	 * @param {object} flow - The flow object to index.
 	 */
 	indexFlowByTriggers(flow) {
 		if (!this.triggerIndex) {
@@ -110,7 +149,11 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Main event emission method - replaces EventBus.emit()
+	 * Emits an event, adding it to a queue for asynchronous processing.
+	 * This is the primary entry point for triggering event flows.
+	 * @param {string} eventType - The type of the event being emitted.
+	 * @param {object} [data={}] - The payload data associated with the event.
+	 * @returns {string} The unique ID of the queued event.
 	 */
 	emit(eventType, data = {}) {
 		const event = {
@@ -132,7 +175,9 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Process the event queue
+	 * Processes the event queue sequentially, ensuring events are handled in the order they were emitted.
+	 * @private
+	 * @returns {Promise<void>}
 	 */
 	async processEventQueue() {
 		if (this.processing) return;
@@ -148,7 +193,9 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Process a single event
+	 * Processes a single event by finding and executing all matching flows.
+	 * @private
+	 * @param {object} event - The event object to process.
 	 */
 	async processEvent(event) {
 		const startTime = performance.now();
@@ -186,7 +233,10 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Get flows that match the event type
+	 * Retrieves all flows that are triggered by a given event type, including wildcard ('*') triggers.
+	 * @private
+	 * @param {string} eventType - The type of the event.
+	 * @returns {object[]} An array of matching flow objects.
 	 */
 	getFlowsForEvent(eventType) {
 		const matchingFlows = [];
@@ -217,7 +267,10 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Sort flows by priority
+	 * Sorts an array of flows based on their priority ('high', 'normal', 'low').
+	 * @private
+	 * @param {object[]} flows - The array of flows to sort.
+	 * @returns {object[]} The sorted array of flows.
 	 */
 	sortFlowsByPriority(flows) {
 		const priorityOrder = { high: 3, normal: 2, low: 1 };
@@ -230,7 +283,11 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Execute a flow for an event
+	 * Executes a single flow for a given event, including condition evaluation and action execution.
+	 * @private
+	 * @param {object} flow - The flow to execute.
+	 * @param {object} event - The event that triggered the flow.
+	 * @returns {Promise<void>}
 	 */
 	async executeFlow(flow, event) {
 		// Prevent infinite recursion
@@ -264,7 +321,11 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Evaluate conditions for a flow
+	 * Evaluates all conditions defined in a flow against an event to determine which set of actions to run.
+	 * @private
+	 * @param {object} flow - The flow containing the conditions.
+	 * @param {object} event - The event context for evaluation.
+	 * @returns {Promise<string>} A promise that resolves to the name of the matched condition (e.g., 'critical', 'default').
 	 */
 	async evaluateConditions(flow, event) {
 		this.metrics.conditionsEvaluated++;
@@ -288,7 +349,12 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Evaluate a single condition
+	 * Evaluates a single condition definition.
+	 * @private
+	 * @param {object} conditionDef - The definition of the condition.
+	 * @param {object} event - The event context.
+	 * @param {object} flow - The parent flow.
+	 * @returns {Promise<boolean>} A promise that resolves to `true` if the condition is met, `false` otherwise.
 	 */
 	async evaluateCondition(conditionDef, event, flow) {
 		try {
@@ -321,7 +387,11 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Get property value from event data using dot notation
+	 * Retrieves a nested property value from an object using a dot-notation path.
+	 * @private
+	 * @param {object} event - The object to query.
+	 * @param {string} property - The dot-notation path (e.g., 'data.user.id').
+	 * @returns {*} The value at the specified path, or undefined if not found.
 	 */
 	getPropertyValue(event, property) {
 		const parts = property.split(".");
@@ -336,7 +406,11 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Compare values with support for operators
+	 * Compares two values, with support for operators like '>', '<', 'in', 'contains', and 'regex'.
+	 * @private
+	 * @param {*} actual - The actual value from the event context.
+	 * @param {*} expected - The expected value or operator object from the condition definition.
+	 * @returns {boolean} The result of the comparison.
 	 */
 	compareValues(actual, expected) {
 		if (typeof expected === "object" && expected !== null) {
@@ -369,7 +443,12 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Execute an action
+	 * Executes a single action by finding and invoking its registered handler.
+	 * @private
+	 * @param {object} action - The action definition.
+	 * @param {object} event - The current event context.
+	 * @param {object} flow - The parent flow.
+	 * @returns {Promise<void>}
 	 */
 	async executeAction(action, event, flow) {
 		try {
@@ -394,7 +473,8 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Register default system flows
+	 * Registers a set of default system flows for common tasks like error handling and performance monitoring.
+	 * @private
 	 */
 	registerDefaultFlows() {
 		// Error handling flow
@@ -495,7 +575,8 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Register built-in condition evaluators
+	 * Registers a set of common, built-in condition evaluator functions.
+	 * @private
 	 */
 	registerBuiltinConditions() {
 		// Time-based condition
@@ -552,7 +633,8 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Register built-in action handlers
+	 * Registers a set of common, built-in action handler functions.
+	 * @private
 	 */
 	registerBuiltinActionHandlers() {
 		// Logging action
@@ -631,7 +713,11 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Subscribe to events (replaces EventBus.on)
+	 * Subscribes a handler function to a specific event type.
+	 * This is a convenience method that creates a dynamic event flow under the hood.
+	 * @param {string} eventType - The name of the event to subscribe to.
+	 * @param {Function} handler - The callback function to execute when the event is emitted.
+	 * @returns {Function} An unsubscribe function to remove the listener.
 	 */
 	on(eventType, handler) {
 		// Create a flow for this subscription
@@ -662,7 +748,8 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Rebuild trigger index after flow removal
+	 * Rebuilds the internal trigger index. This is necessary after a flow is removed.
+	 * @private
 	 */
 	rebuildTriggerIndex() {
 		this.triggerIndex = new Map();
@@ -672,7 +759,9 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Record processing time for metrics
+	 * Records the processing time of an event for performance metrics.
+	 * @private
+	 * @param {number} duration - The duration of the event processing in milliseconds.
 	 */
 	recordProcessingTime(duration) {
 		this.metrics.processingTimes.push(duration);
@@ -689,7 +778,8 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Get performance metrics
+	 * Retrieves the current performance and usage metrics for the engine.
+	 * @returns {object} An object containing various metrics.
 	 */
 	getMetrics() {
 		return {
@@ -703,14 +793,18 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Create flow from definition (for dynamic creation)
+	 * Creates and registers a new flow from a definition object.
+	 * @param {object} definition - The flow definition.
+	 * @returns {object} The created flow object.
 	 */
 	createFlow(definition) {
 		return this.registerFlow(definition);
 	}
 
 	/**
-	 * Remove flow
+	 * Removes a flow from the engine by its ID.
+	 * @param {string} flowId - The ID of the flow to remove.
+	 * @returns {boolean} `true` if the flow was found and removed, `false` otherwise.
 	 */
 	removeFlow(flowId) {
 		const removed = this.flows.delete(flowId);
@@ -721,7 +815,8 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * Export all flows as entities
+	 * Exports all registered flows into an entity format suitable for storage.
+	 * @returns {object[]} An array of flow entities.
 	 */
 	exportFlows() {
 		return Array.from(this.flows.values()).map((flow) => ({

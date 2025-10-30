@@ -1,8 +1,20 @@
 import { HybridStateManager } from "@core/HybridStateManager.js";
 import GridBootstrap from "@grid/GridBootstrap.js";
-
 import { AppConfig } from "../environment.config.js";
 
+/**
+ * @file d:\Development Files\repositories\nodus\src\main.js
+ * @description This is the entry point for the Nodus application.
+ * It initializes the HybridStateManager, sets up the main UI grid,
+ * and starts the application's core functionalities.
+ */
+
+/**
+ * @function bootstrap
+ * @description Asynchronously initializes the Nodus application.
+ * It sets up the global `HybridStateManager` instance and renders the main `GridBootstrap` component.
+ * @returns {Promise<void>} A promise that resolves when the application has been successfully bootstrapped.
+ */
 const bootstrap = async () => {
 	if (window.nodusApp) {
 		console.warn(
