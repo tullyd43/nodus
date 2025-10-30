@@ -388,12 +388,8 @@ export const ErrorHelpers = {
    */
   createErrorBoundary(eventFlow, component = "unknown") {
     return {
-      try: (fn) => {
-        return this.captureSync(fn, eventFlow, { component });
-      },
-      tryAsync: (fn) => {
-        return this.captureAsync(fn, eventFlow, { component });
-      },
+      try: (fn) => this.captureSync(fn, eventFlow, { component }),
+      tryAsync: (fn) => this.captureAsync(fn, eventFlow, { component }),
     };
   },
 

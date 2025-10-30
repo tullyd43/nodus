@@ -220,9 +220,7 @@ export class AdaptiveRenderer {
     let rendered = template;
 
     // Simple variable substitution {{variable}}
-    rendered = rendered.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
-      return context[varName] || context.data?.[varName] || "";
-    });
+    rendered = rendered.replace(/\{\{(\w+)\}\}/g, (match, varName) => context[varName] || context.data?.[varName] || "");
 
     // Create DOM element from template
     const wrapper = document.createElement("div");

@@ -1,11 +1,10 @@
 // core/HybridStateManager_ModernStorage.js
 // Updated HybridStateManager with integrated ModernOfflineStorage
 
+import AdaptiveRenderer from "./AdaptiveRenderer.js";
+import { NodesOfflineManager } from "../integration/SimpleIntegration.js";
 import { BoundedStack } from "../utils/BoundedStack.js";
 import { LRUCache } from "../utils/LRUCache.js";
-import AdaptiveRenderer from "./AdaptiveRenderer.js";
-import { componentRegistry } from "./ComponentDefinition.js";
-import { NodesOfflineManager } from "../integration/SimpleIntegration.js";
 
 export class HybridStateManager {
   constructor(config = {}) {

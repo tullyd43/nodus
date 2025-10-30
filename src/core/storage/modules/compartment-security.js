@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-private-class-members */
 // modules/compartment-security.js
 // Compartment security module for need-to-know access control
 

@@ -143,15 +143,21 @@ export class ComposableSecurity {
 		return hasAccess;
 	}
 
-	async checkAccess(entity, action) {
+	async checkAccess(entity, action, context = {}) {
+		const { storeName } = context;
 		try {
 			// 1) MAC first (non-bypassable)
 			const subj = this.#mac.subject();
-			const obj = this.#mac.label(entity);
+			const obj = this.#mac.label(entity, { storeName });
 			if (action === "read") {
-				this.#mac.enforceNoReadUp(subj, obj);
+				// For reads, the entity is what comes from the DB.
+				// The label function needs to know if it's from the poly store.
+				this.#mac.enforceNoReadUp(subj, obj, { storeName });
 			} else {
-				this.#mac.enforceNoWriteDown(subj, obj);
+				// For writes, the entity is the logical object before it's stored.
+				// The label function should look for `classification`.
+				// The `storeName` hint helps resolve ambiguity.
+				this.#mac.enforceNoWriteDown(subj, obj, { storeName });
 			}
 
 			// 2) RBAC next (your existing role/perm evaluation)
@@ -310,10 +316,15 @@ export class ComposableSecurity {
 	/**
 	 * Perform the RBAC check (after MAC has passed)
 	 */
-	async evaluateRBAC(entity, action) {
+	async evaluateRBAC(entity, action, context = {}) {
+		const { storeName } = context;
 		// This wraps the existing canAccess logic for RBAC evaluation.
-		const label = this.#mac.label(entity);
-		return this.canAccess(label.level, Array.from(label.compartments));
+		// The label function needs to correctly identify the classification field.
+		const { level, compartments } = this.#mac.label(entity, {
+			storeName,
+			isRBACCheck: true,
+		});
+		return this.canAccess(level, Array.from(compartments ?? []));
 	}
 
 	/**

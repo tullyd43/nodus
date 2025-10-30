@@ -1,15 +1,15 @@
 // examples/IntegratedSystemExample.js
 // Complete example showing the new BuildingBlock paradigm in action
 
-import { RenderContext } from "../core/RenderContext_Updated.js";
 import { BuildingBlockRenderer } from "../core/BuildingBlockRenderer.js";
-import { SystemPolicies } from "../core/SystemPolicies.js";
 import { OptimizationAccessControl } from "../core/OptimizationAccessControl_Enhanced.js";
-import { ErrorHelpers, ERROR_FLOW_DEFINITIONS } from "../utils/ErrorHelpers.js";
+import { RenderContext } from "../core/RenderContext_Updated.js";
+import { SystemPolicies } from "../core/SystemPolicies.js";
 
 // Import building blocks
 import { registerPerformanceOverlayBlock } from "../ui/blocks/PerformanceOverlayBlock.js";
 import { registerPolicyControlBlock } from "../ui/blocks/PolicyControlBlock.js";
+import { ErrorHelpers, ERROR_FLOW_DEFINITIONS } from "../utils/ErrorHelpers.js";
 
 /**
  * Complete integrated system example
@@ -168,7 +168,7 @@ export class IntegratedSystemExample {
       userPermissions: user?.permissions || [],
 
       // System context
-      policies: policies,
+      policies,
       stateManager: window.stateManager, // Assume available
       eventFlow: window.eventFlowEngine, // Assume available
 

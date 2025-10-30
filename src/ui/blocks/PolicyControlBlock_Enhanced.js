@@ -1,8 +1,8 @@
 // ui/blocks/PolicyControlBlock.js
 // Enhanced with permission/domain restriction tooltips
 
-import { SystemPolicies } from "../../core/SystemPolicies.js";
 import { OptimizationAccessControl } from "../../core/OptimizationAccessControl.js";
+import { SystemPolicies } from "../../core/SystemPolicies.js";
 
 /**
  * Enhanced Policy Control BuildingBlock with detailed permission feedback

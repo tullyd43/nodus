@@ -56,12 +56,16 @@ export class MACEngine {
 			compartments: s.compartments || new Set(),
 		};
 	}
-	label(objOrLabel) {
-		const o = this.getObjectLabel?.(objOrLabel) || {};
-		return {
-			level: o.level || "unclassified",
-			compartments: o.compartments || new Set(),
-		};
+	label(obj, { storeName } = {}) {
+		if (!obj) return { level: "unclassified", compartments: new Set() };
+		const isPoly =
+			storeName === "objects_polyinstantiated" ||
+			Object.prototype.hasOwnProperty.call(obj, "classification_level");
+		const level = isPoly
+			? (obj.classification_level ?? obj.classification ?? "unclassified")
+			: (obj.classification ?? "unclassified");
+		const compartments = new Set(obj.compartments || []);
+		return { level, compartments };
 	}
 
 	#isSuperset(a, b) {

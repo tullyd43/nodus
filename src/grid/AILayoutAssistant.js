@@ -1,3 +1,5 @@
+import { showGridToast } from "./GridToastManager.js";
+
 /**
  * AI Layout Assistant (Future Feature)
  * Framework for analyzing layout patterns and suggesting improvements

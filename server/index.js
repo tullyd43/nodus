@@ -1,6 +1,7 @@
 import express from "express";
-import { cdsRouter } from "./routes/cds.js";
 import pg from "pg";
+
+import { cdsRouter } from "./routes/cds.js";
 
 const app = express();
 app.use(express.json());

@@ -26,8 +26,10 @@ export class GridBootstrap {
 		this.container.innerHTML = "";
 		this.container.classList.add("nodus-grid");
 
-		// Fetch items classified as "internal"
-		const items = await this.db.queryByClassification(
+		// Fetch items classified as "internal" using the correct query method
+		const items = await this.db.query(
+			"objects", // The object store name
+			"classification", // The index to query
 			this.options.defaultClassification
 		);
 

@@ -290,14 +290,12 @@ export class MetricsReporter {
     if ("getBattery" in navigator) {
       navigator
         .getBattery()
-        .then((battery) => {
-          return {
+        .then((battery) => ({
             charging: battery.charging,
             level: battery.level,
             chargingTime: battery.chargingTime,
             dischargingTime: battery.dischargingTime,
-          };
-        })
+          }))
         .catch(() => null);
     }
     return null;
@@ -484,7 +482,13 @@ export class MetricsReporter {
 
   log(metric, value) {
     console.log(`[Metrics] ${metric}: ${value}`);
-    try { this.context.stateManager?.metrics?.[metric] = value; } catch {}
+    try {
+      if (this.context.stateManager && this.context.stateManager.metrics) {
+        this.context.stateManager.metrics[metric] = value;
+      }
+    } catch (error) {
+      // TODO: implement metrics flush logic
+    }
   }
 }
 

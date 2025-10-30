@@ -5,8 +5,9 @@
 // ============================================================================
 
 import { ClassificationCrypto } from "@core/security/ClassificationCrypto.js";
-import { InMemoryKeyring } from "@core/security/Keyring.js";
 import { getCryptoDomain } from "@core/security/CryptoDomain.js";
+import { InMemoryKeyring } from "@core/security/Keyring.js";
+import { constantTimeCheck } from "../security/ct.js";
 
 export class StorageLoader {
 	#loadedModules = new Map();
@@ -317,15 +318,10 @@ class ModularOfflineStorage {
 			const Cls = moduleClasses[type];
 			if (!Cls) continue;
 
-			if (
-				[
-					"validation",
-					"security",
-					"crypto",
-					"sync",
-					"indexeddb",
-				].includes(type)
-			) {
+			if (type === "indexeddb") {
+				// ✅ Pass the actual dbName/version/stores only
+				this.#modules[type] = new Cls(config.indexeddb || {});
+			} else {
 				this.#modules[type] =
 					typeof Cls === "function" ? new Cls(config) : Cls;
 			}
@@ -366,94 +362,305 @@ class ModularOfflineStorage {
 			}
 		);
 	}
-	#label(obj) {
-		// Expecting obj.classification (text) and obj.compartments (array)
-		const classification = obj?.classification ?? "unclassified";
-		const compartments = Array.isArray(obj?.compartments)
-			? obj.compartments
-			: [];
-		return { level: classification, compartments: new Set(compartments) };
+	#label(obj, { storeName } = {}) {
+		if (!obj) return { level: "unclassified", compartments: new Set() };
+		// Poly store rows carry classification in `classification_level`
+		const isPoly =
+			storeName === "objects_polyinstantiated" ||
+			Object.prototype.hasOwnProperty.call(obj, "classification_level");
+		const level = isPoly
+			? (obj.classification_level ?? obj.classification ?? "unclassified")
+			: (obj.classification ?? "unclassified");
+		const compartments = new Set(obj.compartments || []);
+		return { level, compartments };
+	}
+
+	#compareClassifications(classificationA, classificationB) {
+		const classifications = [
+			"unclassified",
+			"public",
+			"internal",
+			"restricted",
+			"confidential",
+			"secret",
+			"top_secret",
+			"nato_restricted",
+			"nato_confidential",
+			"nato_secret",
+			"cosmic_top_secret",
+		];
+		const indexA = classifications.indexOf(classificationA.toLowerCase());
+		const indexB = classifications.indexOf(classificationB.toLowerCase());
+		return indexA - indexB;
+	}
+
+	// --------------------------------------------------------------------------
+	// Polyinstantiation helpers
+	// --------------------------------------------------------------------------
+	#mergePolyinstantiatedEntities(entities = []) {
+		if (!entities || entities.length === 0) return null;
+
+		// Sort entities by classification level (lowest → highest)
+		const sortedEntities = [...entities].sort((a, b) =>
+			this.#compareClassifications(
+				a.classification_level,
+				b.classification_level
+			)
+		);
+
+		let mergedEntity = {};
+		let highestClassification = "unclassified";
+		const lineage = [];
+
+		for (const entity of sortedEntities) {
+			const instanceData = entity.instance_data || {};
+
+			// Merge instance_data first (lower classifications first)
+			mergedEntity = { ...mergedEntity, ...instanceData };
+
+			// Then overlay top-level fields, preferring higher classifications
+			for (const key of Object.keys(entity)) {
+				if (key !== "instance_data" && entity[key] !== undefined) {
+					mergedEntity[key] = entity[key];
+				}
+			}
+
+			// Track highest classification encountered
+			if (
+				this.#compareClassifications(
+					entity.classification_level,
+					highestClassification
+				) > 0
+			) {
+				highestClassification = entity.classification_level;
+			}
+
+			lineage.push({
+				classification_level: entity.classification_level,
+				timestamp: entity.updated_at ?? new Date().toISOString(),
+			});
+		}
+
+		// Attach metadata for audit
+		mergedEntity._meta = {
+			lineage,
+			highest_classification: highestClassification,
+			merged_at: new Date().toISOString(),
+		};
+
+		// Emit information flow event for audit
+		this.stateManager?.informationFlow?.derived(
+			entities.map((e) => ({
+				level: e.classification_level,
+				compartments: e.compartments,
+			})),
+			{ level: highestClassification },
+			{ operation: "poly_merge", logical_id: mergedEntity.logical_id }
+		);
+
+		return mergedEntity;
 	}
 
 	// --------------------------------------------------------------------------
 	// Transparent encrypted writes
 	// --------------------------------------------------------------------------
-	async put(store, item) {
+	async put(storeName, item) {
 		if (!this.#modules.indexeddb?.put) {
 			throw new Error("IndexedDB adapter not loaded");
 		}
 
 		// Enforce Bell–LaPadula "no write down"
 		if (this.#mac) {
-			this.#mac.enforceNoWriteDown(this.#subject(), this.#label(item));
+			this.#mac.enforceNoWriteDown(
+				this.#subject(),
+				this.#label(item, {
+					storeName,
+				}),
+				{
+					storeName,
+				}
+			);
 		}
 
 		let record = { ...item };
 
+		// Handle polyinstantiation for the 'objects_polyinstantiated' store
+		if (storeName === "objects_polyinstantiated" && item.logical_id) {
+			const existingEntities = await this.#modules.indexeddb.queryByIndex(
+				storeName,
+				"logical_id",
+				item.logical_id
+			);
+
+			const hasHigherClassification = existingEntities.some(
+				(existing) =>
+					this.#compareClassifications(
+						existing.classification_level,
+						item.classification_level
+					) > 0
+			);
+
+			// The "no write down" rule is implicitly handled here.
+			// If a user with a low clearance tries to write, they won't see the higher-classified
+			// data, so `hasHigherClassification` will be false, and they will overwrite the
+			// lower-classified data they *can* see. This is the correct behavior for polyinstantiation.
+			if (hasHigherClassification) {
+				console.log(
+					`[Storage] Polyinstantiating: Creating new row for ${item.logical_id} at level ${item.classification_level} due to existing higher-level data.`
+				);
+			} else {
+				console.log(
+					`[Storage] Upserting polyinstantiated row for ${item.logical_id} at level ${item.classification_level}.`
+				);
+			}
+
+			// The ID for the DB record is a composite of logical_id and classification_level
+			const recordId = `${item.logical_id}-${item.classification_level}`;
+			const instanceData = { ...item };
+			delete instanceData.id; // Avoid storing the composite ID inside the instance data
+
+			record = {
+				id: recordId,
+				logical_id: item.logical_id,
+				classification_level: item.classification_level,
+				instance_data: instanceData,
+				created_at: item.created_at || new Date().toISOString(),
+				updated_at: new Date().toISOString(),
+			};
+		}
+
 		// Encrypt when not in demo mode
 		if (!this.#demoMode && this.#crypto) {
-			const label = {
-				classification: record.classification ?? "unclassified",
-				compartments: record.compartments ?? [],
-			};
-			const plaintext = new TextEncoder().encode(JSON.stringify(record));
-			const envelope = await this.#crypto.encrypt(label, plaintext);
+			const label = this.#label(record, { storeName });
+			let envelope;
+
+			if (storeName === "objects_polyinstantiated") {
+				const plaintext = new TextEncoder().encode(
+					JSON.stringify(record.instance_data ?? {})
+				);
+				envelope = await this.#crypto.encrypt(label, plaintext);
+				delete record.instance_data;
+			} else {
+				const plaintext = new TextEncoder().encode(
+					JSON.stringify(record)
+				);
+				envelope = await this.#crypto.encrypt(label, plaintext);
+			}
 
 			record = {
 				...record,
-				ciphertext: envelope.ciphertext,
-				iv: envelope.iv,
-				alg: envelope.alg,
-				kid: envelope.kid,
-				tag: envelope.tag,
 				encrypted: true,
+				envelope,
 			};
+
 			console.log(
 				`[Storage] Encryption applied for domain: ${getCryptoDomain(label)}`
 			);
 		}
 
-		const res = await this.#modules.indexeddb.put(store, record);
-		this.stateManager?.emit?.("entitySaved", { store, item: record });
+		const res = await this.#modules.indexeddb.put(storeName, record);
+		this.stateManager?.emit?.("entitySaved", {
+			store: storeName,
+			item: record,
+		});
 		return res;
 	}
 
 	// --------------------------------------------------------------------------
 	// Transparent decrypted reads
 	// --------------------------------------------------------------------------
-	async get(store, id) {
-		const raw = await this.#modules.indexeddb?.get?.(store, id);
-		if (!raw) return null;
-
-		// Enforce No Read Up on the stored label, not decoded payload
-		if (this.#mac) {
-			try {
-				this.#mac.enforceNoReadUp(this.#subject(), this.#label(raw));
-			} catch {
-				return null;
+	async get(storeName, id) {
+		return constantTimeCheck(async () => {
+			if (!this.#modules.indexeddb?.queryByIndex) {
+				throw new Error(
+					"IndexedDB adapter not loaded or queryByIndex not available"
+				);
 			}
-		}
 
-		if (!this.#demoMode && this.#crypto && raw.encrypted) {
-			const label = {
-				classification: raw.classification ?? "unclassified",
-				compartments: raw.compartments ?? [],
-			};
-			const plaintext = await this.#crypto.decrypt(label, {
-				ciphertext: raw.ciphertext,
-				iv: raw.iv,
-				alg: raw.alg,
-				kid: raw.kid,
-				tag: raw.tag,
-			});
-			const obj = JSON.parse(new TextDecoder().decode(plaintext));
-			console.log(
-				`[Storage] Decryption OK for domain: ${getCryptoDomain(label)}`
+			// For polyinstantiated stores, fetch all instances for the logical_id
+			let rawEntities = [];
+			if (storeName === "objects_polyinstantiated") {
+				rawEntities = await this.#modules.indexeddb.queryByIndex(
+					storeName,
+					"logical_id",
+					id
+				);
+			} else {
+				const raw = await this.#modules.indexeddb.get(storeName, id);
+				if (raw) rawEntities.push(raw);
+			}
+
+			if (rawEntities.length === 0) return null;
+
+			const readableEntities = [];
+			const subject = this.#subject();
+
+			for (const raw of rawEntities) {
+				// #filterReadable logic is inlined here for get()
+				// Enforce No Read Up on the stored label
+				if (this.#mac) {
+					try {
+						this.#mac.enforceNoReadUp(subject, this.#label(raw), {
+							storeName,
+						});
+						readableEntities.push(raw); // Add if readable
+					} catch {
+						// Skip this entity if not readable
+					}
+				} else {
+					readableEntities.push(raw); // No MAC, so all are readable
+				}
+			}
+
+			if (readableEntities.length === 0) return null;
+
+			// Decrypt and merge readable entities
+			const decryptedEntities = await Promise.all(
+				readableEntities.map(async (raw) => {
+					if (!this.#demoMode && this.#crypto && raw.encrypted) {
+						const label = this.#label(raw, { storeName });
+						try {
+							const plaintext = await this.#crypto.decrypt(
+								label,
+								raw.envelope
+							);
+							const obj = JSON.parse(
+								new TextDecoder().decode(plaintext)
+							);
+
+							console.log(
+								`[Storage] Decryption OK for domain: ${getCryptoDomain(
+									label
+								)}`
+							);
+
+							if (storeName === "objects_polyinstantiated") {
+								return { ...raw, instance_data: obj };
+							}
+							return { ...raw, ...obj };
+						} catch (e) {
+							console.warn(
+								`[Storage] Decryption failed for entity ${raw.id} with label ${label.level}:`,
+								e
+							);
+							return null; // Decryption failed, treat as unreadable
+						}
+					}
+					return raw;
+				})
 			);
-			return obj;
-		}
 
-		return raw;
+			const validDecryptedEntities = decryptedEntities.filter(Boolean);
+			if (validDecryptedEntities.length === 0) return null;
+
+			// Merge polyinstantiated rows into a single logical entity, otherwise return the single entity.
+			if (storeName === "objects_polyinstantiated") {
+				return this.#mergePolyinstantiatedEntities(
+					validDecryptedEntities
+				);
+			}
+			return validDecryptedEntities[0];
+		}, 100);
 	}
 
 	async delete(store, id) {
@@ -481,22 +688,30 @@ class ModularOfflineStorage {
 			index,
 			value
 		);
-		return this.#filterReadable(out || []);
+		return this.#filterReadable(out || [], store);
 	}
 
 	async getAll(store) {
 		const raw = await this.#modules.indexeddb?.getAll?.(store);
-		return this.#filterReadable(raw || []);
+		return this.#filterReadable(raw || [], store);
 	}
 
-	#filterReadable(list) {
+	#filterReadable(list, storeName) {
 		if (!Array.isArray(list)) return [];
 		if (!this.#mac) return list; // dev fallback
-		const s = this.#subject();
+		const subj = this.#subject();
 		const filtered = [];
 		for (const it of list) {
 			try {
-				this.#mac.enforceNoReadUp(s, this.#label(it));
+				this.#mac.enforceNoReadUp(
+					subj,
+					this.#label(it, {
+						storeName,
+					}),
+					{
+						storeName,
+					}
+				);
 				filtered.push(it);
 			} catch {
 				/* skip */

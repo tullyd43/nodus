@@ -3,12 +3,8 @@
 
 import AdaptiveRenderer from "./AdaptiveRenderer.js";
 import EventFlowEngine from "./EventFlowEngine.js";
-import ManifestPluginSystem from "./ManifestPluginSystem.js";
 import HybridStateManager from "./HybridStateManager.js";
-
-import { metricsRegistry } from "./utils/MetricsRegistry.js";
-import { MetricsReporter } from "./utils/MetricsReporter.js";
-import { ErrorHelpers } from "./utils/ErrorHelpers.js";
+import ManifestPluginSystem from "./ManifestPluginSystem.js";
 
 //These lines are moved to the constructor
 //context.metricsRegistry = metricsRegistry;

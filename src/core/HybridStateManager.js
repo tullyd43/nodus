@@ -3,12 +3,13 @@
 
 import { EventFlowEngine } from "@core/EventFlowEngine.js";
 import { BoundedStack } from "@utils/BoundedStack.js";
+
+import AdaptiveRenderer from "./AdaptiveRenderer.js";
 import { LRUCache } from "../utils/LRUCache.js";
 import { MetricsRegistry } from "../utils/MetricsRegistry.js";
-import AdaptiveRenderer from "./AdaptiveRenderer.js";
-import { componentRegistry } from "./ComponentDefinition.js";
-import { StorageLoader } from "./storage/StorageLoader.js";
 import { MACEngine } from "./security/MACEngine.js";
+import { NonRepudiation } from "./security/NonRepudiation.js";
+import { StorageLoader } from "./storage/StorageLoader.js";
 
 export class HybridStateManager {
 	constructor(config = {}) {
@@ -226,6 +227,9 @@ export class HybridStateManager {
 		// Initialize metrics registry
 		this.metricsRegistry = new MetricsRegistry();
 
+		// NEW: Non-repudiation signer
+		this.signer = new NonRepudiation();
+
 		this.initialized = false;
 		this.unsubscribeFunctions = [];
 	}
@@ -233,86 +237,29 @@ export class HybridStateManager {
 	/**
 	 * NEW: Initialize with dynamic storage system
 	 */
-	async initialize(authContext = {}) {
-		if (this.initialized) {
-			console.log(
-				"[HybridStateManager] Already initialized. Skipping reinit."
-			);
-			return this;
-		}
+	async initialize(authContext) {
+		if (this.initialized) return; // ✅ guard
+		this.initialized = true;
 
-		try {
-			// 1. Initialize storage loader first (so other systems can use it)
-			await this.initializeStorageSystem(authContext, {
-				mac: this.mac,
-			});
+		// (storage first to avoid event flow queries before DB exists)
+		await this.initializeStorageSystem(authContext);
+		await this.initializeEventSystem();
 
-			// 2. Initialize event system
-			await this.initializeEventSystem();
+		// Initialize the Information Flow Tracker
+		const { InformationFlowTracker } = await import(
+			"@core/security/InformationFlowTracker.js"
+		);
+		this.informationFlow = new InformationFlowTracker((evt) =>
+			this.emit("securityEvent", evt)
+		);
 
-			// Instantiate MAC
-			this.mac = new MACEngine({
-				getUserClearance: this.securityContext.getUserClearance,
-				getObjectLabel: this.securityContext.getObjectLabel,
-			});
+		// Initialize the Cross-Domain Solution
+		const { CrossDomainSolution } = await import("@core/security/cds.js");
+		this.crossDomain = new CrossDomainSolution({
+			emit: (evt) => this.emit("securityEvent", evt),
+		});
 
-			// Create storage loader (pass mac + demoMode explicitly)
-			this.storage.loader = new StorageLoader({
-				baseURL: "/src/core/storage/modules/", // ensure absolute path works in dev
-				demoMode: Boolean(this.config.demoMode), // <— top-level
-				preloadModules: this.config.demoMode ? ["demo-crypto"] : [],
-				cacheModules: true,
-				mac: this.mac, // <— pass MAC down
-			});
-
-			await this.storage.loader.init();
-
-			// Create storage instance with user context + demo flag
-			this.storage.instance = await this.storage.loader.createStorage(
-				authContext,
-				{
-					demoMode: Boolean(this.config.demoMode),
-					enableSync: this.config?.sync?.enableSync === true, // load sync stack only if explicitly true
-					realtimeSync: this.config?.sync?.realtime === true,
-				}
-			);
-
-			this.storage.ready = true;
-
-			// Link HybridStateManager ↔ ModularOfflineStorage
-			this.storage.instance.bindStateManager?.(this);
-
-			// Load schema from database
-			await this.loadDatabaseSchema();
-
-			// Load type definitions from database schema
-			await this.loadTypeDefinitionsFromSchema();
-
-			// Initialize persistent queue
-			await this.clientState.pendingOperations.initialize?.();
-
-			// Load essential managers (lazy-loaded to keep bundle small)
-			await this.loadManager("offline");
-			await this.loadManager("embedding");
-			await this.loadManager("extension");
-			await this.loadManager("validation");
-
-			// Start performance monitoring if enabled
-			if (this.config.performanceMode) {
-				this.startPerformanceMonitoring();
-			}
-
-			this.initialized = true;
-			this.emit("initialized", {
-				timestamp: Date.now(),
-				storageModules: this.storage.instance?.modules || [],
-				schemaLoaded: this.schema.loaded,
-			});
-		} catch (error) {
-			console.error("HybridStateManager initialization failed:", error);
-			this.emit("initializationFailed", { error });
-			throw error;
-		}
+		await this.loadDatabaseSchema();
 	}
 
 	async initializeEventSystem() {
@@ -362,19 +309,32 @@ export class HybridStateManager {
 	 * @param {string} type - The type of the audit event.
 	 * @param {object} payload - The data associated with the event.
 	 */
-	recordAuditEvent(type, payload) {
+	async recordAuditEvent(type, payload) {
+		const userId = this.securityContext?.userId || "system";
+		const label = {
+			entityId: payload?.entity?.id || payload?.resource,
+			entityType: payload?.entity?.type,
+		};
+
+		const signature = await this.signer.signAction({
+			userId,
+			action: type,
+			label,
+		});
+
 		const event = {
 			id: crypto.randomUUID(),
 			type,
 			timestamp: new Date().toISOString(),
 			payload,
+			...signature,
 		};
 
 		// In offline/demo mode, persist locally for continuity
 		if (this.config.storageConfig.offlineMode) {
 			const logs = JSON.parse(localStorage.getItem("auditLog") || "[]");
 			logs.push(event);
-			localStorage.setItem("auditLog", JSON.stringify(logs));
+			localStorage.setItem("auditLog", JSON.stringify(logs, null, 2));
 		} else {
 			// Online mode: forward to backend or analytics service
 			this.storage.instance?.logEvent?.(event);
@@ -398,6 +358,7 @@ export class HybridStateManager {
 
 		// Create or update a security context (top-level config takes precedence)
 		this.securityContext = {
+			userId: authContext?.userId,
 			getUserClearance: () => {
 				const lvl =
 					this.config?.auth?.clearanceLevel ||

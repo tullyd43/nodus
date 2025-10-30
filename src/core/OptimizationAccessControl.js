@@ -416,7 +416,7 @@ export function createPermissionRoutes(accessControl) {
         const sessions = accessControl.getActiveSessions();
         res.json({
           success: true,
-          sessions: sessions,
+          sessions,
           count: sessions.length,
         });
       } catch (error) {
@@ -439,7 +439,7 @@ export function createPermissionRoutes(accessControl) {
 
         res.json({
           success: true,
-          revoked: revoked,
+          revoked,
           message: revoked ? "Session revoked" : "Session not found",
         });
       } catch (error) {

@@ -353,7 +353,7 @@ export function enhanceExistingGrid(appViewModel, options = {}) {
   const enhancer = new EnhancedGridRenderer(
     {
       container: gridContainer,
-      appViewModel: appViewModel,
+      appViewModel,
       options: {
         // Default persistence to HybridStateManager
         onLayoutChange: (changeEvent) => {

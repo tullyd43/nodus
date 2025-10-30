@@ -63,14 +63,14 @@ export default class AESCrypto {
 			const iv = crypto.getRandomValues(new Uint8Array(12));
 
 			const encryptedData = await crypto.subtle.encrypt(
-				{ name: "AES-GCM", iv: iv },
+				{ name: "AES-GCM", iv },
 				this.#key,
 				plaintext
 			);
 
 			const result = {
 				data: new Uint8Array(encryptedData),
-				iv: iv,
+				iv,
 				version: this.#keyVersion,
 				alg: "AES-GCM-256",
 				encrypted: true,

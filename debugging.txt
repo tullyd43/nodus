@@ -1,338 +1,267 @@
-t it. Here’s a comprehensive, do-now plan to close the NATO SECRET gaps you listed, mapped onto your Nodus stack (HybridStateManager → StorageLoader → Security layers → DB), with concrete patches, schemas, and test hooks.
+Got it. Here’s a crisp, do-now gameplan to finish polyinstantiation + clean up the remaining NATO-SECRET refinements without breaking your current demo flow.
 
-Phase 0 — Golden Rules (apply immediately)
+Gameplan (executables + minimal diffs)
+0) Lint baseline (already installed)
 
-Deny-by-default & MAC overrides RBAC
+Run these first so you see only new issues from your edits:
 
-Everywhere a permission decision is made, call MAC.enforce*() first; only if it passes, evaluate RBAC.
+# from repo root
+npx eslint . --ext .js,.mjs --fix
 
-Make the MAC outcome non-bypassable: return hard errors and emit accessDenied(MAC) events.
+1) IndexedDB schema: add the polyinstantiated store (and keep callers happy)
 
-Per-classification crypto domains
+Goal: Ensure we have a dedicated store and indexes for polyinstantiated rows, and keep existing code that still says “objects” or “entities” from breaking.
 
-Separate keys per {classification, compartments}; never reuse keys across domains.
+File: src/core/storage/modules/indexeddb-adapter.js
 
-Envelope encryption with KMS/HSM; DB stores ciphertext only.
+In your upgrade handler, make sure both exist:
 
-Uniform errors & constant-time
+objects_polyinstantiated with indexes: logical_id, classification_level, updated_at
 
-Replace all “Forbidden vs Not Found” branches with a single constant-latency response envelope to eliminate timing/semantic channels.
+A compatibility alias for legacy callers (either keep “entities” or also create “objects” as a simple mirror if you prefer). If you don’t want duplication, keep “entities” and update any direct “objects” callers to “entities” (see Step 4).
 
-Phase 1 — Immediate (2–4 months)
-1) Mandatory Access Control (Bell-LaPadula) – engine + integration
-JS core (client) — src/core/security/MACEngine.js
-// Bell–LaPadula: simple lattice with dominance relation
-const LEVELS = ["unclassified","confidential","secret","nato_secret"];
-const rank = (lvl) => LEVELS.indexOf(String(lvl || "").toLowerCase());
+Diff sketch (inside onupgradeneeded):
 
-export class MACEngine {
-  constructor({ getUserClearance, getCompartments }) {
-    this.getUserClearance = getUserClearance;       // () => { level, compartments:Set<string> }
-    this.getCompartments  = getCompartments;        // for data object or container
-  }
-
-  // No Read Up: subject.level >= object.level AND compartments superset
-  canRead(subject, object) {
-    const sl = rank(subject.level), ol = rank(object.level);
-    if (sl < 0 || ol < 0) return false;
-    if (sl < ol) return false; // no read up
-    return this.#compartmentSuperset(subject.compartments, object.compartments);
-  }
-
-  // No Write Down: subject.level <= object.level AND compartments subset
-  canWrite(subject, object) {
-    const sl = rank(subject.level), ol = rank(object.level);
-    if (sl > ol) return false; // no write down
-    return this.#compartmentSubset(subject.compartments, object.compartments);
-  }
-
-  enforceNoReadUp(subject, object)  { if (!this.canRead(subject, object))  throw new Error("MAC_DENY_READ"); }
-  enforceNoWriteDown(subject, object){ if (!this.canWrite(subject, object)) throw new Error("MAC_DENY_WRITE"); }
-
-  #compartmentSuperset(a, b){ for (const x of (b||[])) if (!a?.has?.(x)) return false; return true; }
-  #compartmentSubset(a, b){ for (const x of (a||[])) if (!b?.has?.(x)) return false; return true; }
+// create/ensure polyinstantiated store
+if (!db.objectStoreNames.contains('objects_polyinstantiated')) {
+  const os = db.createObjectStore('objects_polyinstantiated', { keyPath: 'id' });
+  os.createIndex('logical_id', 'logical_id');
+  os.createIndex('classification_level', 'classification_level');
+  os.createIndex('updated_at', 'updated_at');
 }
 
-Hook into existing checks
-
-ComposableSecurity (RBAC) must defer to MAC:
-
-const subj = this.context.getUserClearance();      // { level, compartments:Set }
-const obj  = { level: entity.classification, compartments: new Set(entity.compartments||[]) };
-
-try {
-  this.mac.enforceNoReadUp(subj, obj); // or enforceNoWriteDown on writes
-} catch {
-  this.stateManager.emit("accessDenied", { reason: "MAC", entityId: entity.id });
-  throw new Error("ACCESS_DENIED"); // stop before RBAC
+// (Optional) ensure 'objects' for compatibility, or correct callers to use 'entities'
+if (!db.objectStoreNames.contains('objects')) {
+  const os = db.createObjectStore('objects', { keyPath: 'id' });
+  os.createIndex('entity_type', 'entity_type');
+  os.createIndex('classification', 'classification');
+  os.createIndex('updated_at', 'updated_at');
 }
 
-// …then RBAC role/perm decision…
+
+If you keep only entities, update any code calling store "objects" to "entities" (Step 4 shows the touch points).
+
+Bump the version only if needed. You already upgraded to v1 in logs; set this.#version = 2 and handle the conditional creation in the upgrade function.
+
+2) Storage: finish polyinstantiation CRUD (merge + write rules)
+
+You already added:
+
+#compareClassifications
+
+get(storeName,id) to fetch/merge by logical_id when storeName === 'objects_polyinstantiated'
+
+#mergePolyinstantiatedEntities(entities)
+
+Now, finalize put() for poly:
+
+File: src/core/storage/StorageLoader.js (inside class ModularOfflineStorage)
+
+In put(storeName, item):
+
+If storing to objects_polyinstantiated:
+
+Lookup existing by logical_id (via adapter queryByIndex).
+
+Determine if there’s a higher existing classification than the incoming one; if yes → create new row (different instance, do not overwrite).
+
+If same level exists → overwrite that level’s instance.
+
+Create composite id = \${item.logical_id}-${item.classification_level}`` (keeps keyPath simple).
+
+Enforce MAC “no write down” on the container label (you already wired MAC in).
+
+Already in your code (from the screenshot) – keep it; just ensure:
+
+record.id = ${item.logical_id}-${item.classification_level} before indexeddb.put.
+
+instance_data holds the original item payload for that level.
+
+3) Transparent crypto stays off in demo
+
+You’ve got demoMode → demo-crypto. Keep it. No changes needed now. For production you’ll switch to real crypto modules. (We’ll wire constant-time padding below).
 
 
-StorageLoader CRUD wrappers: pre-check with MAC before any fetch/save.
+4) Callers alignment: use the right store
 
-Server/API gateway
+Audit the 3 main touch points:
 
-Mirror the exact MAC checks server-side (same lattice, same compartments) so client bypass can’t succeed.
+EventFlowEngine currently queries "objects", "entity_type", "event_flow".
+Either ensure you created an objects store (Step 1) or change to "entities".
+Recommended now: Create objects as compatibility so you don’t touch a bunch of files mid-refactor.
 
-2) Polyinstantiation (multi-level versions of same logical object)
-SQL (PostgreSQL 18)
-CREATE TYPE classification_level AS ENUM ('unclassified','confidential','secret','nato_secret');
+HybridStateManager.saveEntity/loadEntity:
 
-CREATE TABLE objects_poly (
-  logical_id          uuid       NOT NULL,
-  classification      classification_level NOT NULL,
-  compartments        text[]     NOT NULL DEFAULT '{}',
-  version             int        NOT NULL DEFAULT 1,
-  instance_data       jsonb      NOT NULL,
-  created_at          timestamptz NOT NULL DEFAULT now(),
-  updated_at          timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (logical_id, classification, compartments)
-);
+Normal entities → "objects" (compat store) or "entities".
 
--- Index for per-level lookups & compartments (GIN)
-CREATE INDEX ix_objects_poly_level ON objects_poly (classification);
-CREATE INDEX ix_objects_poly_comp ON objects_poly USING gin (compartments);
-CREATE INDEX ix_objects_poly_logical ON objects_poly (logical_id);
+Polyinstantiated entities (those with logical_id + classification_level) → "objects_polyinstantiated".
 
--- RLS on: deny by default
-ALTER TABLE objects_poly ENABLE ROW LEVEL SECURITY;
+Add a tiny helper to decide the store:
 
--- SECURITY DEFINER view that applies MAC automatically
-CREATE OR REPLACE FUNCTION mac_can_read(_lvl classification_level, _comps text[])
-RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
-  -- Placeholder: inject Bell-LaPadula dominance + compartment superset logic server-side
-  SELECT true;
-$$;
+// HybridStateManager.js (where you call storage.instance.put/get)
+const storeFor = (e) => e?.logical_id && e?.classification_level 
+  ? 'objects_polyinstantiated' 
+  : 'objects'; // or 'entities' if you skipped the alias
 
-CREATE POLICY p_mac_read ON objects_poly
-  FOR SELECT USING (mac_can_read(classification, compartments));
+await this.storage.instance.put(storeFor(entity), entity);
 
 
-You’ll implement mac_can_read to mirror the lattice/compartment checks (either in PL/pgSQL or via a lookup table).
+When reading a logical entity that might be polyinstantiated: call
 
-Access pattern
+await this.storage.instance.get('objects_polyinstantiated', logicalId);
 
-Application reads via a definer view v_objects_for_session that injects the current session’s clearance/compartments (set via SET app.clearance = 'secret'; SET app.compartments = '{BLUE,ALPHA}').
 
-Writes route to the matching (logical_id, classification, compartments) row; no write down enforced via trigger.
+and let your merge logic return the “effective” view for the current subject. (You already coded the MAC filter + merge path.)
 
-3) Covert channel protections (first wave)
-Constant-time checks
-function fixedDelay(ms) { const start = performance.now(); while (performance.now() - start < ms) {} }
+5) Constant-time access checks (timing channel padding)
 
-export async function macGuarded(fn, opts={padMs:12}) {
+File: src/core/security/ct.js
+
+export async function constantTimeCheck(fn, minMs = 100) {
   const start = performance.now();
-  try { return await fn(); }
-  finally {
-    const elapsed = performance.now() - start;
-    const pad = Math.max(0, opts.padMs - elapsed);
-    fixedDelay(pad);                      // pad to fixed floor
+  let result, err;
+  try { result = await fn(); } catch (e) { err = e; }
+  const elapsed = performance.now() - start;
+  const pad = Math.max(0, minMs - elapsed);
+  await new Promise(r => setTimeout(r, pad));
+  if (err) throw err;
+  return result;
+}
+
+
+Use it in reads that could leak via timing (e.g., ModularOfflineStorage.get when filtering by MAC):
+
+return constantTimeCheck(async () => {
+  const raw = await this.#modules.indexeddb?.get(store, id);
+  if (!raw) return null;
+  const filtered = this.#filterReadable([raw]);
+  return filtered.length ? filtered[0] : null;
+}, 100);
+
+6) Information Flow Tracker (minimal hook)
+
+File: src/core/security/InformationFlowTracker.js
+
+export class InformationFlowTracker {
+  constructor(emit) { this.emit = emit; }
+  derived(fromLabels = [], derivedLabel, meta = {}) {
+    // record derivation edges for audit + downstream policy
+    this.emit?.('infoFlow', { fromLabels, derivedLabel, ...meta, ts: Date.now() });
   }
 }
 
 
-Wrap all deny paths (MAC_DENY_READ/WRITE) and “not found” responses the same way.
+Wire it in places where you transform/aggregate (e.g., after merge of poly rows):
 
-Uniform error envelope: { ok:false, code:"ACCESS_DENIED" } (no hints).
-
-Resource shaping (storage channels)
-
-Per-classification quotas for write rate, payload size, and queue length; apply same error + fixed delay when exceeded.
-
-Disable high-resolution timers to untrusted code paths (e.g., avoid exposing perf markers to user scripts in classified contexts).
-
-4) Information Flow Control (label/taint propagation)
-
-Introduce labels in memory and events:
-
-// Minimal taint label
-function labelOf(entity){ return { level: entity.classification, compartments: new Set(entity.compartments||[]) }; }
-
-// When transforming/aggregating:
-function mergeLabels(a, b){
-  // lattice join: max(level), union(compartments)
-  const LEVELS = ["unclassified","confidential","secret","nato_secret"];
-  const lvl = LEVELS[Math.max(LEVELS.indexOf(a.level), LEVELS.indexOf(b.level))];
-  const comps = new Set([...(a.compartments||[]), ...(b.compartments||[])]);
-  return { level: lvl, compartments: comps };
-}
-
-
-HybridStateManager: attach label onto state slices, events, cache entries.
-
-Before emit/render/save: MAC-check subject vs target label.
-
-5) Cryptographic separation by classification/compartment
-KMS mapping
-export function getCryptoDomain({ classification, compartments=[] }) {
-  const base = classification.toLowerCase();
-  const compKey = compartments.sort().join("+") || "none";
-  return `${base}::${compKey}`; // e.g., "secret::ALPHA+BLUE"
-}
-
-
-Keyring: { domain → {alg, kid} }; keys in HSM/KMS per domain.
-
-StorageLoader encrypts payload using the correct domain before persistence.
-
-Never decrypt cross-domain to re-encrypt; use CDS workflow (see below).
-
-6) Non-repudiation (PKI + TSA) — first cut
-Tables
-CREATE TABLE action_signatures (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  actor_id uuid NOT NULL,
-  action   text NOT NULL,
-  classification classification_level NOT NULL,
-  payload_digest bytea NOT NULL,
-  signature bytea NOT NULL,
-  cert_chain bytea NOT NULL,
-  tsa_token bytea,
-  created_at timestamptz NOT NULL DEFAULT now()
+this.stateManager?.informationFlow?.derived(
+  readableEntities.map(e => ({ level: e.classification_level, compartments: e.compartments })),
+  { level: highestClassification },
+  { operation: 'poly_merge', logical_id: id }
 );
 
-Code stub
-class NonRepudiation {
-  async signAction({actorId, action, classification, payload}) {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(payload)));
-    // Use smart card / OS keystore: WebAuthn/PKCS#11 bridge (platform-specific)
-    const { signature, certChain } = await this.pkiSign(Buffer.from(digest));
-    const tsa = await this.requestTimestampToken(digest); // RFC 3161 TSA
 
-    await api.storeSignature({ actorId, action, classification, digest, signature, certChain, tsa });
+Add to HSM:
+
+// in HybridStateManager constructor
+this.informationFlow = new (await import('@core/security/InformationFlowTracker.js')).InformationFlowTracker(
+  (evt) => this.emit('securityEvent', evt)
+);
+
+7) CDS Workflow skeleton (just enough to unblock)
+
+File: src/core/security/cds.js
+
+export class CrossDomainSolution {
+  constructor({ emit }) { this.emit = emit; }
+  async requestDowngrade({ dataId, fromLevel, toLevel, justification }) {
+    this.emit?.('cdsEvent', { type: 'request_downgrade', dataId, fromLevel, toLevel, justification, ts: Date.now() });
+    // Persist a CDS ticket to the DB (objects: entity_type='cds_ticket')
+    // For now, return a stub ticket id
+    return { ticketId: crypto.randomUUID(), status: 'pending' };
+  }
+  async requestUpgrade({ dataId, fromLevel, toLevel, source }) {
+    this.emit?.('cdsEvent', { type: 'request_upgrade', dataId, fromLevel, toLevel, source, ts: Date.now() });
+    return { ticketId: crypto.randomUUID(), status: 'pending' };
   }
 }
 
-7) Cross-Domain Solution (CDS) interface
-Tables
-CREATE TABLE cds_requests (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  logical_id uuid NOT NULL,
-  from_level classification_level NOT NULL,
-  to_level classification_level NOT NULL,
-  compartments_from text[] NOT NULL,
-  compartments_to   text[] NOT NULL,
-  direction text NOT NULL CHECK (direction IN ('upgrade','downgrade')),
-  status text NOT NULL DEFAULT 'pending',
-  justification text,
-  sanitization_profile text,     -- which redaction/sanitizer set to use
-  approver_chain jsonb DEFAULT '[]'::jsonb,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
 
-Flow
+Wire it in HSM so UI can drive the workflow later.
 
-request → queue → 2-person integrity approvals → sanitization pipeline (pluggable redactors) → write target instance in objects_poly.
+8) Non-repudiation (PKI) placeholder that won’t block demo
 
-Emit cds.requested, cds.approved, cds.completed, cds.denied.
+You already added CryptoDomain etc. For now, add a stable interface:
 
-8) Secure Destruction (crypto-erasure)
+File: src/core/security/NonRepudiation.js
 
-Keep per-domain DEK wrapped with KEK in KMS.
-
-Destroy data by revoking KEK (rendering all DEKs unusable).
-
-For media that requires overwrite: schedule certified wipe and record:
-
-CREATE TABLE destruction_certificates (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  logical_id uuid NOT NULL,
-  classification classification_level NOT NULL,
-  method text NOT NULL,             -- "crypto-erasure" | "NIST-3pass"
-  verifier text,                    -- person or system
-  evidence jsonb,                   -- logs, device serials, etc.
-  created_at timestamptz DEFAULT now()
-);
-
-Phase 2 — Advanced (6–12 months)
-9) MLS database hardening
-
-Partition tables by classification into separate tablespaces with independent TDE keys (filesystem or cloud KMS).
-
-Evaluate Trusted PostgreSQL (SE-PostgreSQL) or PostgreSQL + SELinux MLS policies if deployable in your stack.
-
-Ensure server-side MAC in PL/pgSQL matches client logic; RLS + policies + definer views for all access paths.
-
-10) Trusted Path
-
-Mutual TLS with client certs bound to user identity (smart card/FIDO2).
-
-Pinning & attestation on client; mandate secure attention (trusted UI page for classified ops).
-
-Disable mixed content; Content Security Policy locked.
-
-Integration Points (Nodus)
-
-HybridStateManager
-
-Add this.mac = new MACEngine(contextProviders);
-
-Subscribe: accessDenied(MAC), cds.*, nonrep.*;
-
-Enforce MAC in saveEntity, loadEntity, emit paths for labeled data.
-
-StorageLoader
-
-Before .get/.put: call MAC.enforce*();
-
-Resolve crypto domain → encrypt/decrypt with per-domain KMS key;
-
-Polyinstantiation aware: choose row by {logical_id, classification, compartments}.
-
-ComposableSecurity
-
-Call MAC first; only then RBAC (roles/scopes).
-
-EventFlowEngine
-
-Carry label on event payloads; checked at each subscriber boundary.
-
-Tests you can run now
-
-MAC E2E (Jest)
-
-test("no read up / no write down", () => {
-  const mac = new MACEngine({ getUserClearance:()=>({level:"confidential", compartments:new Set(["BLUE"])}) });
-  const secretObj = { level:"secret", compartments:new Set(["BLUE"]) };
-  expect(() => mac.enforceNoReadUp(mac.getUserClearance(), secretObj)).toThrow("MAC_DENY_READ");
-});
+export class NonRepudiation {
+  async signAction({ userId, action, label }) {
+    // demo: create a detached JWS-like stub
+    const payload = JSON.stringify({ userId, action, label, ts: Date.now() });
+    const signature = btoa(payload); // replace with real JWS later
+    return { signature, algorithm: 'demo-stub', timestamp: new Date().toISOString() };
+  }
+}
 
 
-Constant-time envelope
+Call it from your audit trail code just before persisting an audit record.
 
-Measure variance for allow/deny across 1k calls → assert within tolerance window (e.g., ±1ms around padded floor).
 
-Polyinstantiation SQL
 
-Insert (logical_id=A, classification='secret') and ('confidential'); ensure RLS returns only the dominated one for a confidential session.
+9) ESLint blockers you still have (quick wins)
 
-Crypto domain routing
+Private fields must be declared at top of the class:
 
-For {secret, [ALPHA]} vs {secret, [BLUE]}, assert different KMS key IDs used.
+File: src/core/storage/SyncLayer.js
 
-Non-repudiation
+export default class SyncLayer {
+  #autoSyncInterval = null;  // ✅ declare it here
+  //...
+}
 
-Store signature + TSA; verify with offline validator.
 
-CDS workflow
+File: src/core/storage/modules/batch-sync.js
 
-Simulate downgrade request → require 2 approvers → sanitizer removes fields → writes new instance.
+export default class BatchSync {
+  #flushQueue = null;  // ✅ declare it here (or #syncQueue if that’s the one you meant)
+  #syncQueue = [];
+  //...
+}
 
-Minimal Patches (drop-in)
 
-Lock MAC pre-checks everywhere (StorageLoader CRUD, ComposableSecurity, HybridStateManager.emit/save).
+Empty block:
 
-Add polyinstantiation tables + RLS + definer views (SQL above).
+File: src/utils/MetricsReporter.js (line ~489)
 
-Add crypto domain mapping and per-domain KMS keys in your encryption module.
+- if (something) { }
++ if (something) { /* intentionally empty: metric suppressed in demo */ }
 
-Wrap responses in constant-time envelope and unify errors.
 
-Add non-repudiation tables and a signing stub; call on classified operations.
+Browser globals errors (performance, navigator, localStorage, etc.):
+Already fixed by the flat config using env: { browser: true }. If any remain, add file-level pragmas where it’s node-only or test-only:
 
-Add CDS tables and stub endpoints (/cds/request, /cds/approve, /cds/complete).
+/* eslint-env browser */
 
-Add destruction certificates table and crypto-erasure operation (KEK revoke).
+
+Undefined symbols like showGridToast
+Either import it or guard with window?.showGridToast?.(...).
+
+When done:
+
+npx eslint . --ext .js,.mjs --fix
+
+10) Smoke test checklist (quick)
+
+Demo mode true: confirm logs show demo-crypto loaded and no encryption errors.
+
+Seed two rows for the same logical_id at different classification_levels in objects_polyinstantiated.
+
+Call get('objects_polyinstantiated', logicalId):
+
+With subject at confidential: only merge levels ≤ confidential.
+
+With subject at secret: merged data prefers fields from secret where overlapping.
+
+Observe EventFlowEngine no longer complains about missing stores.
+
+ESLint returns zero errors (warnings OK for now).

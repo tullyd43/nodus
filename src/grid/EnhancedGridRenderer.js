@@ -339,7 +339,7 @@ export class EnhancedGridRenderer {
 
   enhanceDragCapabilities(blockEl, blockData) {
     // Enhance existing drag with modern techniques while maintaining compatibility
-    let existingDragHandler = blockEl.onmousedown;
+    const existingDragHandler = blockEl.onmousedown;
 
     const enhancedDragStart = (e) => {
       if (e.target.classList.contains("resize-handle")) return;

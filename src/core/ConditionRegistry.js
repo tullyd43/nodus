@@ -452,10 +452,10 @@ export class ConditionRegistry {
         try {
           // Create a safe evaluation context
           const safeContext = {
-            context: context,
-            Math: Math,
-            Date: Date,
-            JSON: JSON,
+            context,
+            Math,
+            Date,
+            JSON,
             // Add other safe globals as needed
           };
 
@@ -488,9 +488,7 @@ export class ConditionRegistry {
    * Get nested property value using dot notation
    */
   getNestedProperty(obj, path) {
-    return path.split(".").reduce((current, key) => {
-      return current && current[key] !== undefined ? current[key] : undefined;
-    }, obj);
+    return path.split(".").reduce((current, key) => current && current[key] !== undefined ? current[key] : undefined, obj);
   }
 
   /**
@@ -602,11 +600,11 @@ export class ConditionRegistry {
     const conditionDef = entity.data;
 
     // Create evaluator function from definition
-    const evaluator = (conditionParams, context, options) => {
+    const evaluator = (conditionParams, context, options) => 
       // Implementation would depend on the condition definition format
       // This is a placeholder for entity-driven condition definitions
-      return true;
-    };
+       true
+    ;
 
     return {
       type: conditionDef.type,

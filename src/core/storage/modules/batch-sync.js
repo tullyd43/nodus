@@ -121,7 +121,7 @@ export default class BatchSync {
   /**
    * Manually flush queue
    */
-  async flushQueue() {
+  async #flushQueue() {
     if (this.#syncQueue.length === 0) return;
 
     const items = this.#syncQueue.splice(0);

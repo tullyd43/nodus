@@ -1,8 +1,9 @@
 // server/OptimizationWebSocketServer.js
 // Real-time WebSocket server for database optimization updates
 
-import { WebSocketServer } from "ws";
 import { EventEmitter } from "events";
+
+import { WebSocketServer } from "ws";
 
 export class OptimizationWebSocketServer extends EventEmitter {
   constructor(server, optimizer) {
@@ -50,7 +51,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
       const clientId = this.generateClientId();
       const clientInfo = {
         id: clientId,
-        ws: ws,
+        ws,
         ip: request.socket.remoteAddress,
         userAgent: request.headers["user-agent"],
         connectedAt: new Date(),
@@ -81,7 +82,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
       // Send initial connection confirmation
       this.sendToClient(clientId, {
         type: "connection_established",
-        clientId: clientId,
+        clientId,
         serverTime: new Date().toISOString(),
         availableSubscriptions: [
           "optimization_events",
@@ -229,7 +230,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
 
       this.sendToClient(clientId, {
         type: "authentication_success",
-        permissions: permissions,
+        permissions,
         timestamp: new Date().toISOString(),
       });
 
@@ -332,8 +333,8 @@ export class OptimizationWebSocketServer extends EventEmitter {
       this.sendToClient(clientId, {
         type: "system_status",
         timestamp: new Date().toISOString(),
-        health: health,
-        metrics: metrics,
+        health,
+        metrics,
         pendingSuggestions: suggestions.length,
         appliedOptimizations: applied.length,
         serverMetrics: this.metrics,
@@ -511,7 +512,7 @@ export function createWebSocketStatsRoute(wsServer) {
       const stats = wsServer.getStats();
       res.json({
         success: true,
-        stats: stats,
+        stats,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {

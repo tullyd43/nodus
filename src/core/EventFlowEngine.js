@@ -53,19 +53,13 @@ export class EventFlowEngine {
 	 */
 	async loadEventFlows() {
 		try {
-			// Use the correct storage query method
-			const flowEntities =
-				(await this.stateManager.storage.instance?.query?.(
-					"objects",
-					"entity_type",
-					"event_flow"
-				)) || [];
-
-			for (const entity of flowEntities) {
-				this.registerFlow(entity.data);
+			const flows = await this.stateManager.storage.instance
+				?.query("objects", "entity_type", "event_flow"); // ✅ store='objects'
+			for (const entity of (flows || [])) {
+				this.registerFlow(entity.data || entity.content || entity); // tolerate shapes
 			}
-		} catch (error) {
-			console.error("Failed to load event flows:", error);
+		} catch (err) {
+			console.error("Failed to load event flows:", err);
 		}
 	}
 

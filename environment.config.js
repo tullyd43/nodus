@@ -2,17 +2,20 @@
 // Central source of truth for environment flags.
 
 export const AppConfig = {
-	/**
-	 * This is now the single place to change modes.
-	 * true: Loads 'demo-crypto'
-	 * false: Loads 'basic-crypto' (or enterprise/NATO crypto based on context)
-	 */
-	demoMode: true,
-
-	// We can move other flags here for consistency
-	offlineEnabled: true,
-	enableSync: false,
-
-	// You can add other flags here as your app grows
-	// logLevel: 'debug',
+  demoMode: true, // or false in prod
+  storageConfig: {
+    dbName: "nodus_offline",
+    version: 1,
+    stores: {
+      objects: {
+        keyPath: "id",
+        indexes: [
+          { name: "entity_type", keyPath: "entity_type" },
+          { name: "classification", keyPath: "classification" },
+          { name: "updated_at", keyPath: "updated_at" }
+        ]
+      }
+    }
+  },
+  sync: { enableSync: false, realtime: false }
 };

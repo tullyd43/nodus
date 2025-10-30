@@ -3,12 +3,12 @@
  * Shows all features working together: policies, toasts, AI assistant, accessibility
  */
 
+import AILayoutAssistant from "./AILayoutAssistant.js";
 import EnhancedGridRenderer from "./EnhancedGridRenderer.js";
 import GridPolicyHelper, {
   extendSystemPoliciesWithGrid,
 } from "./GridPolicyIntegration.js";
 import { getToastManager } from "./GridToastManager.js";
-import AILayoutAssistant from "./AILayoutAssistant.js";
 
 
 /**
@@ -89,7 +89,7 @@ export class CompleteGridSystem {
 
     this.gridEnhancer = new EnhancedGridRenderer(
       {
-        container: container,
+        container,
         appViewModel: this.appViewModel,
         options: {
           // Persistence with policy awareness
