@@ -40,16 +40,12 @@ const bootstrap = async () => {
 
 	window.nodusApp = stateManager;
 
-	// 3. Create a simple appViewModel to bridge state and UI
+	// 3. V8.0 Parity: Create a simple appViewModel that holds the stateManager as the source of truth.
+	// The UI layer can now access all managers and state directly from the stateManager instance.
 	const appViewModel = {
 		hybridStateManager: stateManager,
-		context: {
-			getPolicy: (domain, key) =>
-				stateManager.managers.policy?.getPolicy(domain, key),
-			setPolicy: (domain, key, value) =>
-				stateManager.managers.policy?.update(domain, key, value),
-		},
-		// Add other view model properties as needed
+		// The context object is no longer needed, as the UI can access managers
+		// directly via `appViewModel.hybridStateManager.managers`.
 	};
 	window.appViewModel = appViewModel;
 
@@ -60,10 +56,10 @@ const bootstrap = async () => {
 
 	console.log("✅ Complete Grid System Initialized. Application is ready.");
 
-	// 5. (Optional) Initialize the developer dashboard for real-time metrics
+	// 5. V8.0 Parity: Initialize the developer dashboard for real-time metrics.
+	// Pass the stateManager directly, which provides access to all necessary managers and the event bus.
 	new DeveloperDashboard(document.body, {
-		metricsReporter: stateManager.managers.metricsReporter,
-		eventFlow: stateManager.eventFlow,
+		stateManager: stateManager,
 	});
 };
 

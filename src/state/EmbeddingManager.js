@@ -5,11 +5,6 @@
  */
 
 import { DateCore } from "../utils/DateUtils.js";
-import {
-	ErrorHelpers,
-	NetworkError,
-	PolicyError,
-} from "../utils/ErrorHelpers.js";
 /**
  * @class EmbeddingManager
  * @classdesc Handles all operations related to vector embeddings, including generation via API or placeholders,
@@ -19,25 +14,29 @@ export class EmbeddingManager {
 	/**
 	 * Creates an instance of EmbeddingManager.
 	 * @param {object} context - The application context.
-	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager.
-	 * @param {object} context.managers - A collection of system managers.
-	 * @param {import('../managers/CacheManager.js').CacheManager} context.managers.cacheManager - The central cache manager.
-	 * @param {import('../managers/IdManager.js').IdManager} context.managers.idManager - The central ID manager.
-	 * @param {import('../utils/MetricsRegistry.js').MetricsRegistry} context.managers.metricsRegistry - The central metrics registry.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 * @param {string} [options.model='text-embedding'] - The name of the embedding model to use.
 	 * @param {number} [options.embeddingDimensions=384] - The dimensionality of the embedding vectors.
 	 * @param {number} [options.batchSize=10] - The default batch size for processing multiple embeddings.
 	 * @param {string|null} [options.apiEndpoint=null] - The API endpoint for the embedding generation service.
 	 */
-	constructor({ stateManager, managers, ...options } = {}) {
+	constructor({ stateManager, ...options } = {}) {
 		this.stateManager = stateManager; // For config and event emission
-		this.managers = managers; // For access to other managers
-		this.idManager = managers.idManager;
-		this.metrics = managers.metricsRegistry?.namespace("ai.embeddings");
+		// V8.0 Parity: Derive managers from stateManager
+		this.managers = stateManager.managers;
+		this.idManager = this.managers.idManager;
+		this.metrics =
+			this.managers.metricsRegistry?.namespace("ai.embeddings");
+		// V8.0 Parity: Mandate 1.2 - Derive ErrorHelpers from the stateManager.
+		const ErrorHelpers = this.managers.errorHelpers;
+		this.NetworkError = ErrorHelpers.NetworkError;
+		this.PolicyError = ErrorHelpers.PolicyError;
 
-		this.errorBoundary = ErrorHelpers.createErrorBoundary(
+		this.errorBoundary = ErrorHelpers?.createErrorBoundary(
 			// Pass the full context so errors can be audited and enriched
-			{ eventFlow: stateManager.eventFlow, managers },
+			{
+				managers: this.managers,
+			},
 			"EmbeddingManager"
 		);
 
@@ -50,9 +49,9 @@ export class EmbeddingManager {
 		};
 
 		// Use the central CacheManager for all caching
-		this.cache = managers.cacheManager?.getCache("embeddings", 1000);
+		this.cache = this.managers.cacheManager?.getCache("embeddings", 1000);
 		this.pendingEmbeddings = new Map(); // Deduplication for concurrent requests
-		this.similarityCache = managers.cacheManager?.getCache(
+		this.similarityCache = this.managers.cacheManager?.getCache(
 			"similarity",
 			5000
 		);
@@ -77,7 +76,7 @@ export class EmbeddingManager {
 		);
 		if (!canRead) {
 			// Use a specific, categorized error for better handling
-			throw new PolicyError(
+			throw new this.PolicyError(
 				"Insufficient clearance to read entity for embedding.",
 				{ entityId: entity.id, requiredLabel: entity.securityLabel }
 			);
@@ -185,7 +184,7 @@ export class EmbeddingManager {
 
 		if (!response.ok) {
 			// Use a specific, categorized error for network issues
-			throw new NetworkError(
+			throw new this.NetworkError(
 				`Embedding API request failed: ${response.status} ${response.statusText}`
 			);
 		}

@@ -14,23 +14,18 @@
  */
 export async function constantTimeCheck(fn, minDurationMs = 100) {
 	const start = performance.now();
+
 	try {
-		const result = await fn();
+		// V8.0 Parity: Execute the function and return its result.
+		return await fn();
+	} finally {
+		// V8.0 Parity: Use a `finally` block to ensure the timing check runs
+		// regardless of whether the function succeeds or fails. This avoids code duplication.
 		const elapsed = performance.now() - start;
 		if (elapsed < minDurationMs) {
 			await new Promise((resolve) =>
 				setTimeout(resolve, minDurationMs - elapsed)
 			);
 		}
-		return result;
-	} catch (error) {
-		const elapsed = performance.now() - start;
-		if (elapsed < minDurationMs) {
-			await new Promise((resolve) =>
-				setTimeout(resolve, minDurationMs - elapsed)
-			);
-		}
-		// Re-throw the original error to allow for proper handling upstream.
-		throw error;
 	}
 }

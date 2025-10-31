@@ -11,35 +11,44 @@
  * @module StrictValidator
  */
 export default class StrictValidator {
-	/**
-	 * @private
-	 * @type {object}
-	 */
+	/** @private @type {object} */
 	#securityRules;
-	/**
-	 * @private
-	 * @type {object}
-	 */
+	/** @private @type {object} */
 	#complianceRules;
-	/**
-	 * @private
-	 * @type {object}
-	 */
+	/** @private @type {object} */
 	#businessRules;
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager = null;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+
+	/** @public @type {string} */
+	name = "StrictValidator";
+	/** @public @type {string} */
+	type = "security";
+	/** @public @type {string[]} */
+	supports = ["objects", "events", "relationships"];
 
 	/**
 	 * Creates an instance of StrictValidator.
-	 * @param {object} [options={}] - Configuration options for the validator.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for the validator.
 	 */
-	constructor(options = {}) {
-		this.name = "StrictValidator";
-		this.type = "security";
-		this.supports = ["objects", "events", "relationships"];
+	constructor({ stateManager, options = {} }) {
+		this.#stateManager = stateManager;
+		// V8.0 Parity: Derive dependencies from the stateManager.
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("strictValidator");
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
 
-		this.#securityRules = this.#initializeSecurityRules(options);
-		this.#complianceRules = this.#initializeComplianceRules(options);
-		this.#businessRules = this.#initializeBusinessRules(options);
-
+		// Initialize rule sets.
+		this.#securityRules = StrictValidator.#initializeSecurityRules(options);
+		this.#complianceRules =
+			StrictValidator.#initializeComplianceRules(options);
+		this.#businessRules = StrictValidator.#initializeBusinessRules(options);
 		console.log("[StrictValidator] Loaded for strict validation");
 	}
 
@@ -60,35 +69,44 @@ export default class StrictValidator {
 	 * @returns {Promise<object>} A validation result object.
 	 */
 	async validate(entity, context = {}) {
+		this.#metrics?.increment("validationsPerformed");
+		const startTime = performance.now();
 		const errors = [];
 		const warnings = [];
+		const validationSteps = [
+			this.#validateSecurity.bind(this),
+			this.#validateCompliance.bind(this),
+			this.#validateBusinessRules.bind(this),
+			this.#validateDataIntegrity.bind(this),
+		];
 
-		// 1. Security validation
-		const securityResult = await this.#validateSecurity(entity);
-		errors.push(...securityResult.errors);
-		warnings.push(...securityResult.warnings);
+		// V8.0 Parity: Simplify validation pipeline execution.
+		for (const step of validationSteps) {
+			const result = await step(entity, context);
+			errors.push(...result.errors);
+			warnings.push(...result.warnings);
+		}
 
-		// 2. Compliance validation
-		const complianceResult = await this.#validateCompliance(entity);
-		errors.push(...complianceResult.errors);
-		warnings.push(...complianceResult.warnings);
+		const isValid = errors.length === 0;
+		const duration = performance.now() - startTime;
+		this.#metrics?.updateAverage("averageValidationTime", duration);
 
-		// 3. Business rules validation
-		const businessResult = await this.#validateBusinessRules(entity);
-		errors.push(...businessResult.errors);
-		warnings.push(...businessResult.warnings);
+		if (!isValid) {
+			this.#metrics?.increment("validationsFailed");
+			this.#audit("validation_failed", {
+				entityId: entity.id,
+				entityType: entity.entity_type,
+				errors,
+			});
+		}
 
-		// 4. Data integrity validation
-		const integrityResult = await this.#validateDataIntegrity(entity);
-		errors.push(...integrityResult.errors);
-		warnings.push(...integrityResult.warnings);
-
-		return {
+		const result = {
 			valid: errors.length === 0,
 			errors,
 			warnings,
 			validator: this.name,
 		};
+		return result;
 	}
 
 	/**
@@ -103,43 +121,40 @@ export default class StrictValidator {
 		const errors = [];
 		const warnings = [];
 
-		// Check field-level security rules
-		if (this.#securityRules.fields[fieldName]) {
-			const fieldRule = this.#securityRules.fields[fieldName];
+		const fieldRule = this.#securityRules.fields[fieldName] || {};
 
-			if (
-				fieldRule.required &&
-				(value === null || value === undefined || value === "")
-			) {
-				errors.push(
-					`Field ${fieldName} is required for security compliance`
-				);
-			}
+		// V8.0 Parity: Simplify field validation logic.
+		if (
+			fieldRule.required &&
+			(value === null || value === undefined || value === "")
+		) {
+			errors.push(
+				`Field ${fieldName} is required for security compliance`
+			);
+		}
 
-			if (
-				fieldRule.maxLength &&
-				typeof value === "string" &&
-				value.length > fieldRule.maxLength
-			) {
-				errors.push(
-					`Field ${fieldName} exceeds maximum length of ${fieldRule.maxLength}`
-				);
-			}
+		if (
+			fieldRule.maxLength &&
+			typeof value === "string" &&
+			value.length > fieldRule.maxLength
+		) {
+			errors.push(
+				`Field ${fieldName} exceeds maximum length of ${fieldRule.maxLength}`
+			);
+		}
 
-			if (
-				fieldRule.pattern &&
-				typeof value === "string" &&
-				!fieldRule.pattern.test(value)
-			) {
-				errors.push(
-					`Field ${fieldName} does not match required pattern`
-				);
-			}
+		if (
+			fieldRule.pattern &&
+			typeof value === "string" &&
+			!fieldRule.pattern.test(value)
+		) {
+			errors.push(`Field ${fieldName} does not match required pattern`);
+		}
 
-			if (
-				fieldRule.sensitiveData &&
-				!this.#validateSensitiveData(value)
-			) {
+		if (fieldRule.sensitiveData) {
+			const isSensitiveAndInvalid =
+				!StrictValidator.#validateSensitiveData(value);
+			if (isSensitiveAndInvalid) {
 				errors.push(
 					`Field ${fieldName} contains potentially sensitive data that requires encryption`
 				);
@@ -160,7 +175,7 @@ export default class StrictValidator {
 	 * @param {object} context - The validation context.
 	 * @returns {boolean} True if the entity is supported.
 	 */
-	supports(entity, context) {
+	isApplicableFor(entity, context) {
 		// Support all entities in strict mode
 		return true;
 	}
@@ -183,32 +198,27 @@ export default class StrictValidator {
 	 * @param {object} entity - The entity to validate.
 	 * @returns {Promise<{errors: string[], warnings: string[]}>} The validation errors and warnings.
 	 */
-	async #validateSecurity(entity) {
+	async #validateSecurity(entity, context) {
 		const errors = [];
 		const warnings = [];
 
 		// 1. Classification validation
-		if (!entity.nato_classification) {
-			errors.push("Missing required classification marking");
-		} else {
-			const validClassifications = [
-				"public",
-				"internal",
-				"restricted",
-				"confidential",
-				"secret",
-				"top_secret",
-				"nato_restricted",
-				"nato_confidential",
-				"nato_secret",
-				"cosmic_top_secret",
-			];
-
-			if (!validClassifications.includes(entity.nato_classification)) {
-				errors.push(
-					`Invalid classification: ${entity.nato_classification}`
-				);
-			}
+		const validClassifications = [
+			"public",
+			"internal",
+			"restricted",
+			"confidential",
+			"secret",
+			"top_secret",
+			"nato_restricted",
+			"nato_confidential",
+			"nato_secret",
+			"cosmic_top_secret",
+		];
+		if (!entity.classification) {
+			errors.push("Missing required 'classification' field.");
+		} else if (!validClassifications.includes(entity.classification)) {
+			errors.push(`Invalid classification: ${entity.classification}`);
 		}
 
 		// 2. Compartment validation
@@ -217,15 +227,16 @@ export default class StrictValidator {
 			Array.isArray(entity.compartment_markings)
 		) {
 			for (const compartment of entity.compartment_markings) {
-				if (!this.#isValidCompartment(compartment)) {
+				if (!StrictValidator.#isValidCompartment(compartment)) {
 					errors.push(`Invalid compartment marking: ${compartment}`);
 				}
 			}
 		}
 
-		// 3. Data integrity hash validation
+		// 3. Data integrity hash validation (Example, assuming it's a feature)
 		if (entity.integrity_hash) {
-			const calculatedHash = await this.#calculateIntegrityHash(entity);
+			const calculatedHash =
+				await StrictValidator.#calculateIntegrityHash(entity);
 			if (calculatedHash !== entity.integrity_hash) {
 				errors.push(
 					"Data integrity hash mismatch - possible tampering detected"
@@ -233,20 +244,25 @@ export default class StrictValidator {
 			}
 		}
 
-		// 4. Audit trail validation
-		if (!entity.audit_trail || !Array.isArray(entity.audit_trail)) {
+		// 4. Audit trail validation (Example, assuming it's a feature)
+		if (
+			this.#securityRules.requireAuditTrail &&
+			(!entity.audit_trail || !Array.isArray(entity.audit_trail))
+		) {
 			warnings.push("Missing or invalid audit trail");
 		}
 
 		return { errors, warnings };
 	}
 
-	async #validateCompliance(entity) {
+	async #validateCompliance(entity, context) {
 		const errors = [];
 		const warnings = [];
 
 		// 1. GDPR compliance (if applicable)
-		if (this.#containsPersonalData(entity)) {
+		if (
+			StrictValidator.#containsPersonalData(entity, this.#complianceRules)
+		) {
 			if (!entity.gdpr_compliant) {
 				errors.push(
 					"Entity contains personal data but lacks GDPR compliance marking"
@@ -261,7 +277,9 @@ export default class StrictValidator {
 		}
 
 		// 2. HIPAA compliance (if applicable)
-		if (this.#containsHealthData(entity)) {
+		if (
+			StrictValidator.#containsHealthData(entity, this.#complianceRules)
+		) {
 			if (!entity.hipaa_compliant) {
 				errors.push(
 					"Entity contains health data but lacks HIPAA compliance marking"
@@ -296,12 +314,15 @@ export default class StrictValidator {
 		return { errors, warnings };
 	}
 
-	async #validateBusinessRules(entity) {
+	async #validateBusinessRules(entity, context) {
 		const errors = [];
 		const warnings = [];
 
 		// 1. Required fields validation
-		const requiredFields = this.#getRequiredFields(entity.entity_type);
+		const requiredFields = StrictValidator.#getRequiredFields(
+			entity.entity_type,
+			this.#businessRules
+		);
 		for (const field of requiredFields) {
 			if (!entity[field] || entity[field] === "") {
 				errors.push(`Required field missing: ${field}`);
@@ -309,11 +330,11 @@ export default class StrictValidator {
 		}
 
 		// 2. Field format validation
-		if (entity.email && !this.#isValidEmail(entity.email)) {
+		if (entity.email && !StrictValidator.#isValidEmail(entity.email)) {
 			errors.push("Invalid email format");
 		}
 
-		if (entity.phone && !this.#isValidPhone(entity.phone)) {
+		if (entity.phone && !StrictValidator.#isValidPhone(entity.phone)) {
 			warnings.push("Phone number format may be invalid");
 		}
 
@@ -344,14 +365,14 @@ export default class StrictValidator {
 		return { errors, warnings };
 	}
 
-	async #validateDataIntegrity(entity) {
+	async #validateDataIntegrity(entity, context) {
 		const errors = [];
 		const warnings = [];
 
 		// 1. Check for SQL injection patterns
-		const textFields = this.#getTextFields(entity);
+		const textFields = StrictValidator.#getTextFields(entity);
 		for (const [field, value] of textFields) {
-			if (this.#containsSQLInjection(value)) {
+			if (StrictValidator.#containsSQLInjection(value)) {
 				errors.push(
 					`Potential SQL injection detected in field: ${field}`
 				);
@@ -360,7 +381,7 @@ export default class StrictValidator {
 
 		// 2. Check for XSS patterns
 		for (const [field, value] of textFields) {
-			if (this.#containsXSS(value)) {
+			if (StrictValidator.#containsXSS(value)) {
 				errors.push(
 					`Potential XSS content detected in field: ${field}`
 				);
@@ -378,7 +399,7 @@ export default class StrictValidator {
 
 		// 4. Check for binary data in text fields
 		for (const [field, value] of textFields) {
-			if (this.#containsBinaryData(value)) {
+			if (StrictValidator.#containsBinaryData(value)) {
 				warnings.push(`Field ${field} may contain binary data`);
 			}
 		}
@@ -387,10 +408,12 @@ export default class StrictValidator {
 	}
 
 	// Helper methods
-	#initializeSecurityRules(options) {
+	/** @private @static */
+	static #initializeSecurityRules(options) {
 		return {
+			requireAuditTrail: options.requireAuditTrail ?? false,
 			fields: {
-				nato_classification: {
+				classification: {
 					required: true,
 					pattern:
 						/^(public|internal|restricted|confidential|secret|top_secret|nato_restricted|nato_confidential|nato_secret|cosmic_top_secret)$/,
@@ -411,7 +434,8 @@ export default class StrictValidator {
 		};
 	}
 
-	#initializeComplianceRules(options) {
+	/** @private @static */
+	static #initializeComplianceRules(options) {
 		return {
 			gdpr: {
 				personalDataFields: [
@@ -436,7 +460,8 @@ export default class StrictValidator {
 		};
 	}
 
-	#initializeBusinessRules(options) {
+	/** @private @static */
+	static #initializeBusinessRules(options) {
 		return {
 			requiredFields: {
 				person: ["name", "entity_type"],
@@ -447,7 +472,8 @@ export default class StrictValidator {
 		};
 	}
 
-	#isValidCompartment(compartment) {
+	/** @private @static */
+	static #isValidCompartment(compartment) {
 		const validCompartments = [
 			"NATO",
 			"HUMINT",
@@ -463,12 +489,13 @@ export default class StrictValidator {
 		return validCompartments.includes(compartment);
 	}
 
-	async #calculateIntegrityHash(entity) {
+	/** @private @static */
+	static async #calculateIntegrityHash(entity) {
 		// Simple integrity hash calculation
 		const dataToHash = JSON.stringify({
 			id: entity.id,
 			content: entity.content,
-			nato_classification: entity.nato_classification,
+			classification: entity.classification,
 			updated_at: entity.updated_at,
 		});
 
@@ -481,40 +508,46 @@ export default class StrictValidator {
 			.join("");
 	}
 
-	#containsPersonalData(entity) {
-		const personalFields = this.#complianceRules.gdpr.personalDataFields;
+	/** @private @static */
+	static #containsPersonalData(entity, complianceRules) {
+		const personalFields = complianceRules.gdpr.personalDataFields;
 		return personalFields.some(
 			(field) => entity[field] && entity[field] !== ""
 		);
 	}
 
-	#containsHealthData(entity) {
-		const healthFields = this.#complianceRules.hipaa.healthDataFields;
+	/** @private @static */
+	static #containsHealthData(entity, complianceRules) {
+		const healthFields = complianceRules.hipaa.healthDataFields;
 		return healthFields.some(
 			(field) => entity[field] && entity[field] !== ""
 		);
 	}
 
-	#getRequiredFields(entityType) {
-		return (
-			this.#businessRules.requiredFields[entityType] || ["entity_type"]
-		);
+	/** @private @static */
+	static #getRequiredFields(entityType, businessRules) {
+		return businessRules.requiredFields[entityType] || ["entity_type"];
 	}
 
-	#isValidEmail(email) {
+	/** @private @static */
+	static #isValidEmail(email) {
+		// A more robust regex could be used, but this is a common, reasonable one.
 		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 		return emailRegex.test(email);
 	}
 
 	/**
 	 * Validates a phone number format.
+	 * @private
+	 * @static
 	 */
-	#isValidPhone(phone) {
+	static #isValidPhone(phone) {
 		const phoneRegex = /^[+]?[1-9][\d]{0,15}$/;
 		return phoneRegex.test(phone.replace(/[\s\-()]/g, ""));
 	}
 
-	#getTextFields(entity) {
+	/** @private @static */
+	static #getTextFields(entity) {
 		const textFields = [];
 		for (const [key, value] of Object.entries(entity)) {
 			if (typeof value === "string" && value.length > 0) {
@@ -524,17 +557,21 @@ export default class StrictValidator {
 		return textFields;
 	}
 
-	#containsSQLInjection(text) {
+	/** @private @static */
+	static #containsSQLInjection(text) {
+		// This is a basic check. A real-world implementation should be more robust.
 		const sqlPatterns = [
-			/(\bUNION\b|\bSELECT\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b)/i,
+			/(\b(union|select|insert|update|delete|drop)\b)/i,
 			/(--|#|\/\*|\*\/)/,
-			/(\bOR\b|\bAND\b)\s+\d+\s*=\s*\d+/i,
+			/(\b(or|and)\b\s+\d+\s*=\s*\d+)/i,
 		];
 
 		return sqlPatterns.some((pattern) => pattern.test(text));
 	}
 
-	#containsXSS(text) {
+	/** @private @static */
+	static #containsXSS(text) {
+		// This is a basic check. A real-world implementation should use a library like DOMPurify on the receiving end.
 		const xssPatterns = [
 			/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
 			/javascript:/gi,
@@ -545,29 +582,53 @@ export default class StrictValidator {
 		return xssPatterns.some((pattern) => pattern.test(text));
 	}
 
-	#containsBinaryData(text) {
+	/** @private @static */
+	static #containsBinaryData(text) {
 		// This regex specifically targets non-whitespace ASCII control characters (0x00-0x08, 0x0B-0x0C, 0x0E-0x1F)
 		// and the DEL character (0x7F), which are typically unexpected in clean text fields.
 		return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(text);
 	}
 
-	#validateSensitiveData(value) {
-		// Check if sensitive data is properly formatted/encrypted
-		if (typeof value !== "string") return true;
+	/** @private @static */
+	static #validateSensitiveData(value) {
+		// This is a placeholder. In a real system, this would check if the data
+		// appears to be unencrypted PII. For this validator, we assume that if
+		// a field is marked as sensitive, it must be passed in an encrypted format.
+		if (typeof value !== "string") return true; // Not a string, can't be unencrypted PII text.
 
-		// Look for common sensitive data patterns
-		const sensitivePatterns = [
-			/\d{3}-\d{2}-\d{4}/, // SSN
-			/\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}/, // Credit card
-			/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/, // Email (might be sensitive in some contexts)
-		];
+		// A simple heuristic: if it looks like random base64, it might be encrypted.
+		// If it looks like plain text, it's a problem.
+		const isLikelyBase64 =
+			/^[A-Za-z0-9+/=]+$/.test(value) && value.length > 20;
+		const hasSpaces = /\s/.test(value);
 
-		// If it matches sensitive patterns and isn't encrypted, flag it
-		const matchesSensitive = sensitivePatterns.some((pattern) =>
-			pattern.test(value)
-		);
-		const appearsEncrypted = /^[A-Za-z0-9+/]{40,}={0,2}$/.test(value); // Base64-like pattern
+		// If it has spaces, it's probably not encrypted. If it's not likely base64, also a problem.
+		if (hasSpaces || !isLikelyBase64) {
+			// Further check for common PII patterns to reduce false positives.
+			const piiPatterns = [
+				/\d{3}-\d{2}-\d{4}/, // SSN
+				/\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}/, // Credit Card
+			];
+			if (piiPatterns.some((p) => p.test(value))) {
+				return false; // Found PII that doesn't look encrypted.
+			}
+		}
 
-		return !matchesSensitive || appearsEncrypted;
+		return true; // Assume it's either not PII or is properly handled.
+	}
+
+	/**
+	 * Logs an audit event using the ForensicLogger.
+	 * @private
+	 * @param {string} eventType - The type of event to log.
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		if (this.#forensicLogger) {
+			this.#forensicLogger.logAuditEvent(
+				`STRICT_VALIDATOR_${eventType.toUpperCase()}`,
+				data
+			);
+		}
 	}
 }

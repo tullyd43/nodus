@@ -12,53 +12,89 @@
  * for components and adaptation rules to access runtime metadata.
  */
 export class RenderContext {
+	/** @private @type {import('./HybridStateManager.js').default|null} */
+	#stateManager = null;
+	/** @private @type {import('./SystemPolicies_Cached.js').SystemPolicies|null} */
+	#policies = null;
+
 	/**
 	 * Creates an instance of RenderContext.
-	 * @param {object} [options={}] - An object containing initial context properties.
+	 * @param {object} context - The context for rendering.
+	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [options={}] - Additional or override properties for the context.
 	 */
-	constructor(options = {}) {
-		this.uiContext = options.uiContext || {};
+	constructor({ stateManager, ...options } = {}) {
+		this.#stateManager = stateManager || null;
+		const securityManager = this.#stateManager?.managers?.securityManager;
+		const userContext = securityManager?.getSubject() || {};
+
+		// V8.0 Parity: Remove direct eventFlow dependency. Use stateManager.emit/on.
+		// V8.0 Parity: Access policies manager directly.
+		this.#policies = this.#stateManager?.managers?.policies || null;
 
 		// Environment context
-		this.viewport = options.viewport || this.getViewportInfo();
+		/** @public @type {{width: number, height: number, pixelRatio: number, orientation: string}} */
+		this.viewport = options.viewport || this.#getViewportInfo();
+		/** @public @type {string} */
 		this.theme = options.theme || "dark";
+		/** @public @type {string} */
 		this.locale = options.locale || "en";
-		this.inputMethod = options.inputMethod || this.detectInputMethod();
-
-		// Runtime dependencies
-		this.stateManager = options.stateManager || null;
-		this.eventFlow = options.eventFlow || null;
-		this.policies = options.policies || {};
+		/** @public @type {'touch'|'mouse'} */
+		this.inputMethod = options.inputMethod || this.#detectInputMethod();
 
 		// User context
-		this.userId = options.userId || null;
-		this.userRole = options.userRole || "guest";
-		this.userPermissions = options.userPermissions || [];
+		// V8.0 Parity: User context is now derived from the securityManager.
+		/** @public @type {string|null} */
+		this.userId = userContext.userId || null;
+		/** @public @type {string} */
+		this.userRole = userContext.role || "guest";
+		/** @public @type {string[]} */
+		this.userPermissions = userContext.permissions || [];
 
 		// Device capabilities
-		this.device = this.getDeviceCapabilities();
+		/** @public @type {object} */
+		this.device = this.#getDeviceCapabilities();
+		/** @public @type {number|null} */
 		this.networkLatency = options.networkLatency || null;
 
 		// Component context (for current render)
+		/** @public @type {string|null} */
 		this.componentId = options.componentId || null;
+		/** @public @type {object} */
 		this.data = options.data || {};
+		/** @public @type {object} */
 		this.config = options.config || {};
 
 		// Container context
+		/** @public @type {number} */
 		this.containerWidth = options.containerWidth || window.innerWidth;
+		/** @public @type {number} */
 		this.containerHeight = options.containerHeight || window.innerHeight;
+		/** @public @type {number} */
 		this.containerArea = this.containerWidth * this.containerHeight;
 
 		// Adaptive context
+		/** @public @type {string|null} */
 		this.intent = options.intent || null;
+		/** @public @type {string|null} */
 		this.purpose = options.purpose || null;
+		/** @public @type {string|null} */
 		this.entityType = options.entityType || null;
+		/** @public @type {string|null} */
 		this.entityId = options.entityId || null;
+		/** @public @type {object|null} */
 		this.entity = options.entity || null;
 
+		// UI context (can contain transient state)
+		/** @public @type {object} */
+		this.uiContext = options.uiContext || {};
+
 		// Render metadata
+		/** @public @type {string|null} */
 		this.adaptationName = options.adaptationName || null;
+		/** @public @type {number} */
 		this.timestamp = Date.now();
+		/** @public @type {number} */
 		this.priority = options.priority || 0;
 	}
 
@@ -69,24 +105,11 @@ export class RenderContext {
 	 */
 	getEntity(entityId) {
 		return (
-			this.stateManager.clientState.entities.get(entityId) ||
+			// V8.0 Parity: Access stateManager via private field.
+			this.#stateManager?.clientState.entities.get(entityId) ||
 			this.uiContext.entities?.find?.((e) => e.id === entityId) ||
 			null
 		);
-	}
-
-	/**
-	 * Saves an entity through the state manager's storage instance after validation.
-	 * @param {object} entity - The entity object to save.
-	 * @returns {Promise<void>}
-	 */
-	async saveEntity(entity) {
-		await this.stateManager.managers.validation?.validate?.(entity);
-		await this.stateManager.storage.instance.put("objects", entity);
-		this.stateManager.emit?.("entitySaved", {
-			store: "objects",
-			item: entity,
-		});
 	}
 
 	/**
@@ -98,6 +121,7 @@ export class RenderContext {
 	extend(additionalContext = {}) {
 		return new RenderContext({
 			...this.toObject(),
+			stateManager: this.#stateManager, // Ensure stateManager is carried over
 			...additionalContext,
 		});
 	}
@@ -112,9 +136,6 @@ export class RenderContext {
 			theme: this.theme,
 			locale: this.locale,
 			inputMethod: this.inputMethod,
-			stateManager: this.stateManager,
-			eventFlow: this.eventFlow,
-			policies: this.policies,
 			userId: this.userId,
 			userRole: this.userRole,
 			userPermissions: this.userPermissions,
@@ -133,6 +154,7 @@ export class RenderContext {
 			entity: this.entity,
 			adaptationName: this.adaptationName,
 			timestamp: this.timestamp,
+			uiContext: this.uiContext,
 			priority: this.priority,
 		};
 	}
@@ -142,7 +164,7 @@ export class RenderContext {
 	 * @private
 	 * @returns {{width: number, height: number, pixelRatio: number, orientation: string}} An object with viewport details.
 	 */
-	getViewportInfo() {
+	#getViewportInfo() {
 		return {
 			width: window.innerWidth,
 			height: window.innerHeight,
@@ -156,7 +178,7 @@ export class RenderContext {
 	 * @private
 	 * @returns {'touch'|'mouse'} The detected input method.
 	 */
-	detectInputMethod() {
+	#detectInputMethod() {
 		// Simple detection - can be enhanced
 		if ("ontouchstart" in window) return "touch";
 		if (navigator.maxTouchPoints > 0) return "touch";
@@ -168,7 +190,7 @@ export class RenderContext {
 	 * @private
 	 * @returns {object} An object detailing device capabilities.
 	 */
-	getDeviceCapabilities() {
+	#getDeviceCapabilities() {
 		return {
 			hasTouch: "ontouchstart" in window,
 			hasHover: window.matchMedia("(hover: hover)").matches,
@@ -220,17 +242,16 @@ export class RenderContext {
 	 * @returns {boolean} `true` if the user can access the domain, `false` otherwise.
 	 */
 	canAccessDomain(domain) {
-		// This will integrate with OptimizationAccessControl
-		if (this.userRole === "super_admin") return true;
-
-		const rolePermissions = {
-			db_admin: ["system", "ui", "events"],
-			developer: ["ui", "events"],
-			analyst: ["user", "meta"],
-			monitor: ["meta"],
-		};
-
-		return rolePermissions[this.userRole]?.includes(domain) || false;
+		// V8.0 Parity: Delegate domain access checks to the policies manager.
+		// This centralizes authorization logic instead of hardcoding roles here.
+		return (
+			// V8.0 Parity: Access policies via private field.
+			this.#policies?.getPolicy("access_control", `domain.${domain}`) ===
+				true ||
+			this.#policies
+				?.getPolicy("roles", `${this.userRole}.domains`)
+				?.includes(domain)
+		);
 	}
 
 	/**
@@ -342,7 +363,7 @@ export class ContextMatcher {
 		const ctx =
 			context instanceof RenderContext
 				? context
-				: new RenderContext(context);
+				: new RenderContext({ stateManager: null, ...context });
 
 		// Container size matching
 		if (trigger.containerWidth) {
@@ -426,11 +447,6 @@ export class ContextMatcher {
 		if (trigger.entityType && ctx.entityType !== trigger.entityType)
 			return false;
 
-		// Custom predicate matching
-		if (trigger.predicate && typeof trigger.predicate === "function") {
-			if (!trigger.predicate(ctx)) return false;
-		}
-
 		return true;
 	}
 
@@ -487,7 +503,6 @@ export class ContextMatcher {
 		if (trigger.permission) score += 30;
 		if (trigger.breakpoint) score += 10;
 		if (trigger.theme) score += 5;
-		if (trigger.predicate) score += 50; // Custom predicates are highly specific
 
 		return score;
 	}

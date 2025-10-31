@@ -15,17 +15,24 @@
  */
 export default class BasicCrypto {
 	/**
-	 * Creates an instance of BasicCrypto.
-	 * @param {object} [config={}] - Configuration options for the crypto module. This is a placeholder for future enhancements.
+	 * Configuration for the module.
+	 * @private
+	 * @type {object}
 	 */
-	constructor(config = {}) {
-		/**
-		 * Configuration for the module.
-		 * @private
-		 * @type {object}
-		 */
-		this.config = config;
-		console.log("[BasicCrypto] Initialized with config:", config);
+	#config;
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager;
+
+	/**
+	 * Creates an instance of BasicCrypto.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for the module.
+	 */
+	constructor({ stateManager, options = {} }) {
+		this.#stateManager = stateManager;
+		this.#config = options;
+		console.log("[BasicCrypto] Loaded with config:", this.#config);
 	}
 
 	/**
@@ -50,11 +57,20 @@ export default class BasicCrypto {
 	 * // hashed will be "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 	 */
 	async hash(input) {
-		const data = new TextEncoder().encode(input);
-		const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-		return Array.from(new Uint8Array(hashBuffer))
-			.map((b) => b.toString(16).padStart(2, "0"))
-			.join("");
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("basicCrypto");
+		const startTime = performance.now();
+		try {
+			const data = new TextEncoder().encode(input);
+			const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+			return Array.from(new Uint8Array(hashBuffer))
+				.map((b) => b.toString(16).padStart(2, "0"))
+				.join("");
+		} finally {
+			const duration = performance.now() - startTime;
+			metrics?.increment("hashCount");
+			metrics?.updateAverage("hashTime", duration);
+		}
 	}
 
 	/**
@@ -68,8 +84,17 @@ export default class BasicCrypto {
 	 * @returns {Promise<string>} The base64-encoded string, prefixed with "enc:".
 	 */
 	async encrypt(data) {
-		const encoded = btoa(JSON.stringify(data));
-		return `enc:${encoded}`;
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("basicCrypto");
+		const startTime = performance.now();
+		try {
+			const encoded = btoa(JSON.stringify(data));
+			return `enc:${encoded}`;
+		} finally {
+			const duration = performance.now() - startTime;
+			metrics?.increment("encryptionCount");
+			metrics?.updateAverage("encryptionTime", duration);
+		}
 	}
 
 	// 🔓 Simple decryption placeholder
@@ -84,8 +109,17 @@ export default class BasicCrypto {
 	 * @throws {Error} If the payload is malformed or does not start with "enc:".
 	 */
 	async decrypt(payload) {
-		if (!payload.startsWith("enc:")) throw new Error("Invalid payload");
-		const decoded = atob(payload.slice(4));
-		return JSON.parse(decoded);
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("basicCrypto");
+		const startTime = performance.now();
+		try {
+			if (!payload.startsWith("enc:")) throw new Error("Invalid payload");
+			const decoded = atob(payload.slice(4));
+			return JSON.parse(decoded);
+		} finally {
+			const duration = performance.now() - startTime;
+			metrics?.increment("decryptionCount");
+			metrics?.updateAverage("decryptionTime", duration);
+		}
 	}
 }

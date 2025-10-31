@@ -21,33 +21,43 @@
  * @property {boolean} [enableConflictResolution=true]
  */
 
-/**
- * Simple conflict resolver (pluggable later)
- */
-class ConflictResolver {
-	constructor(options = {}) {
-		this.options = options;
-	}
-	/**
-	 * @param {{pulled:any[]}} result
-	 * @returns {Promise<any[]>}
-	 */
-	async resolveConflicts(result) {
-		// Stub: no-op. In a real impl, decide merges here.
-		return [];
-	}
-}
-
 export default class SyncStack {
-	/** @type {SyncModule[]} */ _syncModules;
-	/** @type {SyncStackOptions} */ _config;
-	/** @type {Map<string, any>} */ _syncStatus;
-	/** @type {{syncOperations:number, conflictsResolved:number, syncErrors:number, averageSyncTime:number, lastSyncTime:number|null}} */ _metrics;
-	/** @type {any} */ _conflictResolver;
+	/** @private @type {SyncModule[]} */
+	#syncModules;
+	/** @private @type {SyncStackOptions} */
+	#config;
+	/** @private @type {Map<string, any>} */
+	#syncStatus = new Map();
+	/** @private @type {any} */
+	#conflictResolver = null;
+	/** @private @type {import('../../HybridStateManager.js').default|null} */
+	#stateManager;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics;
 
-	constructor(syncModules = [], options = {}) {
-		this._syncModules = Array.isArray(syncModules) ? syncModules : [];
-		this._config = {
+	/**
+	 * @private
+	 * @static
+	 * @class Simple conflict resolver (pluggable later)
+	 */
+	static #ConflictResolver = class {
+		constructor(options = {}) {
+			this.options = options;
+		}
+		/**
+		 * @param {{pulled:any[]}} result
+		 * @returns {Promise<any[]>}
+		 */
+		async resolveConflicts(result) {
+			// Stub: no-op. In a real impl, decide merges here.
+			return [];
+		}
+	};
+
+	constructor({ stateManager, syncModules = [], options = {} }) {
+		this.#stateManager = stateManager;
+		this.#syncModules = syncModules;
+		this.#config = {
 			maxRetries: 3,
 			retryDelay: 1000,
 			batchSize: 50,
@@ -56,26 +66,22 @@ export default class SyncStack {
 			...options,
 		};
 
-		this._syncStatus = new Map();
-		this._metrics = {
-			syncOperations: 0,
-			conflictsResolved: 0,
-			syncErrors: 0,
-			averageSyncTime: 0,
-			lastSyncTime: null,
-		};
-
-		this._conflictResolver = null;
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("syncStack");
 	}
 
 	async init() {
-		for (const mod of this._syncModules) {
+		for (const mod of this.#syncModules) {
 			if (typeof mod?.init === "function") {
+				// V8.0 Parity: The stateManager is now passed in the constructor of each module,
+				// so the legacy bindStateManager call is no longer needed.
 				await mod.init();
 			}
 		}
-		if (this._config.enableConflictResolution) {
-			this._conflictResolver = new ConflictResolver(this._config);
+		if (this.#config.enableConflictResolution) {
+			this.#conflictResolver = new SyncStack.#ConflictResolver(
+				this.#config
+			);
 		}
 		console.log("[SyncStack] Sync stack initialized");
 	}
@@ -85,50 +91,44 @@ export default class SyncStack {
 	 */
 	async performSync(options = {}) {
 		const op = options.operation ?? "bidirectional";
-		const start =
-			typeof performance !== "undefined" ? performance.now() : Date.now();
-		const syncId = this._generateSyncId();
-		this._syncStatus.set(syncId, {
+		const startTime = performance.now();
+		const syncId = this.#generateSyncId();
+		this.#syncStatus.set(syncId, {
 			status: "in_progress",
-			startTime: start,
+			startTime,
 			operation: op,
 		});
 
 		try {
 			let result;
 			if (op === "push") {
-				result = await this._performPush(options);
+				result = await this.#performPush(options);
 			} else if (op === "pull") {
-				result = await this._performPull(options);
+				result = await this.#performPull(options);
 			} else {
-				result = await this._performBidirectionalSync(options);
+				result = await this.#performBidirectionalSync(options);
 			}
 
-			const end =
-				typeof performance !== "undefined"
-					? performance.now()
-					: Date.now();
-			this._updateSyncMetrics(true, end - start);
-			this._syncStatus.set(syncId, {
-				status: "completed",
-				startTime: start,
-				endTime: end,
-				result,
-			});
 			return result;
 		} catch (err) {
-			const end =
-				typeof performance !== "undefined"
-					? performance.now()
-					: Date.now();
-			this._updateSyncMetrics(false, end - start);
-			this._syncStatus.set(syncId, {
+			this.#syncStatus.set(syncId, {
 				status: "failed",
-				startTime: start,
-				endTime: end,
-				error: String(err),
+				startTime,
+				endTime: performance.now(),
+				error: String(err), // Corrected incomplete line
 			});
 			throw err;
+		} finally {
+			const endTime = performance.now();
+			const currentStatus = this.#syncStatus.get(syncId);
+			if (currentStatus.status === "in_progress") {
+				currentStatus.status = "completed";
+			}
+			currentStatus.endTime = endTime;
+			this.#updateSyncMetrics(
+				currentStatus.status === "completed",
+				endTime - startTime
+			);
 		}
 	}
 
@@ -136,21 +136,21 @@ export default class SyncStack {
 	 * @returns {{queueSize:number, activeSyncs:number, metrics:any} | any}
 	 */
 	getSyncStatus(syncId = null) {
-		if (syncId) return this._syncStatus.get(syncId);
+		if (syncId) return this.#syncStatus.get(syncId);
 		return {
 			queueSize: 0, // no internal queue here by design
-			activeSyncs: Array.from(this._syncStatus.values()).filter(
+			activeSyncs: Array.from(this.#syncStatus.values()).filter(
 				(s) => s.status === "in_progress"
 			).length,
-			metrics: this._metrics,
+			metrics: this.#metrics?.getAllAsObject(),
 		};
 	}
 
 	// ---------- Internals
 
-	async _performPush(options = {}) {
+	async #performPush(options = {}) {
 		const results = [];
-		for (const mod of this._syncModules) {
+		for (const mod of this.#syncModules) {
 			if (mod?.supportsPush && typeof mod.push === "function") {
 				const r = await mod.push(options);
 				results.push({
@@ -162,9 +162,9 @@ export default class SyncStack {
 		return { operation: "push", modules: results };
 	}
 
-	async _performPull(options = {}) {
+	async #performPull(options = {}) {
 		const results = [];
-		for (const mod of this._syncModules) {
+		for (const mod of this.#syncModules) {
 			if (mod?.supportsPull && typeof mod.pull === "function") {
 				const r = await mod.pull(options);
 				results.push({
@@ -176,17 +176,17 @@ export default class SyncStack {
 		return { operation: "pull", modules: results };
 	}
 
-	async _performBidirectionalSync(options = {}) {
-		const pullResult = await this._performPull(options);
+	async #performBidirectionalSync(options = {}) {
+		const pullResult = await this.#performPull(options);
 
 		let conflicts = [];
-		if (this._conflictResolver) {
+		if (this.#conflictResolver) {
 			conflicts =
-				await this._conflictResolver.resolveConflicts(pullResult);
-			this._metrics.conflictsResolved += conflicts.length;
+				await this.#conflictResolver.resolveConflicts(pullResult);
+			this.#metrics?.increment("conflictsResolved", conflicts.length);
 		}
 
-		const pushResult = await this._performPush(options);
+		const pushResult = await this.#performPush(options);
 		return {
 			operation: "bidirectional",
 			pull: pullResult,
@@ -195,16 +195,14 @@ export default class SyncStack {
 		};
 	}
 
-	_generateSyncId() {
+	#generateSyncId() {
 		return `sync_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 	}
 
-	_updateSyncMetrics(success, durationMs) {
-		this._metrics.syncOperations += 1;
-		const n = this._metrics.syncOperations;
-		const prevAvg = this._metrics.averageSyncTime;
-		this._metrics.averageSyncTime = prevAvg + (durationMs - prevAvg) / n;
-		this._metrics.lastSyncTime = Date.now();
-		if (!success) this._metrics.syncErrors += 1;
+	#updateSyncMetrics(success, durationMs) {
+		this.#metrics?.increment("syncOperations");
+		this.#metrics?.updateAverage("averageSyncTime", durationMs);
+		this.#metrics?.set("lastSyncTime", Date.now());
+		if (!success) this.#metrics?.increment("syncErrors");
 	}
 }

@@ -16,20 +16,22 @@
  */
 export class ExtensionManager {
 	/**
-	 * Creates an instance of ExtensionManager.
-	 * @param {import('./HybridStateManager.js').HybridStateManager} stateManager - The application's state manager instance.
+	 * @property {Map<string, object>} extensions - A map to store registered extensions, keyed by their unique ID.
+	 * @private
 	 */
-	constructor(stateManager) {
+	#extensions = new Map();
+
+	/**
+	 * Creates an instance of ExtensionManager.
+	 * @param {object} context - The application context.
+	 * @param {import('./HybridStateManager.js').HybridStateManager} context.stateManager - The application's state manager instance.
+	 */
+	constructor({ stateManager }) {
 		/**
 		 * @property {import('./HybridStateManager.js').HybridStateManager} stateManager - A reference to the application's HybridStateManager.
 		 * @public
 		 */
-		this.stateManager = stateManager;
-		/**
-		 * @property {Map<string, object>} extensions - A map to store registered extensions, keyed by their unique ID.
-		 * @private
-		 */
-		this.extensions = new Map();
+		this.stateManager = stateManager; // V8.0 Parity: Destructure from context
 	}
 
 	/**
@@ -56,7 +58,7 @@ export class ExtensionManager {
 	 * @returns {void}
 	 */
 	registerExtension(id, extension) {
-		this.extensions.set(id, extension);
+		this.#extensions.set(id, extension);
 		console.log(`[ExtensionManager] Registered extension: ${id}`);
 	}
 
@@ -66,7 +68,7 @@ export class ExtensionManager {
 	 * @returns {object|undefined} The extension object, or `undefined` if not found.
 	 */
 	getExtension(id) {
-		return this.extensions.get(id);
+		return this.#extensions.get(id);
 	}
 
 	/**
@@ -74,7 +76,7 @@ export class ExtensionManager {
 	 * @returns {void}
 	 */
 	destroy() {
-		this.extensions.clear();
+		this.#extensions.clear();
 		console.log("[ExtensionManager] Destroyed (stub)");
 	}
 }

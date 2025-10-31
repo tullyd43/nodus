@@ -14,13 +14,12 @@ export class IdManager {
 	/**
 	 * Creates an instance of IdManager.
 	 * @param {object} context - The global application context.
-	 * @param {object} context.managers - The collection of system managers.
-	 * @param {import('../utils/MetricsRegistry.js').MetricsRegistry} context.managers.metricsRegistry - The central metrics registry.
-	 * @param {import('../core/ForensicLogger.js').ForensicLogger} context.managers.forensicLogger - The forensic logger for auditing.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
-	constructor({ managers } = {}) {
-		this.metrics = managers?.metricsRegistry;
-		this.logger = managers?.forensicLogger;
+	constructor({ stateManager } = {}) {
+		// V8.0 Parity: Derive dependencies directly from stateManager.
+		this.metrics = stateManager?.metricsRegistry?.namespace("idManager");
+		this.logger = stateManager?.managers?.forensicLogger;
 	}
 
 	/**

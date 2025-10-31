@@ -1,0 +1,66 @@
+Of course. Based on the developer mandates and the work already completed, here is a comprehensive plan to finish the V8 Parity refactor.
+
+This plan is broken down by the mandates, outlining the remaining tasks, the files to be modified, and the rationale behind each change.
+
+Phase 1: Core Architecture & Security
+This phase focuses on completing the foundational mandates related to the service architecture, security, and declarative logic.
+
+1. Mandate 1.2 & 1.3: Finalize Service Registry Integration
+
+Objective: Eliminate all remaining direct instantiations of core services and ensure every module receives its dependencies from the stateManager context, as provided by the ServiceRegistry.
+Tasks:
+Refactor Core Services: Modify the constructors of all core services (EmbeddingManager, QueryService, LRUCache, SecurityManager, etc.) to remove direct imports of other core services like ErrorHelpers. Instead, they will derive these dependencies from the stateManager.managers object passed in their constructor.
+Update ServiceRegistry.js: Add OptimizationAccessControl to the SERVICE_CONSTRUCTORS map to ensure it is managed centrally.
+Run Linter: Execute eslint . --fix across the project to automatically catch and report any remaining violations of the nodus-rules/no-direct-core-instantiation rule.
+2. Mandate 2.1: Implement Arbitrary Code Execution Validator
+
+Objective: Prevent security vulnerabilities by scanning loaded plugin modules for forbidden code patterns like eval() and innerHTML.
+Tasks:
+Create ArbitraryCodeValidator.js: Develop a new utility module that exports a function scanForForbiddenPatterns(codeString). This function will use regular expressions to detect eval(), new Function(), setTimeout(string), and .innerHTML =.
+Update ManifestPluginSystem.js: In the #loadFrontendRuntime method, after fetching the plugin's code but before executing it, use the new validator to scan the code. If forbidden patterns are found, throw a SecurityError and prevent the plugin from loading. This check should only run in non-production environments to avoid performance overhead.
+3. Mandate 2.2: Schematize Declarative Logic
+
+Objective: Enforce a strict, serializable structure for all declarative conditions used in event flows and component visibility.
+Tasks:
+Create ConditionSchema.json: Define a formal JSON Schema that specifies the structure for a valid condition object (e.g., must have a type property, and specific properties for each type like property_equals).
+Update ConditionRegistry.js:
+Implement a validate(conditionDef) method that uses a JSON Schema validator (a simple, dependency-free one can be written) to check condition definitions against ConditionSchema.json.
+Modify the register method to call validate() on the provided schema and examples to ensure all registered conditions are well-defined.
+Modify the evaluate method to validate the incoming conditionDef before processing, preventing malformed rules from executing.
+4. Mandate 2.4: Implement Unified Audit Envelope
+
+Objective: Standardize the structure of all audit log entries to be uniform, signed, and tamper-evident.
+Tasks:
+Update ForensicLogger.js:
+Create a new private method #createEnvelope(type, payload, userContext).
+This method will construct the standard log object, including a unique ID, timestamp, the previous log's hash (for chaining), user context, and the payload.
+It will then use the stateManager.signer to sign the envelope's contents and add the signature to the object.
+Refactor logAuditEvent to use #createEnvelope before saving the event.
+Update NonRepudiation.js: Ensure the signAction method can handle the structured envelope from the ForensicLogger.
+Phase 2: Performance & Code Quality
+This phase focuses on implementing performance-related mandates and enforcing code structure and documentation standards.
+
+5. Mandate 4.1 & 3.1: Enforce Bounded Caches & Private Fields
+
+Objective: Convert all remaining unbounded caches to use the bounded LRUCache and ensure all classes adhere to the private field convention.
+Tasks:
+Refactor OptimizationAccessControl.js:
+The #sessions map is an unbounded cache. Replace it with an LRUCache instance obtained from the CacheManager (this.#stateManager.managers.cacheManager.getCache('authSessions', ...)).
+Convert all internal properties (roles, userRoles, sessions) to private fields (#roles, #userRoles, #sessions).
+Update the constructor to accept the stateManager context and derive its dependencies.
+Review All Core Classes: Systematically review every file in src/core and src/managers to ensure all internal properties and methods are private (#) and declared at the top of the class body. Add the @privateFields JSDoc block where required (Mandate 3.5).
+6. Mandate 4.3: Implement Metrics Decorator
+
+Objective: Standardize performance metric reporting for critical methods using a decorator pattern.
+Tasks:
+Update MetricsRegistry.js: Add a new method measure(metricName, tags = {}). This method will return a decorator function.
+Implement Decorator Logic: The returned decorator will wrap the original method. It will record the start time, execute the method, record the end time, and call this.metrics.timer(metricName, duration, tags) with the result.
+Apply Decorator: Apply the new decorator to performance-critical methods, such as HybridStateManager.saveEntity, QueryService.search, and AdaptiveRenderer.render. Since JavaScript decorators are still experimental, this can be implemented as a higher-order function wrapper for now. Example: this.saveEntity = this.#metrics.measure('saveEntity')(this.saveEntity.bind(this));
+7. Mandate 5.1 & 5.3: Finalize Documentation and Linting
+
+Objective: Ensure the entire codebase is fully documented and free of linting errors before final review.
+Tasks:
+JSDoc Pass: Go through every file modified during the refactor and ensure all classes, methods (public and private), and properties have complete and accurate JSDoc comments.
+Generate Docs: Run the jsdoc -c jsdoc.json command to generate the API documentation and verify there are no errors.
+Pre-commit Hooks: Configure Husky to run eslint . and jsdoc -c jsdoc.json on a pre-commit hook. This enforces Mandate 5.3, preventing non-compliant code from being committed.
+By following this plan, all remaining mandates will be addressed, resulting in a fully compliant, secure, and maintainable V8 Parity architecture.

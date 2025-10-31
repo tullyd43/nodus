@@ -14,24 +14,26 @@ import { DateCore } from "@utils/DateUtils.js";
  * at a specific time. It directly supports the **Compliance** pillar of the development philosophy.
  */
 export class NonRepudiation {
+	/** @private @type {import('../HybridStateManager.js').default|null} */
 	/** @private @type {CryptoKeyPair | null} */
 	#keyPair = null;
 	/** @private @type {Promise<void> | null} */
-	#initPromise = null;
+	#initializationPromise = null;
 	/** @private @type {import('./ClassificationCrypto.js').ClassificationCrypto|null} */
 	#crypto = null;
 
 	/**
-	 * @param {import('./ClassificationCrypto.js').ClassificationCrypto} cryptoInstance - The main crypto instance which holds the keyring.
+	 * @param {object} context - The application context.
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
-	constructor(cryptoInstance) {
-		if (!cryptoInstance?.keyring) {
+	constructor({ stateManager }) {
+		this.#crypto = stateManager?.storage?.instance?._crypto ?? null;
+		if (!this.#crypto?.keyring) {
 			throw new Error(
 				"[NonRepudiation] A crypto instance with a keyring is required."
 			);
 		}
-		this.#crypto = cryptoInstance;
-		this.#initPromise = this.#initializeKeys("system-audit");
+		this.#initializationPromise = this.#initializeKeys("system-audit");
 	}
 
 	/**
@@ -61,10 +63,11 @@ export class NonRepudiation {
 	 * @private
 	 */
 	async #ensureInitialized() {
-		if (!this.#initPromise) {
-			this.#initPromise = this.#initializeKeys();
+		if (!this.#initializationPromise) {
+			// This should not happen if the constructor is used, but it's a safe fallback.
+			this.#initializationPromise = this.#initializeKeys("system-audit");
 		}
-		await this.#initPromise;
+		await this.#initializationPromise;
 		if (!this.#keyPair) {
 			throw new Error(
 				"Cryptographic keys for signing are not available."
@@ -90,7 +93,7 @@ export class NonRepudiation {
 			userId,
 			action,
 			label,
-			ts: DateCore.timestamp(),
+			ts: DateCore.now(), // V8.0 Parity: Use ISO 8601 timestamp for consistency.
 		});
 
 		const encodedPayload = new TextEncoder().encode(payload);
@@ -199,7 +202,14 @@ export class NonRepudiation {
 		);
 
 		// 4. Generate a mock fingerprint for the certificate.
-		const certFingerprint = `sha256:${(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(userCert)))).toString()}`;
+		const certHashBuffer = await crypto.subtle.digest(
+			"SHA-256",
+			new TextEncoder().encode(JSON.stringify(userCert))
+		);
+		const certHashHex = Array.from(new Uint8Array(certHashBuffer))
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
+		const certFingerprint = `sha256:${certHashHex}`;
 
 		return {
 			signature,

@@ -4,49 +4,70 @@ import { DateCore } from "../src/utils/DateUtils.js";
 /**
  * @class DeveloperDashboard
  * @description A floating UI component that provides a real-time view of application
- * performance and custom metrics by hooking into a MetricsReporter instance.
+ * performance and custom metrics by hooking into the application's state manager.
  */
 export class DeveloperDashboard {
+	// Private fields for encapsulation
+	#container;
+	#stateManager;
+	#reporter;
+	#options;
+	#updateInterval = null;
+	#eventLog = new BoundedStack(50);
+	#dashboardElement;
+	#toggleBtn;
+	#perfMetricsContainer;
+	#coreMetricsContainer;
+	#eventLogContainer;
+	#unsubscribe = [];
+
 	/**
 	 * Creates an instance of DeveloperDashboard.
 	 * @param {HTMLElement} container - The DOM element to which the dashboard will be appended.
 	 * @param {object} dependencies - The required dependencies for the dashboard.
-	 * @param {import('../src/utils/MetricsReporter').MetricsReporter} dependencies.metricsReporter - The application's MetricsReporter instance.
-	 * @param {object} [dependencies.eventFlow=null] - The application's EventFlowEngine instance.
+	 * @param {import('../src/core/HybridStateManager.js').default} dependencies.stateManager - The application's HybridStateManager instance.
 	 * @param {object} [options={}] - Configuration options.
 	 * @param {boolean} [options.startOpen=false] - Whether the dashboard should be open by default.
 	 */
-	constructor(
-		container,
-		{ metricsReporter, eventFlow = null },
-		options = {}
-	) {
-		if (!container || !metricsReporter) {
+	constructor(container, { stateManager }, options = {}) {
+		if (!container || !stateManager) {
 			throw new Error(
-				"DeveloperDashboard requires a container element and a MetricsReporter instance."
+				"DeveloperDashboard requires a container element and a StateManager instance."
 			);
 		}
 
-		this.container = container;
-		this.reporter = metricsReporter;
-		this.eventFlow = eventFlow;
-		this.options = {
+		this.#container = container;
+		this.#stateManager = stateManager;
+
+		// V8.0 Parity: Check user role for access.
+		const userRole =
+			this.#stateManager.managers.securityManager?.getSubject()?.role;
+		if (!["admin", "developer"].includes(userRole)) {
+			console.log(
+				"[DevDashboard] User does not have permission to view the developer dashboard."
+			);
+			return; // Do not initialize for unauthorized users.
+		}
+
+		// V8.0 Parity: Derive dependencies from stateManager.
+		this.#reporter = this.#stateManager.managers.metricsReporter;
+		if (!this.#reporter) {
+			console.warn(
+				"[DevDashboard] MetricsReporter not found in stateManager. Dashboard will be limited."
+			);
+		}
+
+		this.#options = {
 			startOpen: false,
 			...options,
 		};
-		this.updateInterval = null;
 
-		// Use a BoundedStack to keep the event log from growing indefinitely.
-		this.eventLog = new BoundedStack(50);
+		this.#initStyles();
+		this.#render();
+		this.#attachEventListeners();
+		this.#subscribeToEvents();
 
-		this.initStyles();
-		this.render();
-		this.attachEventListeners();
-		if (this.eventFlow) {
-			this.subscribeToEvents();
-		}
-
-		if (this.options.startOpen) {
+		if (this.#options.startOpen) {
 			this.open();
 		}
 	}
@@ -55,41 +76,41 @@ export class DeveloperDashboard {
 	 * Renders the initial structure of the dashboard component.
 	 * @private
 	 */
-	render() {
-		this.dashboardElement = document.createElement("div");
-		this.dashboardElement.className = "dev-dashboard";
-		if (!this.options.startOpen) {
-			this.dashboardElement.classList.add("collapsed");
+	#render() {
+		this.#dashboardElement = document.createElement("div");
+		this.#dashboardElement.className = "dev-dashboard";
+		if (!this.#options.startOpen) {
+			this.#dashboardElement.classList.add("collapsed");
 		}
 
-		this.dashboardElement.innerHTML = `
+		this.#dashboardElement.innerHTML = `
       <div class="dashboard-header">
         <h3>Dev Dashboard</h3>
-        <button class="dashboard-toggle-btn">${this.options.startOpen ? "Collapse" : "Expand"}</button>
+        <button class="dashboard-toggle-btn">${this.#options.startOpen ? "Collapse" : "Expand"}</button>
       </div>
       <div class="dashboard-content">
         <div class="dashboard-section" id="perf-metrics"></div>
         <div class="dashboard-section" id="core-metrics">
           <h4>Core Metrics</h4>
-          <div class="metrics-table-container"></div>
+          <div class="metrics-table-container">No data</div>
         </div>
         <div class="dashboard-section" id="event-log">
           <h4>Event Log</h4>
-          <div class="event-log-container"></div>
+          <div class="event-log-container">No events</div>
         </div>
       </div>
     `;
 
-		this.container.appendChild(this.dashboardElement);
-		this.toggleBtn = this.dashboardElement.querySelector(
+		this.#container.appendChild(this.#dashboardElement);
+		this.#toggleBtn = this.#dashboardElement.querySelector(
 			".dashboard-toggle-btn"
 		);
-		this.perfMetricsContainer =
-			this.dashboardElement.querySelector("#perf-metrics");
-		this.coreMetricsContainer = this.dashboardElement.querySelector(
+		this.#perfMetricsContainer =
+			this.#dashboardElement.querySelector("#perf-metrics");
+		this.#coreMetricsContainer = this.#dashboardElement.querySelector(
 			"#core-metrics .metrics-table-container"
 		);
-		this.eventLogContainer = this.dashboardElement.querySelector(
+		this.#eventLogContainer = this.#dashboardElement.querySelector(
 			"#event-log .event-log-container"
 		);
 	}
@@ -98,12 +119,12 @@ export class DeveloperDashboard {
 	 * Attaches event listeners for dashboard interactions.
 	 * @private
 	 */
-	attachEventListeners() {
-		this.toggleBtn.addEventListener("click", () => this.toggle());
-		this.dashboardElement
+	#attachEventListeners() {
+		this.#toggleBtn.addEventListener("click", () => this.toggle());
+		this.#dashboardElement
 			.querySelector(".dashboard-header")
 			.addEventListener("click", (e) => {
-				if (e.target !== this.toggleBtn) {
+				if (e.target !== this.#toggleBtn) {
 					this.toggle();
 				}
 			});
@@ -113,16 +134,18 @@ export class DeveloperDashboard {
 	 * Subscribes to relevant events from the EventFlowEngine.
 	 * @private
 	 */
-	subscribeToEvents() {
+	#subscribeToEvents() {
 		const eventsToLog = [
 			"cache_audit",
 			"stack_eviction",
 			"performance_alert",
+			"error", // V8.0 Parity: Listen for standardized error events
 		];
 		eventsToLog.forEach((eventName) => {
-			this.eventFlow.on(eventName, (payload) =>
-				this.logEvent(eventName, payload)
+			const unsub = this.#stateManager.on(eventName, (payload) =>
+				this.#logEvent(eventName, payload)
 			);
+			this.#unsubscribe.push(unsub);
 		});
 		console.log("[DevDashboard] Subscribed to system events.");
 	}
@@ -131,7 +154,7 @@ export class DeveloperDashboard {
 	 * Toggles the dashboard between its collapsed and expanded states.
 	 */
 	toggle() {
-		if (this.dashboardElement.classList.contains("collapsed")) {
+		if (this.#dashboardElement.classList.contains("collapsed")) {
 			this.open();
 		} else {
 			this.close();
@@ -142,21 +165,21 @@ export class DeveloperDashboard {
 	 * Expands the dashboard and starts the live metric updates.
 	 */
 	open() {
-		this.dashboardElement.classList.remove("collapsed");
-		this.toggleBtn.textContent = "Collapse";
-		this.updateMetrics(); // Initial update
-		this.updateInterval = setInterval(() => this.updateMetrics(), 1000);
+		this.#dashboardElement.classList.remove("collapsed");
+		this.#toggleBtn.textContent = "Collapse";
+		this.#updateMetrics(); // Initial update
+		this.#updateInterval = setInterval(() => this.#updateMetrics(), 1000);
 	}
 
 	/**
 	 * Collapses the dashboard and stops the live metric updates.
 	 */
 	close() {
-		this.dashboardElement.classList.add("collapsed");
-		this.toggleBtn.textContent = "Expand";
-		if (this.updateInterval) {
-			clearInterval(this.updateInterval);
-			this.updateInterval = null;
+		this.#dashboardElement.classList.add("collapsed");
+		this.#toggleBtn.textContent = "Expand";
+		if (this.#updateInterval) {
+			clearInterval(this.#updateInterval);
+			this.#updateInterval = null;
 		}
 	}
 
@@ -164,14 +187,15 @@ export class DeveloperDashboard {
 	 * Fetches the latest metrics from the reporter and updates the DOM.
 	 * @private
 	 */
-	updateMetrics() {
-		const summary = this.reporter.getCurrentSummary();
+	#updateMetrics() {
+		if (!this.#reporter) return;
+		const summary = this.#reporter.getCurrentSummary();
 
 		// Update performance metrics
 		const memory = summary.memory
 			? (summary.memory.jsHeapUsed / 1024 / 1024).toFixed(2)
 			: "N/A";
-		this.perfMetricsContainer.innerHTML = `
+		this.#perfMetricsContainer.innerHTML = `
       <div class="perf-item"><strong>FPS:</strong> ${summary.fps}</div>
       <div class="perf-item"><strong>Latency:</strong> ${summary.latency.render.toFixed(2)}ms</div>
       <div class="perf-item"><strong>Memory:</strong> ${memory} MB</div>
@@ -180,7 +204,7 @@ export class DeveloperDashboard {
 		// Update core metrics table
 		let coreHtml =
 			"<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
-		for (const [key, metric] of Object.entries(summary.core)) {
+		for (const [key, metric] of Object.entries(summary.core || {})) {
 			let value = "";
 			if (metric.type === "counter") {
 				value = metric.value;
@@ -192,12 +216,12 @@ export class DeveloperDashboard {
 			coreHtml += `<tr><td>${key}</td><td>${value}</td></tr>`;
 		}
 		coreHtml += "</tbody></table>";
-		this.coreMetricsContainer.innerHTML = coreHtml;
+		this.#coreMetricsContainer.innerHTML = coreHtml;
 	}
-	updateEventLog() {
-		this.eventLogContainer.innerHTML = this.eventLog
+	#updateEventLog() {
+		this.#eventLogContainer.innerHTML = this.#eventLog
 			.toArray()
-			.map(this.renderEventLogItem)
+			.map(this.#renderEventLogItem)
 			.join("");
 	}
 
@@ -205,7 +229,7 @@ export class DeveloperDashboard {
 	 * Injects the necessary CSS for the dashboard into the document's head.
 	 * @private
 	 */
-	initStyles() {
+	#initStyles() {
 		const styleId = "dev-dashboard-styles";
 		if (document.getElementById(styleId)) return;
 
@@ -265,26 +289,39 @@ export class DeveloperDashboard {
 	 * @param {string} name - The name of the event.
 	 * @param {object} payload - The event payload.
 	 */
-	logEvent(name, payload) {
-		this.eventLog.push({
+	#logEvent(name, payload) {
+		this.#eventLog.push({
 			name,
 			payload,
 			loggedAt: new Date(DateCore.timestamp()),
 		});
-		if (!this.dashboardElement.classList.contains("collapsed")) {
-			this.updateEventLog();
+		if (!this.#dashboardElement.classList.contains("collapsed")) {
+			this.#updateEventLog();
 		}
 	}
 
 	/**
 	 * Renders a single event log item as an HTML string.
 	 * @private
-	 * @param {object} logEntry - The event log entry object.
+	 * @param {{name: string, payload: object, loggedAt: Date}} logEntry - The event log entry object.
 	 * @returns {string} The HTML string for the log item.
 	 */
-	renderEventLogItem({ name, payload, loggedAt }) {
+	#renderEventLogItem({ name, payload, loggedAt }) {
 		const time = loggedAt.toLocaleTimeString([], { hour12: false });
-		const source = payload.source || "system";
+		// V8.0 Parity: Standardize source/component from payload
+		const source = payload.source || payload.component || "system";
 		return `<div class="event-log-item"><span class="event-log-name">${name}</span> <span class="event-log-source">${source}</span> <span class="event-log-time">${time}</span></div>`;
+	}
+
+	/**
+	 * Cleans up the dashboard, removing elements and listeners.
+	 */
+	destroy() {
+		if (this.#updateInterval) clearInterval(this.#updateInterval);
+		this.#unsubscribe.forEach((unsub) => unsub());
+		this.#dashboardElement?.remove();
+		const styleElement = document.getElementById("dev-dashboard-styles");
+		styleElement?.remove();
+		console.log("[DevDashboard] Destroyed.");
 	}
 }

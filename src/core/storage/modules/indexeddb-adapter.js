@@ -1,6 +1,8 @@
 // modules/indexeddb-adapter.js
 // IndexedDB adapter module for offline storage operations
 
+import { StorageError } from "../../../utils/ErrorHelpers.js";
+
 /**
  * @description
  * Provides a robust, high-performance adapter for the browser's IndexedDB API.
@@ -12,58 +14,40 @@
  * @see https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API
  */
 export default class IndexedDBAdapter {
-	/**
-	 * @private
-	 * @type {IDBDatabase|null}
-	 */
-	#db;
-	/**
-	 * @private
-	 * @type {string}
-	 */
+	/** @private @type {IDBDatabase|null} */
+	#db = null;
+	/** @private @type {string} */
 	#dbName;
-	/**
-	 * @private
-	 * @type {number}
-	 */
+	/** @private @type {number} */
 	#version;
-	/**
-	 * @private
-	 * @type {object}
-	 */
+	/** @private @type {object} */
 	#stores;
-	/**
-	 * @private
-	 * @type {boolean}
-	 */
+	/** @private @type {boolean} */
 	#ready = false;
-	/**
-	 * @private
-	 * @type {Map<IDBTransaction, object>}
-	 */
+	/** @private @type {Map<IDBTransaction, object>} */
 	#transactions = new Map();
-	/**
-	 * @private
-	 * @type {{reads: number, writes: number, deletes: number, averageReadTime: number, averageWriteTime: number, cacheHits: number, errors: number}}
-	 */
-	#metrics = {
-		reads: 0,
-		writes: 0,
-		deletes: 0,
-		averageReadTime: 0,
-		averageWriteTime: 0,
-		cacheHits: 0,
-		errors: 0,
-	};
+
+	/** @private @type {import('../../HybridStateManager.js').default|null} */
+	#stateManager;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger;
 
 	/**
 	 * Creates an instance of IndexedDBAdapter.
-	 * @param {object} [opts={}] - Configuration options for the database.
-	 * @param {string} [opts.dbName='nodus_offline'] - The name of the IndexedDB database.
-	 * @param {number} [opts.version=2] - The schema version of the database.
-	 * @param {object} [opts.stores] - An object defining the object stores and their indexes.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.opts={}] - Configuration options for the database.
 	 */
-	constructor(opts = {}) {
+	constructor({ stateManager, opts = {} }) {
+		this.#stateManager = stateManager;
+		// V8.0 Parity: Derive dependencies from the stateManager.
+		this.#forensicLogger = stateManager?.managers?.forensicLogger;
+
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("indexeddbAdapter");
+
 		this.#dbName = String(opts.dbName || "nodus_offline");
 		this.#version = Number(opts.version || 2); // Bump version for schema upgrade
 		this.#stores = opts.stores || {
@@ -87,8 +71,6 @@ export default class IndexedDBAdapter {
 				],
 			},
 		};
-
-		console.log(`[IndexedDBAdapter] Loaded for database: ${this.#dbName}`);
 	}
 
 	/**
@@ -101,8 +83,7 @@ export default class IndexedDBAdapter {
 
 		this.#db = await this.#openDatabase();
 		this.#ready = true;
-
-		console.log(`[IndexedDBAdapter] Database ${this.#dbName} ready`);
+		this.#audit("db_ready", { dbName: this.#dbName, version: this.#version });
 		return this;
 	}
 
@@ -125,8 +106,11 @@ export default class IndexedDBAdapter {
 			this.#updateMetrics("writes", performance.now() - startTime);
 			return result;
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Put operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Put operation failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -156,8 +140,11 @@ export default class IndexedDBAdapter {
 			);
 			return results;
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Bulk put operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Bulk put operation failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -180,8 +167,11 @@ export default class IndexedDBAdapter {
 			this.#updateMetrics("reads", performance.now() - startTime);
 			return result;
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Get operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Get operation failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -211,8 +201,11 @@ export default class IndexedDBAdapter {
 			);
 			return results.filter((result) => result !== undefined);
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Bulk get operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Bulk get operation failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -240,8 +233,11 @@ export default class IndexedDBAdapter {
 			);
 			return results;
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`GetAll operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("GetAll operation failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -282,8 +278,11 @@ export default class IndexedDBAdapter {
 			);
 			return results;
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Index query failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Index query failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -306,8 +305,11 @@ export default class IndexedDBAdapter {
 			this.#updateMetrics("deletes", performance.now() - startTime);
 			return result;
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Delete operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Delete operation failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -337,8 +339,13 @@ export default class IndexedDBAdapter {
 			);
 			return results;
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Bulk delete operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Bulk delete operation failed", {
+					cause: error,
+				})
+			);
+			throw error;
 		}
 	}
 
@@ -353,10 +360,13 @@ export default class IndexedDBAdapter {
 				store.clear()
 			);
 
-			console.log(`[IndexedDBAdapter] Store ${storeName} cleared`);
+			this.#audit("store_cleared", { storeName });
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Clear operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Clear operation failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -376,8 +386,11 @@ export default class IndexedDBAdapter {
 
 			return count;
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Count operation failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Count operation failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -426,8 +439,11 @@ export default class IndexedDBAdapter {
 					})
 			);
 		} catch (error) {
-			this.#metrics.errors++;
-			throw new Error(`Iteration failed: ${error.message}`);
+			this.#metrics?.increment("errors");
+			this.#stateManager?.managers?.errorHelpers?.handleError(
+				new StorageError("Iteration failed", { cause: error })
+			);
+			throw error;
 		}
 	}
 
@@ -437,7 +453,7 @@ export default class IndexedDBAdapter {
 	 */
 	getMetrics() {
 		return {
-			...this.#metrics,
+			...this.#metrics?.getAllAsObject(),
 			isReady: this.#ready,
 			dbName: this.#dbName,
 			version: this.#version,
@@ -453,6 +469,7 @@ export default class IndexedDBAdapter {
 		if (this.#db) {
 			this.#db.close();
 			this.#db = null;
+			this.#audit("db_closed", { dbName: this.#dbName });
 			this.#ready = false;
 			console.log(`[IndexedDBAdapter] Database ${this.#dbName} closed`);
 		}
@@ -468,13 +485,20 @@ export default class IndexedDBAdapter {
 		return new Promise((resolve, reject) => {
 			const request = indexedDB.open(this.#dbName, this.#version);
 
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve(request.result);
+			request.onerror = (event) => {
+				this.#audit("db_open_failed", { error: event.target.error });
+				reject(request.error);
+			};
+			request.onsuccess = (event) => {
+				this.#audit("db_open_success", { version: this.#version });
+				resolve(request.result);
+			};
 
 			request.onupgradeneeded = (event) => {
 				const db = event.target.result;
 				this.#handleUpgrade(db, event.oldVersion, event.newVersion);
 			};
+			request.onblocked = () => this.#audit("db_open_blocked", {});
 		});
 	}
 
@@ -486,9 +510,10 @@ export default class IndexedDBAdapter {
 	 * @param {number|null} newVersion - The new version of the database.
 	 */
 	#handleUpgrade(db, oldVersion, newVersion) {
-		console.log(
-			`[IndexedDBAdapter] Upgrading database from v${oldVersion} to v${newVersion}`
-		);
+		this.#audit("db_upgrade_started", {
+			from: oldVersion,
+			to: newVersion,
+		});
 
 		// Create or update object stores
 		for (const [storeName, def] of Object.entries(this.#stores)) {
@@ -496,14 +521,28 @@ export default class IndexedDBAdapter {
 				const os = db.createObjectStore(storeName, {
 					keyPath: def.keyPath || "id",
 				});
-				console.log(`[IndexedDBAdapter] Created store: ${storeName}`);
+				this.#audit("store_created", { storeName });
 				(def.indexes || []).forEach((idx) => {
 					os.createIndex(idx.name, idx.keyPath, idx.options || {});
-					console.log(
-						`[IndexedDBAdapter] Created index: ${storeName}.${idx.name}`
-					);
+					this.#audit("index_created", {
+						storeName,
+						indexName: idx.name,
+					});
 				});
 			}
+		}
+		this.#audit("db_upgrade_complete", {
+			from: oldVersion,
+			to: newVersion,
+		});
+	}
+
+	#audit(eventType, data) {
+		if (this.#forensicLogger) {
+			this.#forensicLogger.logAuditEvent(
+				`INDEXEDDB_${eventType.toUpperCase()}`,
+				data
+			);
 		}
 	}
 
@@ -517,7 +556,7 @@ export default class IndexedDBAdapter {
 	 */
 	async #performTransaction(storeName, mode, operation) {
 		if (!this.#ready) {
-			throw new Error("Database not initialized");
+			throw new StorageError("Database not initialized");
 		}
 
 		return new Promise((resolve, reject) => {
@@ -535,7 +574,7 @@ export default class IndexedDBAdapter {
 
 			transaction.onabort = () => {
 				this.#transactions.delete(transaction);
-				reject(new Error("Transaction aborted"));
+				reject(new StorageError("Transaction aborted"));
 			};
 
 			this.#transactions.set(transaction, {
@@ -572,7 +611,7 @@ export default class IndexedDBAdapter {
 	 * @param {number} [itemCount=1] - The number of items affected by the operation.
 	 */
 	#updateMetrics(operation, duration, itemCount = 1) {
-		this.#metrics[operation] += itemCount;
+		this.#metrics?.increment(operation, itemCount);
 
 		const avgField =
 			operation === "reads"
@@ -581,11 +620,6 @@ export default class IndexedDBAdapter {
 					? "averageWriteTime"
 					: null;
 
-		if (avgField) {
-			const totalOps = this.#metrics[operation];
-			const totalTime =
-				this.#metrics[avgField] * (totalOps - itemCount) + duration;
-			this.#metrics[avgField] = totalTime / totalOps;
-		}
+		if (avgField) this.#metrics?.updateAverage(avgField, duration);
 	}
 }

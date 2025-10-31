@@ -12,59 +12,46 @@ import { DateCore } from "./DateUtils.js";
  * It handles creation, styling, automatic dismissal, and accessibility features for toasts.
  */
 export class SystemToastManager {
+	// V8.0 Parity: Use private fields for true encapsulation.
+	#toasts = new Map();
+	#stateManager;
+	#policiesManager;
+	#metricsRegistry;
+	#container = null;
+	#maxToasts = 3;
+	#defaultDuration = 2500;
+
 	/**
 	 * Creates an instance of SystemToastManager.
-	 * @param {object} [dependencies={}] - The dependencies for the manager.
-	 * @param {import('./MetricsRegistry').MetricsRegistry} [dependencies.metricsRegistry=null] - The central metrics registry.
+	 * @param {object} [context={}] - The application context.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
-	constructor({ metricsRegistry = null } = {}) {
-		/**
-		 * A map of active toasts, keyed by their unique ID.
-		 * @type {Map<string, {element: HTMLElement, type: string}>}
-		 * @private
-		 */
-		this.toasts = new Map();
-		this.metricsRegistry = metricsRegistry;
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
+		// V8.0 Parity: Derive managers and store them for internal use.
+		this.#policiesManager = this.#stateManager?.managers?.policies;
+		this.#metricsRegistry = this.#stateManager?.metricsRegistry;
 
-		/**
-		 * The DOM element that serves as the container for all toasts.
-		 * @type {HTMLElement|null}
-		 * @private
-		 */
-		this.container = null;
-		/**
-		 * The maximum number of toasts to display simultaneously.
-		 * @type {number}
-		 * @private
-		 */
-		this.maxToasts = 3;
-		/**
-		 * The default duration for toasts to display in milliseconds.
-		 * @type {number}
-		 * @private
-		 */
-		this.defaultDuration = 2500;
-
-		this.setupContainer();
-		this.setupEventListeners();
+		this.#setupContainer();
+		this.#setupEventListeners();
 	}
 
 	/**
 	 * Sets up the main container element for toasts in the DOM.
 	 * @private
 	 */
-	setupContainer() {
+	#setupContainer() {
 		// Create toast container if it doesn't exist
-		this.container = document.getElementById("system-toast-container");
-		if (!this.container) {
-			this.container = document.createElement("div");
-			this.container.id = "system-toast-container";
-			this.container.className = "system-toast-container";
-			this.container.setAttribute("aria-live", "polite");
-			this.container.setAttribute("aria-label", "Grid notifications");
+		this.#container = document.getElementById("system-toast-container");
+		if (!this.#container) {
+			this.#container = document.createElement("div");
+			this.#container.id = "system-toast-container";
+			this.#container.className = "system-toast-container";
+			this.#container.setAttribute("aria-live", "polite");
+			this.#container.setAttribute("aria-label", "Grid notifications");
 
 			// Position container
-			this.container.style.cssText = `
+			this.#container.style.cssText = `
         position: fixed;
         top: 20px;
         right: 20px;
@@ -73,7 +60,7 @@ export class SystemToastManager {
         max-width: 300px;
       `;
 
-			document.body.appendChild(this.container);
+			document.body.appendChild(this.#container);
 		}
 	}
 
@@ -81,21 +68,21 @@ export class SystemToastManager {
 	 * Sets up event listeners to react to system events and display toasts.
 	 * @private
 	 */
-	setupEventListeners() {
+	#setupEventListeners() {
 		// Listen for layout changes to show save feedback
-		if (typeof window.eventFlowEngine !== "undefined") {
-			window.eventFlowEngine.on(
+		if (this.#stateManager) {
+			this.#stateManager.on(
 				"layoutChanged",
-				this.onLayoutChanged.bind(this)
+				this.#onLayoutChanged.bind(this)
 			);
-			window.eventFlowEngine.on(
+			this.#stateManager.on(
 				"gridPerformanceMode",
-				this.onPerformanceModeChanged.bind(this)
+				this.#onPerformanceModeChanged.bind(this)
 			);
-			window.eventFlowEngine.on("error", this.onError.bind(this));
-			window.eventFlowEngine.on(
+			this.#stateManager.on("error", this.#onError.bind(this));
+			this.#stateManager.on(
 				"performance_alert",
-				this.onPerformanceAlert.bind(this)
+				this.#onPerformanceAlert.bind(this)
 			);
 		}
 	}
@@ -105,14 +92,9 @@ export class SystemToastManager {
 	 * @private
 	 * @param {object} changeEvent - The event data for the layout change.
 	 */
-	onLayoutChanged(changeEvent) {
+	#onLayoutChanged(changeEvent) {
 		// Check policy to see if we should show feedback
-		try {
-			const context = this.getContext();
-			if (!context || !this.shouldShowSaveFeedback(context)) {
-				return;
-			}
-
+		if (this.#shouldShowSaveFeedback()) {
 			// Show different messages based on change type
 			const messages = {
 				drag: "📍 Layout saved",
@@ -126,8 +108,6 @@ export class SystemToastManager {
 			const message =
 				messages[changeEvent.changeType] || "💾 Layout saved";
 			this.showToast(message, "success", 2000);
-		} catch (error) {
-			console.warn("Toast notification error:", error);
 		}
 	}
 
@@ -136,7 +116,7 @@ export class SystemToastManager {
 	 * @private
 	 * @param {object} data - The event data for the performance mode change.
 	 */
-	onPerformanceModeChanged(data) {
+	#onPerformanceModeChanged(data) {
 		if (data.reason === "policy_override") {
 			const message = data.enabled
 				? "🚀 Performance mode enabled"
@@ -150,7 +130,7 @@ export class SystemToastManager {
 	 * @private
 	 * @param {object} error - The formatted error object from ErrorHelpers.
 	 */
-	onError(error) {
+	#onError(error) {
 		if (error.showToUser) {
 			const typeMap = {
 				high: "error",
@@ -169,23 +149,21 @@ export class SystemToastManager {
 	 * @private
 	 * @param {object} alert - The performance alert object from MetricsReporter.
 	 */
-	onPerformanceAlert(alert) {
+	#onPerformanceAlert(alert) {
 		this.showToast(alert.message, "warning", 4000);
 	}
 
 	/**
 	 * Checks the system policy to determine if save feedback toasts should be displayed.
 	 * @private
-	 * @param {object} context - The application context, expected to have a `getBooleanPolicy` method.
 	 * @returns {boolean} `true` if save feedback should be shown, `false` otherwise.
 	 */
-	shouldShowSaveFeedback(context) {
-		// Check policy or use default
+	#shouldShowSaveFeedback() {
 		try {
 			return (
-				context.getBooleanPolicy?.(
-					"system",
-					"grid_save_feedback",
+				this.#policiesManager?.getPolicy(
+					"ui",
+					"enable_save_feedback",
 					true
 				) ?? true
 			);
@@ -199,16 +177,6 @@ export class SystemToastManager {
 	}
 
 	/**
-	 * Retrieves the application context from the global `window` object.
-	 * @private
-	 * @returns {object|null} The application context, or `null` if not available.
-	 */
-	getContext() {
-		// Try to get context from global app or window
-		return window.appViewModel?.context || null;
-	}
-
-	/**
 	 * Displays a toast notification with the given message, type, and duration.
 	 * @param {string} message - The message to display in the toast.
 	 * @param {'info'|'success'|'error'|'warning'} [type='info'] - The type of toast, influencing its styling.
@@ -217,21 +185,21 @@ export class SystemToastManager {
 	 */
 	showToast(message, type = "info", duration = null) {
 		// Metrics Integration
-		this.metricsRegistry?.increment("ui.toast.shown");
-		if (type) this.metricsRegistry?.increment(`ui.toast.by_type.${type}`);
+		this.#metricsRegistry?.increment("ui.toast.shown");
+		if (type) this.#metricsRegistry?.increment(`ui.toast.by_type.${type}`);
 
 		const id = `toast_${DateCore.timestamp()}_${Math.random().toString(36).substr(2, 5)}`;
-		const toast = this.createToast(id, message, type);
+		const toast = this.#createToast(id, message, type);
 
 		// Add to container
-		this.container.appendChild(toast);
-		this.toasts.set(id, { element: toast, type });
+		this.#container.appendChild(toast);
+		this.#toasts.set(id, { element: toast, type });
 
 		// Limit number of toasts
-		this.enforceMaxToasts();
+		this.#enforceMaxToasts();
 
 		// Auto-remove after duration
-		const actualDuration = duration || this.defaultDuration;
+		const actualDuration = duration || this.#defaultDuration;
 		setTimeout(() => {
 			this.removeToast(id);
 		}, actualDuration);
@@ -253,7 +221,7 @@ export class SystemToastManager {
 	 * @param {string} type - The type of the toast ('info', 'success', 'error', 'warning').
 	 * @returns {HTMLElement} The created toast DOM element.
 	 */
-	createToast(id, message, type) {
+	#createToast(id, message, type) {
 		const toast = document.createElement("div");
 		toast.className = `system-toast system-toast-${type}`;
 		toast.setAttribute("data-toast-id", id);
@@ -262,14 +230,14 @@ export class SystemToastManager {
 
 		// Set initial styles for animation
 		toast.style.cssText = `
-      background: ${this.getBackgroundColor(type)};
-      color: ${this.getTextColor(type)};
+      background: ${this.#getBackgroundColor(type)};
+      color: ${this.#getTextColor(type)};
       padding: 12px 16px;
       border-radius: 6px;
       margin-bottom: 8px;
       font-size: 14px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      border-left: 4px solid ${this.getBorderColor(type)};
+      border-left: 4px solid ${this.#getBorderColor(type)};
       transform: translateX(100%);
       opacity: 0;
       transition: all 0.3s ease;
@@ -325,7 +293,7 @@ export class SystemToastManager {
 	 * @param {string} type - The type of the toast.
 	 * @returns {string} The CSS color value.
 	 */
-	getBackgroundColor(type) {
+	#getBackgroundColor(type) {
 		const colors = {
 			success: "#d4edda",
 			error: "#f8d7da",
@@ -341,7 +309,7 @@ export class SystemToastManager {
 	 * @param {string} type - The type of the toast.
 	 * @returns {string} The CSS color value.
 	 */
-	getTextColor(type) {
+	#getTextColor(type) {
 		const colors = {
 			success: "#155724",
 			error: "#721c24",
@@ -357,7 +325,7 @@ export class SystemToastManager {
 	 * @param {string} type - The type of the toast.
 	 * @returns {string} The CSS color value.
 	 */
-	getBorderColor(type) {
+	#getBorderColor(type) {
 		const colors = {
 			success: "#28a745",
 			error: "#dc3545",
@@ -373,7 +341,7 @@ export class SystemToastManager {
 	 * @param {string} id - The unique ID of the toast to remove.
 	 */
 	removeToast(id) {
-		const toast = this.toasts.get(id);
+		const toast = this.#toasts.get(id);
 		if (!toast) return;
 
 		const element = toast.element;
@@ -387,7 +355,7 @@ export class SystemToastManager {
 			if (element.parentNode) {
 				element.parentNode.removeChild(element);
 			}
-			this.toasts.delete(id);
+			this.#toasts.delete(id);
 		}, 300);
 	}
 
@@ -395,13 +363,13 @@ export class SystemToastManager {
 	 * Ensures that the number of displayed toasts does not exceed `maxToasts` by removing the oldest ones.
 	 * @private
 	 */
-	enforceMaxToasts() {
-		const toastIds = Array.from(this.toasts.keys());
-		if (toastIds.length > this.maxToasts) {
+	#enforceMaxToasts() {
+		const toastIds = Array.from(this.#toasts.keys());
+		if (toastIds.length > this.#maxToasts) {
 			// Remove oldest toasts
 			const toRemove = toastIds.slice(
 				0,
-				toastIds.length - this.maxToasts
+				toastIds.length - this.#maxToasts
 			);
 			toRemove.forEach((id) => this.removeToast(id));
 		}
@@ -456,7 +424,7 @@ export class SystemToastManager {
 	 * @public
 	 */
 	clear() {
-		Array.from(this.toasts.keys()).forEach((id) => this.removeToast(id));
+		Array.from(this.#toasts.keys()).forEach((id) => this.removeToast(id));
 	}
 
 	/**
@@ -465,8 +433,8 @@ export class SystemToastManager {
 	 */
 	destroy() {
 		this.clear();
-		if (this.container && this.container.parentNode) {
-			this.container.parentNode.removeChild(this.container);
+		if (this.#container && this.#container.parentNode) {
+			this.#container.parentNode.removeChild(this.#container);
 		}
 	}
 }

@@ -3,7 +3,6 @@
  * @description A unified search service that queries across local state, plugins, and AI embeddings.
  * It provides a single interface for global search, integrating results from multiple sources.
  */
-import { ErrorHelpers } from "../utils/ErrorHelpers.js";
 
 /**
  * @class QueryService
@@ -14,32 +13,28 @@ export class QueryService {
 	/**
 	 * Creates an instance of QueryService.
 	 * @param {object} dependencies - The dependencies for the service.
-	 * @param {import('../core/HybridStateManager.js').default} dependencies.stateManager - The main state manager.
-	 * @param {import('../core/ManifestPluginSystem.js').default} dependencies.pluginSystem - The plugin system.
-	 * @param {import('./EmbeddingManager.js').default} dependencies.embeddingManager - The embedding manager.
-	 * @param {import('../managers/CacheManager.js').CacheManager} [dependencies.cacheManager] - The central cache manager.
-	 * @param {import('../utils/MetricsRegistry.js').MetricsRegistry} dependencies.metricsRegistry - The central metrics registry.
+	 * @param {import('../core/HybridStateManager.js').default} dependencies.stateManager - The main state manager, providing access to all other managers.
 	 */
-	constructor({
-		stateManager,
-		pluginSystem,
-		embeddingManager,
-		cacheManager,
-		metricsRegistry,
-	}) {
+	constructor({ stateManager }) {
 		/** @type {import('../core/HybridStateManager.js').default} */
 		this.stateManager = stateManager;
-		/** @type {import('../core/ManifestPluginSystem.js').default} */
-		this.pluginSystem = pluginSystem;
-		/** @type {import('./EmbeddingManager.js').default} */
-		this.embeddingManager = embeddingManager;
+		const managers = stateManager.managers;
+
+		/** @type {import('../core/ManifestPluginSystem.js').default|undefined} */
+		this.pluginSystem = managers.pluginSystem;
+		/** @type {import('./EmbeddingManager.js').default|undefined} */
+		this.embeddingManager = managers.embeddingManager;
 		/** @type {import('../utils/MetricsRegistry.js').MetricsRegistry|undefined} */
-		this.metrics = metricsRegistry?.namespace("query");
+		this.metrics = managers.metricsRegistry?.namespace("query");
+		/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+		this.#errorHelpers = managers.errorHelpers;
 
 		// Use the central cache manager for integrated caching
-		this.cache = cacheManager?.getCache("queries", 200, { ttl: 60000 }); // 1 min TTL
+		this.cache = managers.cacheManager?.getCache("queries", 200, {
+			ttl: 60000,
+		}); // 1 min TTL
 		// Create a dedicated error boundary for this service
-		this.errorBoundary = ErrorHelpers.createErrorBoundary(
+		this.errorBoundary = this.#errorHelpers?.createErrorBoundary(
 			{
 				eventFlow: this.stateManager?.eventFlow,
 				managers: this.stateManager?.managers,
@@ -47,6 +42,9 @@ export class QueryService {
 			"QueryService"
 		);
 	}
+
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers;
 
 	/**
 	 * Executes a search across local state, plugins, and AI embeddings, then ranks and returns the results.
@@ -142,20 +140,22 @@ export class QueryService {
 			for (const plugin of this.pluginSystem.activePlugins) {
 				if (typeof plugin.search === "function") {
 					// Wrap each plugin search in its own error boundary to prevent one failing plugin from stopping others
-					const pluginSearch = ErrorHelpers.captureAsync(
-						() => plugin.search(query, { domains }),
-						this.stateManager?.eventFlow,
-						{ component: `Plugin.${plugin.id}` }
-					).then((pluginResults) => {
-						if (!pluginResults) return [];
-						// Add plugin metadata to results
-						return pluginResults.map((result) => ({
-							...result,
-							source: "plugin",
-							pluginId: plugin.id,
-							pluginName: plugin.name || plugin.id,
-						}));
-					});
+					const pluginSearch = this.#errorHelpers
+						?.captureAsync(
+							() => plugin.search(query, { domains }),
+							this.stateManager?.eventFlow,
+							{ component: `Plugin.${plugin.id}` }
+						)
+						.then((pluginResults) => {
+							if (!pluginResults) return [];
+							// Add plugin metadata to results
+							return pluginResults.map((result) => ({
+								...result,
+								source: "plugin",
+								pluginId: plugin.id,
+								pluginName: plugin.name || plugin.id,
+							}));
+						});
 					searchPromises.push(pluginSearch);
 				}
 			}

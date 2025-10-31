@@ -11,17 +11,21 @@
  * @module BasicSecurity
  */
 export default class BasicSecurity {
+	/** @private @type {object} */
+	#config;
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager;
+
 	/**
 	 * Creates an instance of BasicSecurity.
-	 * @param {object} [config={}] - Configuration options for the module.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for the module.
 	 */
-	constructor(config = {}) {
-		/**
-		 * @private
-		 * @type {object}
-		 */
-		this.config = config;
-		console.log("[BasicSecurity] Initialized with config:", config);
+	constructor({ stateManager, options = {} }) {
+		this.#stateManager = stateManager;
+		this.#config = options;
+		console.log("[BasicSecurity] Loaded with config:", this.#config);
 	}
 
 	/**
@@ -37,10 +41,19 @@ export default class BasicSecurity {
 	 * @returns {Promise<boolean>} A promise that always resolves to `true`.
 	 */
 	async checkPermission(user, action, resource) {
-		console.log(
-			`[BasicSecurity] Checking permission for user ${user} to ${action} ${resource}`
-		);
-		return true; // Always allow for demonstration purposes
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("basicSecurity");
+		const startTime = performance.now();
+		try {
+			console.log(
+				`[BasicSecurity] Checking permission for user ${user} to ${action} ${resource}`
+			);
+			return true; // Always allow for demonstration purposes
+		} finally {
+			const duration = performance.now() - startTime;
+			metrics?.increment("permissionChecks");
+			metrics?.updateAverage("permissionCheckTime", duration);
+		}
 	}
 
 	/**
@@ -53,8 +66,17 @@ export default class BasicSecurity {
 	 * @returns {Promise<string>} A string representing the "encrypted" data.
 	 */
 	async encrypt(data) {
-		console.log("[BasicSecurity] Encrypting data (basic):", data);
-		return `basic_encrypted(${JSON.stringify(data)})`;
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("basicSecurity");
+		const startTime = performance.now();
+		try {
+			console.log("[BasicSecurity] Encrypting data (basic):", data);
+			return `basic_encrypted(${JSON.stringify(data)})`;
+		} finally {
+			const duration = performance.now() - startTime;
+			metrics?.increment("encryptionCount");
+			metrics?.updateAverage("encryptionTime", duration);
+		}
 	}
 
 	/**
@@ -67,11 +89,23 @@ export default class BasicSecurity {
 	 * @returns {Promise<*>} The original data.
 	 */
 	async decrypt(encryptedData) {
-		console.log("[BasicSecurity] Decrypting data (basic):", encryptedData);
-		const match = encryptedData.match(/^basic_encrypted\((.*)\)$/);
-		if (match && match[1]) {
-			return JSON.parse(match[1]);
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("basicSecurity");
+		const startTime = performance.now();
+		try {
+			console.log(
+				"[BasicSecurity] Decrypting data (basic):",
+				encryptedData
+			);
+			const match = encryptedData.match(/^basic_encrypted\((.*)\)$/);
+			if (match && match[1]) {
+				return JSON.parse(match[1]);
+			}
+			return encryptedData;
+		} finally {
+			const duration = performance.now() - startTime;
+			metrics?.increment("decryptionCount");
+			metrics?.updateAverage("decryptionTime", duration);
 		}
-		return encryptedData;
 	}
 }

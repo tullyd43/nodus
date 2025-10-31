@@ -9,18 +9,26 @@ import { getCryptoDomain } from "./CryptoDomain.js";
  * principle of data-at-rest security in multi-level systems.
  */
 export class ClassificationCrypto {
+	/** @private @type {import('../HybridStateManager.js').default|null} */
+	/** @private @type {import('./KeyringAdapter.js').KeyringAdapter|null} */
+	#keyring = null;
+
 	/**
 	 * Creates an instance of ClassificationCrypto.
 	 * @param {object} config - The configuration object.
-	 * @param {import('./Keyring').InMemoryKeyring} config.keyring - An instance of a keyring class that manages and provides cryptographic keys for different domains.
+	 * @param {import('../HybridStateManager.js').default} config.stateManager - The main state manager instance.
 	 */
-	constructor({ keyring }) {
-		/**
-		 * The keyring instance responsible for managing cryptographic keys.
-		 * @type {import('./Keyring').InMemoryKeyring}
-		 * @private
-		 */
-		this.keyring = keyring;
+	constructor({ stateManager }) {
+		// V8.0 Parity: The keyring is part of the storage instance's crypto module.
+		// It is derived from the stateManager to ensure the correct instance (dev vs. prod) is used.
+		this.#keyring =
+			stateManager?.storage?.instance?._crypto?.keyring ?? null;
+
+		if (!this.#keyring) {
+			throw new Error(
+				"[ClassificationCrypto] Keyring could not be derived from the state manager."
+			);
+		}
 	}
 
 	/**
@@ -70,7 +78,7 @@ export class ClassificationCrypto {
 	 */
 	async encrypt(label, plaintextBytes) {
 		const domain = getCryptoDomain(label);
-		const key = await this.keyring.getKey(domain);
+		const key = await this.#keyring.getKey(domain);
 		return key.encrypt(plaintextBytes);
 	}
 
@@ -83,9 +91,9 @@ export class ClassificationCrypto {
 	 * @param {object} envelope - The encrypted envelope to decrypt.
 	 * @returns {Promise<Uint8Array>} A promise that resolves to the decrypted raw data as bytes.
 	 */
-	async decrypt(label, envelope, aad) {
+	async decrypt(label, envelope) {
 		const domain = getCryptoDomain(label);
-		const key = await this.keyring.getKey(domain);
-		return await key.decrypt(envelope, aad);
+		const key = await this.#keyring.getKey(domain);
+		return await key.decrypt(envelope);
 	}
 }

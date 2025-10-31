@@ -10,15 +10,22 @@ import { AppError } from "./ErrorHelpers.js";
  * @template T The type of data stored in the stack.
  */
 export class BoundedStack {
+	// V8.0 Parity: Use private fields for true encapsulation.
+	#maxSize;
+	#items = [];
+	#evictionCount = 0;
+	#stateManager;
+	#metricsRegistry;
+	#name;
+
 	/**
 	 * Creates an instance of BoundedStack.
 	 * @param {number} [maxSize=50] - The maximum number of items the stack can hold before evicting the oldest ones.
-	 * @param {object} [options={}] - Configuration options for the stack.
+	 * @param {object} [options={}] - The application context and options.
+	 * @param {import('../core/HybridStateManager.js').default} [options.stateManager] - The main state manager.
 	 * @param {string} [options.name=""] - A name for the stack, used for namespacing metrics.
-	 * @param {import('./MetricsRegistry').MetricsRegistry} [options.metricsRegistry=null] - An external metrics registry to report to.
-	 * @param {object} [options.eventFlow=null] - The application's EventFlowEngine instance for emitting audit events.
 	 */
-	constructor(maxSize = 50, options = {}) {
+	constructor(maxSize = 50, { stateManager, ...options } = {}) {
 		if (
 			typeof maxSize !== "number" ||
 			!Number.isInteger(maxSize) ||
@@ -34,24 +41,20 @@ export class BoundedStack {
 			);
 		}
 
-		this.maxSize = maxSize;
-		this.items = [];
-		this.evictionCount = 0; // Track how many items have been evicted
+		this.#maxSize = maxSize;
 
-		this.options = {
-			name: "",
-			metricsRegistry: null,
-			eventFlow: null,
-			...options,
-		};
+		// V8.0 Parity: Derive all dependencies from the stateManager.
+		this.#stateManager = stateManager;
+		this.#name = options.name || "";
+		const metricsRegistry = this.#stateManager?.metricsRegistry;
 
 		// Use a namespaced registry if provided, otherwise use the main one
-		if (this.options.metricsRegistry && this.options.name) {
-			this.registry = this.options.metricsRegistry.namespace(
-				`stack.${this.options.name}`
+		if (metricsRegistry && this.#name) {
+			this.#metricsRegistry = metricsRegistry.namespace(
+				`stack.${this.#name}`
 			);
-		} else if (this.options.metricsRegistry) {
-			this.registry = this.options.metricsRegistry;
+		} else if (metricsRegistry) {
+			this.#metricsRegistry = metricsRegistry;
 		}
 	}
 
@@ -69,15 +72,15 @@ export class BoundedStack {
 			id: this.generateItemId(),
 		};
 
-		this.items.push(stackItem);
-		this.registry?.increment("pushes");
+		this.#items.push(stackItem);
+		this.#metricsRegistry?.increment("pushes");
 
 		// Evict oldest items if over limit
-		while (this.items.length > this.maxSize) {
-			const evicted = this.items.shift();
-			this.evictionCount++;
+		while (this.#items.length > this.#maxSize) {
+			const evicted = this.#items.shift();
+			this.#evictionCount++;
 
-			this.registry?.increment("evictions");
+			this.#metricsRegistry?.increment("evictions");
 			// Notify about eviction for cleanup if a callback is set
 			this.handleEviction(evicted, "capacity");
 		}
@@ -90,11 +93,11 @@ export class BoundedStack {
 	 * @returns {T|undefined} The data from the top item, or undefined if the stack is empty.
 	 */
 	pop() {
-		if (this.items.length === 0) {
+		if (this.#items.length === 0) {
 			return undefined;
 		}
-		const item = this.items.pop();
-		this.registry?.increment("pops");
+		const item = this.#items.pop();
+		this.#metricsRegistry?.increment("pops");
 		return item.data;
 	}
 
@@ -103,11 +106,11 @@ export class BoundedStack {
 	 * @returns {T|undefined} The data from the top item, or undefined if the stack is empty.
 	 */
 	peek() {
-		if (this.items.length === 0) {
+		if (this.#items.length === 0) {
 			return undefined;
 		}
 
-		return this.items[this.items.length - 1].data;
+		return this.#items[this.#items.length - 1].data;
 	}
 
 	/**
@@ -116,12 +119,12 @@ export class BoundedStack {
 	 * @returns {T|undefined} The data of the item at the specified index, or undefined if the index is out of bounds.
 	 */
 	peekAt(index) {
-		if (index < 0 || index >= this.items.length) {
+		if (index < 0 || index >= this.#items.length) {
 			return undefined;
 		}
 
-		const actualIndex = this.items.length - 1 - index;
-		return this.items[actualIndex].data;
+		const actualIndex = this.#items.length - 1 - index;
+		return this.#items[actualIndex].data;
 	}
 
 	/**
@@ -129,7 +132,7 @@ export class BoundedStack {
 	 * @returns {boolean} True if the stack has no items, false otherwise.
 	 */
 	isEmpty() {
-		return this.items.length === 0;
+		return this.#items.length === 0;
 	}
 
 	/**
@@ -137,7 +140,7 @@ export class BoundedStack {
 	 * @returns {boolean} True if the stack size is equal to or greater than `maxSize`.
 	 */
 	isFull() {
-		return this.items.length >= this.maxSize;
+		return this.#items.length >= this.#maxSize;
 	}
 
 	/**
@@ -145,7 +148,7 @@ export class BoundedStack {
 	 * @type {number}
 	 */
 	get size() {
-		return this.items.length;
+		return this.#items.length;
 	}
 
 	/**
@@ -153,7 +156,7 @@ export class BoundedStack {
 	 * @type {number}
 	 */
 	get remainingCapacity() {
-		return this.maxSize - this.items.length;
+		return this.#maxSize - this.#items.length;
 	}
 
 	/**
@@ -161,9 +164,9 @@ export class BoundedStack {
 	 * @returns {number} The number of items that were cleared.
 	 */
 	clear() {
-		const clearedCount = this.items.length;
-		this.items = [];
-		this.registry?.increment("clears", clearedCount);
+		const clearedCount = this.#items.length;
+		this.#items = [];
+		this.#metricsRegistry?.increment("clears", clearedCount);
 		return clearedCount;
 	}
 
@@ -172,7 +175,7 @@ export class BoundedStack {
 	 * @returns {T[]} An array containing the data of all items in the stack.
 	 */
 	toArray() {
-		return this.items
+		return this.#items
 			.slice()
 			.reverse()
 			.map((item) => item.data);
@@ -185,9 +188,9 @@ export class BoundedStack {
 	 * @returns {T|undefined} The data of the first item that matches the predicate, or undefined if no match is found.
 	 */
 	find(predicate) {
-		for (let i = this.items.length - 1; i >= 0; i--) {
-			const item = this.items[i];
-			if (predicate(item.data, this.items.length - 1 - i)) {
+		for (let i = this.#items.length - 1; i >= 0; i--) {
+			const item = this.#items[i];
+			if (predicate(item.data, this.#items.length - 1 - i)) {
 				return item.data;
 			}
 		}
@@ -201,7 +204,7 @@ export class BoundedStack {
 	 * @returns {T[]} A new array with the items that pass the test.
 	 */
 	filter(predicate) {
-		return this.items
+		return this.#items
 			.slice()
 			.reverse()
 			.map((item, index) => ({ data: item.data, index }))
@@ -215,20 +218,20 @@ export class BoundedStack {
 	 */
 	getMetrics() {
 		return {
-			size: this.items.length,
-			maxSize: this.maxSize,
+			size: this.#items.length,
+			maxSize: this.#maxSize,
 			utilizationPercent: Math.round(
-				(this.items.length / this.maxSize) * 100
+				(this.#items.length / this.#maxSize) * 100
 			),
-			evictionCount: this.evictionCount,
+			evictionCount: this.#evictionCount,
 			oldestItemAge:
-				this.items.length > 0
-					? DateCore.timestamp() - this.items[0].timestamp
+				this.#items.length > 0
+					? DateCore.timestamp() - this.#items[0].timestamp
 					: 0,
 			newestItemAge:
-				this.items.length > 0
+				this.#items.length > 0
 					? DateCore.timestamp() -
-						this.items[this.items.length - 1].timestamp
+						this.#items[this.#items.length - 1].timestamp
 					: 0,
 			memoryEstimate: this.estimateMemoryUsage(),
 		};
@@ -240,15 +243,15 @@ export class BoundedStack {
 	 * @returns {number} The estimated memory usage in bytes.
 	 */
 	estimateMemoryUsage() {
-		if (this.items.length === 0) return 0;
+		if (this.#items.length === 0) return 0;
 
 		// Rough estimate:
 		// - Each item wrapper: ~100 bytes
 		// - Each data object: variable (try to estimate)
-		const wrapperOverhead = this.items.length * 100;
+		const wrapperOverhead = this.#items.length * 100;
 
 		let dataSize = 0;
-		for (const item of this.items) {
+		for (const item of this.#items) {
 			dataSize += this.estimateObjectSize(item.data);
 		}
 
@@ -336,13 +339,13 @@ export class BoundedStack {
 	 * @returns {number} The number of items removed.
 	 */
 	trimTo(newSize) {
-		if (newSize >= this.items.length) return 0;
+		if (newSize >= this.#items.length) return 0;
 
-		const removeCount = this.items.length - newSize;
-		const removed = this.items.splice(0, removeCount);
-		this.evictionCount += removed.length;
+		const removeCount = this.#items.length - newSize;
+		const removed = this.#items.splice(0, removeCount);
+		this.#evictionCount += removed.length;
 		removed.forEach((item) => this.handleEviction(item, "trim"));
-		this.registry?.increment("evictions", removed.length);
+		this.#metricsRegistry?.increment("evictions", removed.length);
 
 		return removed.length;
 	}
@@ -354,7 +357,7 @@ export class BoundedStack {
 	 * @returns {T[]} An array of item data within the time range, newest first.
 	 */
 	getItemsInTimeRange(startTime, endTime) {
-		return this.items
+		return this.#items
 			.filter(
 				(item) =>
 					item.timestamp >= startTime && item.timestamp <= endTime
@@ -372,12 +375,15 @@ export class BoundedStack {
 		const cutoffTime = DateCore.timestamp() - maxAge;
 		let removeCount = 0;
 
-		while (this.items.length > 0 && this.items[0].timestamp < cutoffTime) {
-			const evicted = this.items.shift();
+		while (
+			this.#items.length > 0 &&
+			this.#items[0].timestamp < cutoffTime
+		) {
+			const evicted = this.#items.shift();
 			removeCount++;
-			this.evictionCount++;
+			this.#evictionCount++;
 			this.handleEviction(evicted, "age");
-			this.registry?.increment("evictions", removeCount);
+			this.#metricsRegistry?.increment("evictions", removeCount);
 		}
 
 		return removeCount;
@@ -390,11 +396,11 @@ export class BoundedStack {
 	 * @param {string} reason - The reason for eviction ('capacity', 'trim', 'age').
 	 */
 	handleEviction(evictedItem, reason) {
-		// Emit to event flow if available
-		if (this.options.eventFlow) {
-			this.options.eventFlow.emit("stack_eviction", {
+		// V8.0 Parity: Emit to the central stateManager event bus.
+		if (this.#stateManager) {
+			this.#stateManager.emit("stack_eviction", {
 				timestamp: DateCore.now(),
-				source: `stack:${this.options.name || "generic"}`,
+				source: `stack:${this.#name || "unnamed"}`,
 				reason,
 				item: evictedItem,
 			});

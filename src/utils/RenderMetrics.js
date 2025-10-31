@@ -9,11 +9,28 @@ import { DateCore } from "./DateUtils.js";
  * @borrows DateCore.timestamp as timestamp
  * @property {object} options - Configuration options for the metrics collector.
  * @property {number} fps - The current calculated Frames Per Second.
- * @property {number} frameCount - The total number of frames tracked since the last calculation.
- * @property {Set<Function>} subscribers - A set of callback functions to be invoked with metric updates.
- * @property {PerformanceObserver|null} performanceObserver - The observer for browser performance entries.
  */
 export class RenderMetrics {
+	// V8.0 Parity: Use private fields for true encapsulation.
+	#options;
+	#stateManager;
+	#metricsRegistry;
+	#fps = 0;
+	#frameCount = 0;
+	#lastFrameTime;
+	#frameTimes = [];
+	#renderLatencies = [];
+	#layoutLatencies = [];
+	#interactionLatencies = [];
+	#memoryStats = {};
+	#subscribers = new Set();
+	#metricsHistory = [];
+	#performanceObserver = null;
+	#rafId = null;
+	#reportInterval = null;
+	#firstContentfulPaint = null;
+	#layoutShifts = [];
+
 	/**
 	 * @borrows DateCore.timestamp as timestamp
 	 */
@@ -21,48 +38,34 @@ export class RenderMetrics {
 
 	/**
 	 * Creates an instance of RenderMetrics.
-	 * @param {object} [options={}] - Configuration options for the metrics collector.
+	 * @param {object} context - The application context and configuration options.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager for metrics integration.
 	 * @param {number} [options.sampleSize=60] - The number of recent frames/latencies to average for calculations.
 	 * @param {number} [options.reportInterval=1000] - The interval in milliseconds to emit metric updates.
 	 * @param {boolean} [options.trackLatency=true] - Whether to track render, layout, and interaction latencies.
 	 * @param {boolean} [options.trackMemory=false] - Whether to track JavaScript heap memory usage (can be expensive).
 	 */
-	constructor(options = {}) {
-		this.options = {
+	constructor({ stateManager, ...options } = {}) {
+		// V8.0 Parity: Integrate with stateManager for centralized metrics
+		this.#options = {
 			sampleSize: 60, // Number of frames to average
 			reportInterval: 1000, // How often to emit updates (ms)
 			trackLatency: true, // Track render latency
 			trackMemory: false, // Track memory usage (expensive)
 			...options,
 		};
+		this.#stateManager = stateManager;
+		// V8.0 Parity: Derive metrics from the stateManager's registry.
+		this.#metricsRegistry = this.#stateManager?.metricsRegistry;
 
-		// FPS tracking
-		this.fps = 0;
-		this.frameCount = 0;
-		this.lastFrameTime = RenderMetrics.timestamp();
-		this.frameTimes = [];
+		this.#lastFrameTime = RenderMetrics.timestamp();
 
-		// Latency tracking
-		this.renderLatencies = [];
-		this.layoutLatencies = [];
-		this.interactionLatencies = [];
+		// V8.0 Parity: Lifecycle is managed externally. Do not start tracking in the constructor.
+		// The `initialize` method will be called by the SystemBootstrap or parent manager.
+	}
 
-		// Memory tracking (if enabled)
-		this.memoryStats = {
-			usedJSHeapSize: 0,
-			totalJSHeapSize: 0,
-			jsHeapSizeLimit: 0,
-		};
-
-		// Subscribers for real-time updates
-		this.subscribers = new Set();
-		this.metricsHistory = [];
-
-		// Performance observer for paint metrics
-		this.setupPerformanceObserver();
-
-		// Start the main tracking loop
-		this.startTracking();
+	initialize() {
+		this.#setupPerformanceObserver();
 	}
 
 	/**
@@ -70,13 +73,14 @@ export class RenderMetrics {
 	 * reporting interval to calculate and emit metrics.
 	 */
 	startTracking() {
-		this.rafId = requestAnimationFrame(this.trackFrame.bind(this));
+		if (this.#rafId) return; // Already running
+		this.#rafId = requestAnimationFrame(this.#trackFrame.bind(this));
 
 		// Set up periodic reporting
-		this.reportInterval = setInterval(() => {
-			this.calculateMetrics();
-			this.emitUpdate();
-		}, this.options.reportInterval);
+		this.#reportInterval = setInterval(() => {
+			this.#calculateMetrics();
+			this.#emitUpdate();
+		}, this.#options.reportInterval);
 
 		console.log("[RenderMetrics] Started tracking performance metrics");
 	}
@@ -86,20 +90,20 @@ export class RenderMetrics {
 	 * PerformanceObserver to clean up resources.
 	 */
 	stopTracking() {
-		if (this.rafId) {
-			cancelAnimationFrame(this.rafId);
-			this.rafId = null;
+		if (this.#rafId) {
+			cancelAnimationFrame(this.#rafId);
+			this.#rafId = null;
 		}
 
-		if (this.reportInterval) {
-			clearInterval(this.reportInterval);
-			this.reportInterval = null;
+		if (this.#reportInterval) {
+			clearInterval(this.#reportInterval);
+			this.#reportInterval = null;
 		}
 
-		if (this.performanceObserver) {
-			this.performanceObserver.disconnect();
+		if (this.#performanceObserver) {
+			this.#performanceObserver.disconnect();
+			this.#performanceObserver = null;
 		}
-
 		console.log("[RenderMetrics] Stopped tracking performance metrics");
 	}
 
@@ -109,22 +113,22 @@ export class RenderMetrics {
 	 * @private
 	 * @param {DOMHighResTimeStamp} currentTime - The timestamp provided by `requestAnimationFrame`.
 	 */
-	trackFrame(currentTime) {
-		this.frameCount++;
+	#trackFrame(currentTime) {
+		this.#frameCount++;
 
 		// Calculate frame time
-		const frameTime = currentTime - this.lastFrameTime;
-		this.frameTimes.push(frameTime);
+		const frameTime = currentTime - this.#lastFrameTime;
+		this.#frameTimes.push(frameTime);
 
 		// Keep only recent frames for averaging
-		if (this.frameTimes.length > this.options.sampleSize) {
-			this.frameTimes.shift();
+		if (this.#frameTimes.length > this.#options.sampleSize) {
+			this.#frameTimes.shift();
 		}
 
-		this.lastFrameTime = currentTime;
+		this.#lastFrameTime = currentTime;
 
 		// Continue tracking
-		this.rafId = requestAnimationFrame(this.trackFrame.bind(this));
+		this.#rafId = requestAnimationFrame(this.#trackFrame.bind(this));
 	}
 
 	/**
@@ -132,18 +136,18 @@ export class RenderMetrics {
 	 * This method is called periodically by the reporting interval.
 	 * @private
 	 */
-	calculateMetrics() {
+	#calculateMetrics() {
 		// Calculate FPS from frame times
-		if (this.frameTimes.length > 0) {
+		if (this.#frameTimes.length > 0) {
 			const avgFrameTime =
-				this.frameTimes.reduce((sum, time) => sum + time, 0) /
-				this.frameTimes.length;
-			this.fps = Math.round(1000 / avgFrameTime);
+				this.#frameTimes.reduce((sum, time) => sum + time, 0) /
+				this.#frameTimes.length;
+			this.#fps = Math.round(1000 / avgFrameTime);
 		}
 
 		// Track memory if enabled
-		if (this.options.trackMemory && performance.memory) {
-			this.memoryStats = {
+		if (this.#options.trackMemory && performance.memory) {
+			this.#memoryStats = {
 				usedJSHeapSize: performance.memory.usedJSHeapSize,
 				totalJSHeapSize: performance.memory.totalJSHeapSize,
 				jsHeapSizeLimit: performance.memory.jsHeapSizeLimit,
@@ -152,14 +156,14 @@ export class RenderMetrics {
 
 		// Store historical data
 		const metrics = this.getCurrentMetrics();
-		this.metricsHistory.push({
+		this.#metricsHistory.push({
 			...metrics,
 			timestamp: RenderMetrics.timestamp(),
 		});
 
 		// Keep only last 100 entries
-		if (this.metricsHistory.length > 100) {
-			this.metricsHistory.shift();
+		if (this.#metricsHistory.length > 100) {
+			this.#metricsHistory.shift();
 		}
 	}
 
@@ -168,21 +172,21 @@ export class RenderMetrics {
 	 * like 'paint', 'layout-shift', and custom 'measure' events.
 	 * @private
 	 */
-	setupPerformanceObserver() {
+	#setupPerformanceObserver() {
 		if (!("PerformanceObserver" in window)) {
 			console.warn("[RenderMetrics] PerformanceObserver not supported");
 			return;
 		}
 
 		try {
-			this.performanceObserver = new PerformanceObserver((list) => {
+			this.#performanceObserver = new PerformanceObserver((list) => {
 				for (const entry of list.getEntries()) {
-					this.handlePerformanceEntry(entry);
+					this.#handlePerformanceEntry(entry);
 				}
 			});
 
 			// Observe paint and layout metrics
-			this.performanceObserver.observe({
+			this.#performanceObserver.observe({
 				entryTypes: ["paint", "measure", "navigation", "layout-shift"],
 			});
 		} catch (error) {
@@ -199,22 +203,22 @@ export class RenderMetrics {
 	 * @private
 	 * @param {PerformanceEntry} entry - The performance entry to handle.
 	 */
-	handlePerformanceEntry(entry) {
+	#handlePerformanceEntry(entry) {
 		switch (entry.entryType) {
 			case "paint":
 				if (entry.name === "first-contentful-paint") {
-					this.firstContentfulPaint = entry.startTime;
+					this.#firstContentfulPaint = entry.startTime;
 				}
 				break;
 
 			case "measure":
 				if (entry.name.startsWith("grid-")) {
-					this.recordCustomLatency("grid", entry.duration);
+					this.recordCustomLatency("grid", entry.duration); // This is a public method
 				}
 				break;
 
 			case "layout-shift":
-				this.recordLayoutShift(entry.value);
+				this.recordLayoutShift(entry.value); // This is a public method
 				break;
 		}
 	}
@@ -226,17 +230,17 @@ export class RenderMetrics {
 	 * @returns {void}
 	 */
 	recordRenderLatency(latency, operation = "render") {
-		if (!this.options.trackLatency) return;
+		if (!this.#options.trackLatency) return;
 
-		this.renderLatencies.push({
+		this.#renderLatencies.push({
 			latency,
 			operation,
 			timestamp: RenderMetrics.timestamp(),
 		});
 
 		// Keep only recent latencies
-		if (this.renderLatencies.length > this.options.sampleSize) {
-			this.renderLatencies.shift();
+		if (this.#renderLatencies.length > this.#options.sampleSize) {
+			this.#renderLatencies.shift();
 		}
 	}
 
@@ -247,16 +251,16 @@ export class RenderMetrics {
 	 * @returns {void}
 	 */
 	recordLayoutLatency(latency, operation = "layout") {
-		if (!this.options.trackLatency) return;
+		if (!this.#options.trackLatency) return;
 
-		this.layoutLatencies.push({
+		this.#layoutLatencies.push({
 			latency,
 			operation,
 			timestamp: RenderMetrics.timestamp(),
 		});
 
-		if (this.layoutLatencies.length > this.options.sampleSize) {
-			this.layoutLatencies.shift();
+		if (this.#layoutLatencies.length > this.#options.sampleSize) {
+			this.#layoutLatencies.shift();
 		}
 	}
 
@@ -268,16 +272,16 @@ export class RenderMetrics {
 	 * @returns {void}
 	 */
 	recordInteractionLatency(latency, interaction = "unknown") {
-		if (!this.options.trackLatency) return;
+		if (!this.#options.trackLatency) return;
 
-		this.interactionLatencies.push({
+		this.#interactionLatencies.push({
 			latency,
 			interaction,
 			timestamp: RenderMetrics.timestamp(),
 		});
 
-		if (this.interactionLatencies.length > this.options.sampleSize) {
-			this.interactionLatencies.shift();
+		if (this.#interactionLatencies.length > this.#options.sampleSize) {
+			this.#interactionLatencies.shift();
 		}
 	}
 
@@ -307,19 +311,14 @@ export class RenderMetrics {
 	 * @returns {void}
 	 */
 	recordLayoutShift(value) {
-		// Store cumulative layout shift data
-		if (!this.layoutShifts) {
-			this.layoutShifts = [];
-		}
-
-		this.layoutShifts.push({
+		this.#layoutShifts.push({
 			value,
 			timestamp: RenderMetrics.timestamp(),
 		});
 
 		// Keep only recent shifts
-		if (this.layoutShifts.length > 50) {
-			this.layoutShifts.shift();
+		if (this.#layoutShifts.length > 50) {
+			this.#layoutShifts.shift();
 		}
 	}
 
@@ -328,25 +327,25 @@ export class RenderMetrics {
 	 * @returns {object} An object containing the current FPS, average latencies, memory usage, and other vitals.
 	 */
 	getCurrentMetrics() {
-		const avgRenderLatency = this.calculateAverageLatency(
-			this.renderLatencies
+		const avgRenderLatency = this.#calculateAverageLatency(
+			this.#renderLatencies
 		);
-		const avgLayoutLatency = this.calculateAverageLatency(
-			this.layoutLatencies
+		const avgLayoutLatency = this.#calculateAverageLatency(
+			this.#layoutLatencies
 		);
-		const avgInteractionLatency = this.calculateAverageLatency(
-			this.interactionLatencies
+		const avgInteractionLatency = this.#calculateAverageLatency(
+			this.#interactionLatencies
 		);
 
 		return {
-			fps: this.fps,
-			frameCount: this.frameCount,
+			fps: this.#fps,
+			frameCount: this.#frameCount,
 			avgRenderLatency,
 			avgLayoutLatency,
 			avgInteractionLatency,
-			memory: this.options.trackMemory ? this.memoryStats : null,
-			firstContentfulPaint: this.firstContentfulPaint || null,
-			cumulativeLayoutShift: this.calculateCLS(),
+			memory: this.#options.trackMemory ? this.#memoryStats : null,
+			firstContentfulPaint: this.#firstContentfulPaint || null,
+			cumulativeLayoutShift: this.#calculateCLS(),
 		};
 	}
 
@@ -356,7 +355,7 @@ export class RenderMetrics {
 	 * @param {Array<{latency: number}>} latencies - An array of latency objects.
 	 * @returns {number} The calculated average latency, rounded to two decimal places.
 	 */
-	calculateAverageLatency(latencies) {
+	#calculateAverageLatency(latencies) {
 		if (latencies.length === 0) return 0;
 
 		const sum = latencies.reduce(
@@ -371,10 +370,10 @@ export class RenderMetrics {
 	 * @private
 	 * @returns {number} The total CLS score.
 	 */
-	calculateCLS() {
-		if (!this.layoutShifts || this.layoutShifts.length === 0) return 0;
+	#calculateCLS() {
+		if (!this.#layoutShifts || this.#layoutShifts.length === 0) return 0;
 
-		return this.layoutShifts.reduce((sum, shift) => sum + shift.value, 0);
+		return this.#layoutShifts.reduce((sum, shift) => sum + shift.value, 0);
 	}
 
 	/**
@@ -383,11 +382,11 @@ export class RenderMetrics {
 	 * @returns {function(): void} An unsubscribe function that, when called, removes the subscription.
 	 */
 	onUpdate(callback) {
-		this.subscribers.add(callback);
+		this.#subscribers.add(callback);
 
 		// Return unsubscribe function
 		return () => {
-			this.subscribers.delete(callback);
+			this.#subscribers.delete(callback);
 		};
 	}
 
@@ -395,10 +394,10 @@ export class RenderMetrics {
 	 * Emits the current metrics object to all registered subscribers.
 	 * @private
 	 */
-	emitUpdate() {
+	#emitUpdate() {
 		const metrics = this.getCurrentMetrics();
 
-		for (const callback of this.subscribers) {
+		for (const callback of this.#subscribers) {
 			try {
 				callback(metrics);
 			} catch (error) {
@@ -413,7 +412,7 @@ export class RenderMetrics {
 	 */
 	getPerformanceSummary() {
 		const metrics = this.getCurrentMetrics();
-		const history = this.metricsHistory.slice(-10); // Last 10 samples
+		const history = this.#metricsHistory.slice(-10); // Last 10 samples
 
 		return {
 			current: metrics,
@@ -506,8 +505,8 @@ export class RenderMetrics {
 	exportData() {
 		return {
 			current: this.getCurrentMetrics(),
-			history: this.metricsHistory,
-			config: this.options,
+			history: this.#metricsHistory,
+			config: this.#options,
 			performance: this.getPerformanceSummary(),
 		};
 	}
@@ -516,14 +515,14 @@ export class RenderMetrics {
 	 * Resets all collected metrics and historical data to their initial state.
 	 */
 	reset() {
-		this.frameCount = 0;
-		this.frameTimes = [];
-		this.renderLatencies = [];
-		this.layoutLatencies = [];
-		this.interactionLatencies = [];
-		this.metricsHistory = [];
-		this.layoutShifts = [];
-		this.firstContentfulPaint = null;
+		this.#frameCount = 0;
+		this.#frameTimes = [];
+		this.#renderLatencies = [];
+		this.#layoutLatencies = [];
+		this.#interactionLatencies = [];
+		this.#metricsHistory = [];
+		this.#layoutShifts = [];
+		this.#firstContentfulPaint = null;
 
 		console.log("[RenderMetrics] Metrics reset");
 	}
@@ -533,7 +532,7 @@ export class RenderMetrics {
 	 * @type {number}
 	 */
 	get currentFPS() {
-		return this.fps;
+		return this.#fps;
 	}
 }
 

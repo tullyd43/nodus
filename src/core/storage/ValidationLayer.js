@@ -29,44 +29,28 @@ export class ValidationLayer {
 	 * @private
 	 * @type {object}
 	 */
-	#metrics;
-	/**
-	 * @private
-	 * @type {object}
-	 */
 	#config;
 	/**
 	 * @private
 	 * @type {boolean}
 	 */
 	#ready = false;
-
-	/**
-	 * A reference to the application's HybridStateManager for event emission.
-	 * @type {import('../HybridStateManager.js').HybridStateManager|null}
-	 */
-	/** @type {import('../HybridStateManager.js').HybridStateManager|null} */
-	stateManager = null;
-	/**
-	 * Binds the HybridStateManager to this instance.
-	 * @param {import('../HybridStateManager.js').HybridStateManager} manager - The state manager instance.
-	 * @public
-	 * @returns {void}
-	 */
-	bindStateManager(manager) {
-		this.stateManager = manager;
-	}
+	/** @private @type {import('../HybridStateManager.js').default|null} */
+	#stateManager = null;
 
 	/**
 	 * Creates an instance of ValidationLayer.
-	 * @param {object} [options={}] - Configuration options for the validation layer.
-	 * @param {boolean} [options.strictMode=true] - If true, validation failures in custom rules will be treated as errors.
-	 * @param {string} [options.performanceMode='balanced'] - Performance tuning for validation ('balanced' or 'thorough').
-	 * @param {object} [options.customValidators={}] - A map of custom field validators to register on initialization.
-	 * @param {number} [options.maxErrors=10] - The maximum number of validation errors to return.
-	 * @param {number} [options.asyncTimeout=5000] - Timeout in milliseconds for asynchronous validation rules.
+	 * @param {object} context - The application context and configuration.
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for the validation layer.
+	 * @param {boolean} [context.options.strictMode=true] - If true, validation failures in custom rules will be treated as errors.
+	 * @param {string} [context.options.performanceMode='balanced'] - Performance tuning for validation ('balanced' or 'thorough').
+	 * @param {object} [context.options.customValidators={}] - A map of custom field validators to register on initialization.
+	 * @param {number} [context.options.maxErrors=10] - The maximum number of validation errors to return.
+	 * @param {number} [context.options.asyncTimeout=5000] - Timeout in milliseconds for asynchronous validation rules.
 	 */
-	constructor(options = {}) {
+	constructor({ stateManager, ...options }) {
+		this.#stateManager = stateManager;
 		this.#config = {
 			strictMode: options.strictMode !== false,
 			performanceMode: options.performanceMode || "balanced",
@@ -76,16 +60,17 @@ export class ValidationLayer {
 			...options,
 		};
 
-		this.#metrics = {
-			validationCount: 0,
-			validationErrors: 0,
-			averageLatency: 0,
-			ruleExecutions: new Map(),
-			recentErrors: [],
-		};
-
 		this.#initializeBaseValidators();
 		this.#loadCustomValidators(this.#config.customValidators);
+	}
+
+	/**
+	 * Gets the namespaced metrics registry instance.
+	 * @private
+	 * @returns {import('../../utils/MetricsRegistry.js').MetricsRegistry|null}
+	 */
+	get #metrics() {
+		return this.#stateManager?.metricsRegistry?.namespace("validation");
 	}
 
 	/**
@@ -155,7 +140,7 @@ export class ValidationLayer {
 			if (!isValid) {
 				this.stateManager?.emit?.("validationError", {
 					entityId: entity.id,
-					entityType: entity.entity_type, // Not shorthand-able
+					entityType: entity.entity_type,
 					errors: errors.slice(0, this.#config.maxErrors),
 				});
 			}
@@ -167,7 +152,7 @@ export class ValidationLayer {
 				metadata: {
 					latency,
 					rulesExecuted: this.#getExecutedRules(),
-					entityType: entity.entity_type, // Not shorthand-able
+					entityType: entity.entity_type,
 				},
 			};
 		} catch (error) {
@@ -297,23 +282,17 @@ export class ValidationLayer {
 	 * Retrieves performance and usage statistics for the validation layer.
 	 * @public
 	 * @returns {object} An object containing various metrics.
+	 * @readonly
 	 */
-	getStats() {
+	get stats() {
+		const baseMetrics = this.#metrics?.getAllAsObject() || {};
 		return {
-			...this.#metrics,
+			...baseMetrics,
+			averageLatency: baseMetrics.averageLatency?.avg || 0,
 			customRules: this.#customRules.size,
 			fieldValidators: this.#validators.size,
 			isReady: this.#ready,
 		};
-	}
-
-	/**
-	 * Gets the average validation latency in milliseconds.
-	 * @public
-	 * @returns {number} The average latency.
-	 */
-	getAverageLatency() {
-		return this.#metrics.averageLatency;
 	}
 
 	/**
@@ -350,20 +329,6 @@ export class ValidationLayer {
 			errors.push("ID must be a valid UUID");
 		}
 
-		// Entity type
-		const validTypes = [
-			"task",
-			"document",
-			"event",
-			"user",
-			"project",
-			"component",
-			"block",
-		];
-		if (entity.entity_type && !validTypes.includes(entity.entity_type)) {
-			errors.push(`Invalid entity_type: ${entity.entity_type}`);
-		}
-
 		// Timestamps
 		if (entity.created_at && !this.#isValidTimestamp(entity.created_at)) {
 			errors.push("created_at must be a valid ISO timestamp");
@@ -371,6 +336,17 @@ export class ValidationLayer {
 
 		if (entity.updated_at && !this.#isValidTimestamp(entity.updated_at)) {
 			errors.push("updated_at must be a valid ISO timestamp");
+		}
+
+		// Entity type validation using schema from stateManager
+		if (this.#stateManager?.schema?.loaded) {
+			const validTypes = this.#stateManager.getAvailableEntityTypes();
+			if (
+				entity.entity_type &&
+				!validTypes.includes(entity.entity_type)
+			) {
+				errors.push(`Invalid entity_type: ${entity.entity_type}`);
+			}
 		}
 
 		return {
@@ -410,27 +386,24 @@ export class ValidationLayer {
 	#validateSecurity(entity) {
 		const errors = [];
 
-		// Classification validation
-		const validClassifications = [
-			"public",
-			"internal",
-			"restricted",
-			"confidential",
-			"secret",
-			"top_secret",
-			"nato_restricted",
-			"nato_confidential",
-			"nato_secret",
-			"cosmic_top_secret",
-		];
-
-		if (
-			entity.nato_classification &&
-			!validClassifications.includes(entity.nato_classification)
-		) {
-			errors.push(
-				`Invalid classification: ${entity.nato_classification}`
-			);
+		// Classification validation using schema from stateManager
+		if (this.#stateManager?.schema?.loaded) {
+			const validClassifications =
+				this.#stateManager.getSecurityClassifications();
+			if (
+				entity.classification &&
+				!validClassifications.includes(entity.classification)
+			) {
+				errors.push(`Invalid classification: ${entity.classification}`);
+			}
+			if (
+				entity.nato_classification &&
+				!validClassifications.includes(entity.nato_classification)
+			) {
+				errors.push(
+					`Invalid classification: ${entity.nato_classification}`
+				);
+			}
 		}
 
 		// Compartment markings
@@ -621,10 +594,7 @@ export class ValidationLayer {
 					errors.push(...result.errors);
 				}
 
-				this.#metrics.ruleExecutions.set(
-					ruleName,
-					(this.#metrics.ruleExecutions.get(ruleName) || 0) + 1
-				);
+				this.#metrics?.increment(`ruleExecutions.${ruleName}`);
 			} catch (error) {
 				console.warn(`Custom rule '${ruleName}' failed:`, error);
 				if (this.#config.strictMode) {
@@ -917,27 +887,20 @@ export class ValidationLayer {
 	 * @returns {void}
 	 */
 	#recordValidation(success, latency, errors) {
-		this.#metrics.validationCount++;
+		this.#metrics?.increment("validationCount");
 		if (!success) {
-			this.#metrics.validationErrors++;
-			this.#metrics.recentErrors.push({
+			this.#metrics?.increment("validationErrors");
+			const recent = this.#metrics?.get("recentErrors") || [];
+			const newError = {
 				errors,
 				timestamp: Date.now(),
-			});
-
-			// Keep only recent errors
-			if (this.#metrics.recentErrors.length > 100) {
-				this.#metrics.recentErrors =
-					this.#metrics.recentErrors.slice(-100);
-			}
+			};
+			const updatedRecent = [newError, ...recent].slice(0, 100);
+			this.#metrics?.set("recentErrors", updatedRecent);
 		}
 
 		// Update average latency
-		this.#metrics.averageLatency =
-			(this.#metrics.averageLatency *
-				(this.#metrics.validationCount - 1) +
-				latency) /
-			this.#metrics.validationCount;
+		this.#metrics?.updateAverage("averageLatency", latency);
 	}
 
 	/**
@@ -946,7 +909,7 @@ export class ValidationLayer {
 	 * @returns {string[]} An array of executed rule names.
 	 */
 	#getExecutedRules() {
-		return Array.from(this.#metrics.ruleExecutions.keys());
+		return Object.keys(this.#metrics?.getNamespace("ruleExecutions") || {});
 	}
 }
 

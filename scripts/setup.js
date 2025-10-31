@@ -57,24 +57,8 @@ try {
 	console.warn("⚠️ Some security issues may require manual attention");
 }
 
-// Step 4: Initialize git hooks if git exists
-console.log("\n4️⃣ Setting up git hooks...");
-try {
-	if (existsSync(join(projectRoot, ".git"))) {
-		execSync("npx husky install", {
-			stdio: "inherit",
-			cwd: projectRoot,
-		});
-		console.log("✅ Git hooks initialized");
-	} else {
-		console.log("ℹ️ Git repository not found, skipping hooks setup");
-	}
-} catch (error) {
-	console.warn("⚠️ Git hooks setup failed:", error.message);
-}
-
 // Step 5: Validate setup
-console.log("\n5️⃣ Validating setup...");
+console.log("\n4️⃣ Validating setup...");
 try {
 	execSync("npm run lint --silent", {
 		stdio: "inherit",

@@ -15,45 +15,31 @@
  * and uses it for symmetric encryption and decryption operations.
  */
 export default class AESCrypto {
-	/** @private */
-	#key;
-	/** @private */
-	#keyVersion;
+	/** @private @type {CryptoKey|null} */
+	#key = null;
+	/** @private @type {number} */
+	#keyVersion = 1;
 	/** @private */
 	#ready = false;
-	/**
-	 * @private
-	 * @type {object|null}
-	 */
-	#authContext;
-	/**
-	 * @private
-	 * @type {{encryptionCount: number, decryptionCount: number, latencySum: number}}
-	 */
-	#metrics = {
-		encryptionCount: 0,
-		decryptionCount: 0,
-		latencySum: 0,
-	};
+	/** @private @type {import('../../HybridStateManager.js').default|null} */
+	#stateManager = null;
 
 	/**
 	 * Creates an instance of AESCrypto.
-	 * @param {Array<Object>} [additionalModules=[]] - A list of additional modules, not used in this implementation.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
-	constructor(additionalModules = []) {
-		this.#keyVersion = 1;
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
 		console.log("[AESCrypto] Loaded for enterprise-grade encryption");
 	}
 
 	/**
 	 * Initializes the crypto module by deriving the encryption key.
-	 * @param {object} authContext - The authentication context containing user credentials.
-	 * @param {string} authContext.userId - The user's unique identifier.
-	 * @param {string} authContext.password - The user's password, used for key derivation.
 	 * @returns {Promise<this>} The initialized AESCrypto instance.
 	 */
-	async init(authContext) {
-		this.#authContext = authContext;
+	async init() {
+		// V8.0 Parity: The authContext is now derived from the stateManager's securityManager.
 		this.#key = await this.#deriveKey();
 		this.#ready = true;
 		console.log("[AESCrypto] Enterprise crypto initialized");
@@ -69,6 +55,7 @@ export default class AESCrypto {
 	async encrypt(data) {
 		if (!this.#ready) throw new Error("Crypto not initialized");
 
+		const metrics = this.#getMetrics();
 		const startTime = performance.now();
 
 		try {
@@ -89,8 +76,8 @@ export default class AESCrypto {
 				encrypted: true,
 			};
 
-			this.#metrics.encryptionCount++;
-			this.#metrics.latencySum += performance.now() - startTime;
+			metrics?.increment("encryptionCount");
+			metrics?.updateAverage("latency", performance.now() - startTime);
 
 			return result;
 		} catch (error) {
@@ -112,6 +99,7 @@ export default class AESCrypto {
 	async decrypt(encryptedData) {
 		if (!this.#ready) throw new Error("Crypto not initialized");
 
+		const metrics = this.#getMetrics();
 		const startTime = performance.now();
 
 		try {
@@ -124,8 +112,8 @@ export default class AESCrypto {
 			const plaintext = new TextDecoder().decode(decryptedData);
 			const result = JSON.parse(plaintext);
 
-			this.#metrics.decryptionCount++;
-			this.#metrics.latencySum += performance.now() - startTime;
+			metrics?.increment("decryptionCount");
+			metrics?.updateAverage("latency", performance.now() - startTime);
 
 			return result;
 		} catch (error) {
@@ -201,22 +189,11 @@ export default class AESCrypto {
 	}
 
 	/**
-	 * Calculates the average latency for encryption and decryption operations.
-	 * @returns {number} The average latency in milliseconds.
-	 */
-	getAverageLatency() {
-		const totalOps =
-			this.#metrics.encryptionCount + this.#metrics.decryptionCount;
-		return totalOps > 0 ? this.#metrics.latencySum / totalOps : 0;
-	}
-
-	/**
 	 * Securely destroys the encryption key and authentication context from memory.
 	 * @returns {Promise<void>}
 	 */
 	async destroyKeys() {
 		this.#key = null;
-		this.#authContext = null;
 		this.#ready = false;
 	}
 
@@ -243,9 +220,21 @@ export default class AESCrypto {
 	 * @returns {Promise<CryptoKey>} The derived cryptographic key.
 	 */
 	async #deriveKey() {
+		const securityManager = this.#stateManager?.managers?.securityManager;
+		if (!securityManager?.hasValidContext()) {
+			throw new Error(
+				"A valid security context is required to derive the encryption key."
+			);
+		}
+
+		// In a real system, a more secure secret would be retrieved from the security context,
+		// not a password. For this example, we'll use the user ID as part of the salt.
+		const userId = securityManager.userId;
+		const secret = `user-session-secret-for-${userId}`; // Placeholder for a real secret
+
 		const keyMaterial = await crypto.subtle.importKey(
 			"raw",
-			new TextEncoder().encode(this.#authContext.password),
+			new TextEncoder().encode(secret),
 			{ name: "PBKDF2" },
 			false,
 			["deriveKey"]
@@ -255,7 +244,7 @@ export default class AESCrypto {
 			{
 				name: "PBKDF2",
 				salt: new TextEncoder().encode(
-					`aes-salt-${this.#authContext.userId}-v${this.#keyVersion}`
+					`aes-salt-${userId}-v${this.#keyVersion}`
 				),
 				iterations: 100000,
 				hash: "SHA-256",
@@ -300,5 +289,13 @@ export default class AESCrypto {
 			.map((b) => b.toString(16).padStart(2, "0"))
 			.join("")
 			.substring(0, 24);
+	}
+
+	/**
+	 * Gets the namespaced metrics registry.
+	 * @private
+	 */
+	#getMetrics() {
+		return this.#stateManager?.metricsRegistry?.namespace("aesCrypto");
 	}
 }

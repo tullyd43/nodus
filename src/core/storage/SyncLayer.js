@@ -18,34 +18,19 @@
 export class SyncLayer {
 	/**
 	 * @private
-	 * @type {import('./ModularOfflineStorage').default}
-	 */
-	#storage;
-	/**
-	 * @private
-	 * @type {object}
-	 */
-	#config;
-	/**
-	 * @private
 	 * @type {Array<object>}
 	 */
 	#syncQueue = [];
 	/**
 	 * @private
+	 * @type {boolean}
+	 */
+	#isResyncNeeded = false;
+	/**
+	 * @private
 	 * @type {Array<object>}
 	 */
 	#conflictQueue = [];
-	/**
-	 * @private
-	 * @type {object}
-	 */
-	#metrics;
-	/**
-	 * @private
-	 * @type {boolean}
-	 */
-	#ready = false;
 	/**
 	 * @private
 	 * @type {boolean}
@@ -58,45 +43,32 @@ export class SyncLayer {
 	#autoSyncInterval = null;
 	/**
 	 * @private
-	 * @type {number|null}
-	 */
-	#syncDebounceTimeout = null;
-	/**
-	 * @private
 	 * @type {Map<string, number>}
 	 */
 	#retryTimeouts = new Map();
 	/**
-	 * A reference to the application's HybridStateManager for event emission.
-	 * @type {import('../HybridStateManager.js').HybridStateManager|null}
+	 * @private @type {import('../HybridStateManager.js').default}
 	 */
-	/** @type {import('../HybridStateManager.js').HybridStateManager|null} */
-	stateManager = null;
-
+	#stateManager = null;
 	/**
-	 * Binds the HybridStateManager to this instance.
-	 * @public
-	 * @param {import('../HybridStateManager.js').HybridStateManager} manager - The state manager instance.
-	 * @returns {void}
+	 * @private @type {object}
 	 */
-	bindStateManager(manager) {
-		this.stateManager = manager;
-	}
+	#config;
+	/**
+	 * @private @type {boolean}
+	 */
+	#ready = false;
 
 	/**
 	 * Creates an instance of SyncLayer.
-	 * @param {import('./ModularOfflineStorage').default} storage - The storage instance to sync with.
-	 * @param {object} [options={}] - Configuration options for the sync layer.
-	 * @param {string} [options.apiEndpoint='/api/sync'] - The server endpoint for synchronization.
-	 * @param {'user_guided'|'last_write_wins'|'first_write_wins'|'auto_merge'} [options.conflictResolution='user_guided'] - The strategy for resolving conflicts.
-	 * @param {number} [options.maxRetries=3] - The maximum number of times to retry a failed sync item.
-	 * @param {number} [options.retryDelay=1000] - The base delay for retries in milliseconds.
-	 * @param {number} [options.batchSize=100] - The number of items to process in a single sync batch.
-	 * @param {number} [options.syncInterval=30000] - The interval for automatic background sync in milliseconds.
-	 * @param {boolean} [options.enableAutoSync=true] - Whether to enable automatic background synchronization.
+	 * @param {object} context - The application context.
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
-	constructor(storage, options = {}) {
-		this.#storage = storage;
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
+
+		// V8.0 Parity: All configuration is derived from the stateManager.
+		const options = this.#stateManager?.config?.syncLayerConfig || {};
 		this.#config = {
 			apiEndpoint: options.apiEndpoint || "/api/sync",
 			conflictResolution: options.conflictResolution || "user_guided",
@@ -104,18 +76,9 @@ export class SyncLayer {
 			retryDelay: options.retryDelay || 1000,
 			batchSize: options.batchSize || 100,
 			syncInterval: options.syncInterval || 30000, // 30 seconds
+			debounceInterval: options.debounceInterval || 2000, // 2 seconds
 			enableAutoSync: options.enableAutoSync !== false,
 			...options,
-		};
-
-		this.#metrics = {
-			syncCount: 0,
-			conflictCount: 0,
-			errorCount: 0,
-			averageLatency: 0,
-			lastSync: null,
-			queueSize: 0,
-			recentConflicts: [],
 		};
 	}
 
@@ -127,6 +90,11 @@ export class SyncLayer {
 	async init() {
 		if (this.#ready) return this;
 
+		this.#audit("sync_layer_initialized", {
+			autoSync: this.#config.enableAutoSync,
+			conflictStrategy: this.#config.conflictResolution,
+		});
+
 		// Setup auto-sync if enabled
 		if (this.#config.enableAutoSync) {
 			this.#setupAutoSync();
@@ -136,7 +104,7 @@ export class SyncLayer {
 		this.#setupNetworkListeners();
 
 		this.#ready = true;
-		console.log("[SyncLayer] Ready with bidirectional sync");
+		console.log("[SyncLayer] Ready with bidirectional sync.");
 		return this;
 	}
 
@@ -149,11 +117,13 @@ export class SyncLayer {
 	 */
 	async performSync(options = {}) {
 		if (!this.#ready) throw new Error("SyncLayer not initialized");
+
 		if (this.#syncInProgress) {
 			console.log(
-				"[SyncLayer] Sync already in progress, queuing request"
+				"[SyncLayer] Sync already in progress, queuing request."
 			);
-			return this.#queueSyncRequest(options);
+			this.#isResyncNeeded = true;
+			return; // Exit and let the current sync loop handle the next run.
 		}
 
 		this.#syncInProgress = true;
@@ -197,23 +167,30 @@ export class SyncLayer {
 			const latency = performance.now() - startTime;
 			this.#recordSync(true, latency, result);
 
-			this.stateManager?.emit?.("syncCompleted", result);
+			this.#stateManager.emit("syncCompleted", result);
 
 			console.log(
-				`[SyncLayer] Sync completed in ${latency.toFixed(2)}ms`
+				`[SyncLayer] Sync completed in ${latency.toFixed(2)}ms.`
 			);
 			return result;
 		} catch (error) {
 			const latency = performance.now() - startTime;
 			this.#recordSync(false, latency, null, error);
-
-			this.stateManager?.emit?.("syncError", error);
+			this.#audit("sync_failed", {
+				error: error.message,
+				stack: error.stack,
+			});
+			this.#stateManager.emit("syncError", error);
 
 			console.error("[SyncLayer] Sync failed:", error);
 			throw error;
 		} finally {
 			this.#syncInProgress = false;
-			this.#processQueuedSyncs();
+			// If another sync was requested while this one was running, start it now.
+			if (this.#isResyncNeeded || this.#syncQueue.length > 0) {
+				this.#isResyncNeeded = false;
+				this.performSync().catch(console.warn);
+			}
 		}
 	}
 
@@ -225,7 +202,7 @@ export class SyncLayer {
 	 */
 	queueEntityForSync(entity, operation = "upsert") {
 		const queueItem = {
-			id: entity.id, // Not shorthand-able
+			id: entity.id,
 			entity,
 			operation, // 'upsert', 'delete'
 			timestamp: Date.now(),
@@ -233,7 +210,13 @@ export class SyncLayer {
 		};
 
 		this.#syncQueue.push(queueItem);
-		this.#metrics.queueSize = this.#syncQueue.length;
+		this.#getMetrics()?.set("queue_size", this.#syncQueue.length);
+		this.#audit("entity_queued_for_sync", {
+			entityId: entity.id,
+			entityType: entity.entity_type,
+			operation,
+			queueSize: this.#syncQueue.length,
+		});
 
 		// Trigger sync if auto-sync is enabled
 		if (this.#config.enableAutoSync) {
@@ -249,7 +232,7 @@ export class SyncLayer {
 	getPendingConflicts() {
 		return this.#conflictQueue.map((conflict) => ({
 			id: conflict.id,
-			entityType: conflict.entityType, // Not shorthand-able
+			entityType: conflict.entityType,
 			conflictType: conflict.type,
 			local: conflict.localEntity,
 			remote: conflict.remoteEntity,
@@ -308,16 +291,25 @@ export class SyncLayer {
 			? "objects_polyinstantiated"
 			: "objects";
 
-		// The ID for polyinstantiated objects is the logical_id
-		const id =
-			storeName === "objects_polyinstantiated"
-				? resolvedEntity.logical_id
-				: resolvedEntity.id;
-
-		await this.#storage.put(storeName, resolvedEntity, id);
+		// V8.0 Parity: Use stateManager's storage instance directly.
+		await this.#stateManager.storage.instance.put(
+			storeName,
+			resolvedEntity
+		);
 
 		// Remove from conflict queue
 		this.#conflictQueue.splice(conflictIndex, 1);
+		this.#getMetrics()?.set(
+			"conflict_queue_size",
+			this.#conflictQueue.length
+		);
+
+		this.#audit("conflict_resolved", {
+			conflictId,
+			resolution,
+			entityId: resolvedEntity.id,
+			finalEntityType: resolvedEntity.entity_type,
+		});
 
 		console.log(
 			`[SyncLayer] Resolved conflict ${conflictId} using ${resolution}`
@@ -326,13 +318,13 @@ export class SyncLayer {
 	}
 
 	/**
-	 * Retrieves performance and state metrics for the sync layer.
+	 * Gets performance and state metrics for the sync layer.
 	 * @public
-	 * @returns {object} An object containing various metrics.
+	 * @type {object}
 	 */
-	getStats() {
+	get stats() {
 		return {
-			...this.#metrics,
+			...this.#getMetrics()?.getAllAsObject(),
 			queueSize: this.#syncQueue.length,
 			conflictQueueSize: this.#conflictQueue.length,
 			isReady: this.#ready,
@@ -353,6 +345,7 @@ export class SyncLayer {
 		for (const timeout of this.#retryTimeouts.values()) {
 			clearTimeout(timeout);
 		}
+		this.#audit("sync_layer_cleanup", {});
 		this.#retryTimeouts.clear();
 
 		this.#ready = false;
@@ -380,6 +373,11 @@ export class SyncLayer {
 		for (const item of batch) {
 			try {
 				const response = await this.#sendToServer(item);
+				this.#audit("sync_up_item_sent", {
+					entityId: item.entity.id,
+					operation: item.operation,
+					responseStatus: response.status,
+				});
 
 				if (response.conflict) {
 					const newConflict = {
@@ -391,6 +389,10 @@ export class SyncLayer {
 						remoteEntity: response.remoteEntity,
 						timestamp: Date.now(),
 					};
+					this.#audit("sync_up_conflict_detected", {
+						entityId: item.entity.id,
+						conflictType: response.conflictType,
+					});
 					conflicts.push(newConflict);
 				} else {
 					synced++;
@@ -411,7 +413,7 @@ export class SyncLayer {
 			}
 		}
 
-		this.#metrics.queueSize = this.#syncQueue.length;
+		this.#getMetrics()?.set("queue_size", this.#syncQueue.length);
 		return { synced, conflicts, errors };
 	}
 
@@ -424,12 +426,14 @@ export class SyncLayer {
 	 */
 	async #syncDown(batchSize, force) {
 		try {
-			const lastSync =
-				this.#metrics.lastSync || new Date(0).toISOString();
+			const metrics = this.#getMetrics();
+			const lastSyncTimestamp =
+				metrics?.get("last_sync")?.value || new Date(0).toISOString();
+
 			const response = await this.#fetchFromServer({
-				since: lastSync,
+				since: lastSyncTimestamp,
 				limit: batchSize,
-				organizationId: this.#storage.currentOrganization,
+				organizationId: this.#stateManager.config.organizationId,
 			});
 
 			const conflicts = [];
@@ -440,16 +444,17 @@ export class SyncLayer {
 				try {
 					const storeName = remoteEntity.classification_level
 						? "objects_polyinstantiated"
-						: "objects";
+						: "objects"; // V8.0 Parity: Use stateManager's storage instance.
 					const entityId =
 						storeName === "objects_polyinstantiated"
 							? remoteEntity.logical_id
 							: remoteEntity.id;
 
-					const localEntity = await this.#storage.get(
-						storeName,
-						entityId
-					);
+					const localEntity =
+						await this.#stateManager.storage.instance.get(
+							storeName,
+							entityId
+						);
 
 					if (
 						localEntity &&
@@ -465,9 +470,15 @@ export class SyncLayer {
 							timestamp: Date.now(),
 						};
 						conflicts.push(newConflict);
+						this.#audit("sync_down_conflict_detected", {
+							entityId: remoteEntity.id,
+						});
 					} else {
 						// No conflict, apply remote changes
-						await this.#storage.put(storeName, remoteEntity);
+						await this.#stateManager.storage.instance.put(
+							storeName,
+							remoteEntity
+						);
 						synced++;
 					}
 				} catch (error) {
@@ -532,8 +543,11 @@ export class SyncLayer {
 					const storeName = resolution.classification_level
 						? "objects_polyinstantiated"
 						: "objects";
-
-					await this.#storage.put(storeName, resolution);
+					// V8.0 Parity: Use stateManager's storage instance.
+					await this.#stateManager.storage.instance.put(
+						storeName,
+						resolution
+					);
 
 					resolved.push({
 						conflictId: conflict.id,
@@ -550,14 +564,14 @@ export class SyncLayer {
 			}
 		}
 
-		this.#metrics.conflictCount += conflicts.length;
-		this.#metrics.recentConflicts.push(...conflicts.slice(0, 10));
-
-		// Keep only recent conflicts
-		if (this.#metrics.recentConflicts.length > 50) {
-			this.#metrics.recentConflicts =
-				this.#metrics.recentConflicts.slice(-50);
-		}
+		const metrics = this.#getMetrics();
+		metrics?.increment("conflict_count", conflicts.length);
+		metrics?.set("conflict_queue_size", this.#conflictQueue.length);
+		this.#audit("conflict_resolution_completed", {
+			resolvedCount: resolved.length,
+			unresolvedCount: unresolved.length,
+			strategy,
+		});
 
 		return { resolved, unresolved };
 	}
@@ -571,19 +585,10 @@ export class SyncLayer {
 	 */
 	#hasConflict(localEntity, remoteEntity) {
 		// Simple timestamp-based conflict detection
-		const localTime = new Date(localEntity.updated_at).getTime();
+		const localTime = new Date(localEntity.updated_at).getTime(); // If both have been updated since last sync, it's a conflict
 		const remoteTime = new Date(remoteEntity.updated_at).getTime();
 
-		// If both have been updated since last sync, it's a conflict
-		const lastSyncTime = this.#metrics.lastSync
-			? new Date(this.#metrics.lastSync).getTime()
-			: 0;
-
-		return (
-			localTime > lastSyncTime &&
-			remoteTime > lastSyncTime &&
-			localTime !== remoteTime
-		);
+		return localTime !== remoteTime;
 	}
 
 	/**
@@ -667,9 +672,9 @@ export class SyncLayer {
 				Authorization: `Bearer ${this.#getAuthToken()}`,
 			},
 			body: JSON.stringify({
-				entity: item.entity, // Not shorthand-able
-				operation: item.operation, // Not shorthand-able
-				timestamp: item.timestamp, // Not shorthand-able
+				entity: item.entity,
+				operation: item.operation,
+				timestamp: item.timestamp,
 			}),
 		});
 
@@ -721,7 +726,10 @@ export class SyncLayer {
 	 */
 	#getAuthToken() {
 		// This would come from your auth system
-		return localStorage.getItem("auth_token") || "demo-token";
+		return (
+			this.#stateManager?.managers?.securityManager?.getAuthToken() ||
+			"demo-token"
+		);
 	}
 
 	/**
@@ -744,14 +752,22 @@ export class SyncLayer {
 	 */
 	#setupNetworkListeners() {
 		if (typeof window !== "undefined" && "navigator" in window) {
-			window.addEventListener("online", () => {
-				console.log("[SyncLayer] Network online, triggering sync");
-				this.performSync().catch(console.warn);
-			});
+			window.addEventListener(
+				"online",
+				() => {
+					console.log("[SyncLayer] Network online, triggering sync.");
+					this.performSync().catch(console.warn);
+				},
+				{ passive: true }
+			);
 
-			window.addEventListener("offline", () => {
-				console.log("[SyncLayer] Network offline, sync paused");
-			});
+			window.addEventListener(
+				"offline",
+				() => {
+					console.log("[SyncLayer] Network offline, sync paused.");
+				},
+				{ passive: true }
+			);
 		}
 	}
 
@@ -759,14 +775,9 @@ export class SyncLayer {
 	 * Triggers a sync operation after a short delay to debounce multiple rapid requests.
 	 * @private
 	 */
-	#debouncedSync() {
-		clearTimeout(this.#syncDebounceTimeout);
-		this.#syncDebounceTimeout = setTimeout(() => {
-			if (!this.#syncInProgress) {
-				this.performSync().catch(console.warn);
-			}
-		}, 1000);
-	}
+	#debouncedSync = this.#debounce(() => {
+		this.performSync().catch(console.warn);
+	}, this.#config.debounceInterval);
 
 	/**
 	 * Schedules a failed sync item to be re-added to the queue after an exponential backoff delay.
@@ -778,42 +789,11 @@ export class SyncLayer {
 
 		const timeout = setTimeout(() => {
 			this.#syncQueue.push(item);
-			this.#metrics.queueSize = this.#syncQueue.length;
+			this.#getMetrics()?.set("queue_size", this.#syncQueue.length);
 			this.#retryTimeouts.delete(item.entity.id);
 		}, delay);
 
 		this.#retryTimeouts.set(item.entity.id, timeout);
-	}
-
-	/**
-	 * Queues a sync request if another sync operation is already in progress.
-	 * @private
-	 * @param {object} options - The options for the sync operation to queue.
-	 */
-	async #queueSyncRequest(options) {
-		return new Promise((resolve, reject) => {
-			const checkAndExecute = () => {
-				if (!this.#syncInProgress) {
-					this.performSync(options).then(resolve).catch(reject);
-				} else {
-					setTimeout(checkAndExecute, 100);
-				}
-			};
-			checkAndExecute();
-		});
-	}
-
-	/**
-	 * Processes any queued sync requests after the current operation completes.
-	 * @private
-	 */
-	#processQueuedSyncs() {
-		// If there are items in the queue and we're not syncing, trigger another sync
-		if (this.#syncQueue.length > 0 && !this.#syncInProgress) {
-			setTimeout(() => {
-				this.performSync().catch(console.warn);
-			}, 100);
-		}
 	}
 
 	/**
@@ -825,18 +805,60 @@ export class SyncLayer {
 	 * @param {Error|null} [error=null] - Any error that occurred.
 	 */
 	#recordSync(success, latency, result, error = null) {
-		this.#metrics.syncCount++;
-		this.#metrics.lastSync = new Date().toISOString();
+		const metrics = this.#getMetrics();
+		metrics?.increment("sync_count");
+		const timestamp = new Date().toISOString();
+		metrics?.set("last_sync", timestamp);
 
 		if (!success) {
-			this.#metrics.errorCount++;
+			metrics?.increment("error_count");
+			metrics?.set("last_sync_error", timestamp);
 		}
+		metrics?.updateAverage("average_latency", latency);
+	}
 
-		// Update average latency
-		this.#metrics.averageLatency =
-			(this.#metrics.averageLatency * (this.#metrics.syncCount - 1) +
-				latency) /
-			this.#metrics.syncCount;
+	/**
+	 * Logs an audit event if the forensic logger is available.
+	 * @private
+	 * @param {string} eventType - The type of the event (e.g., 'SYNC_COMPLETED').
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		this.#stateManager?.managers?.forensicLogger?.logAuditEvent(
+			eventType,
+			data,
+			{
+				component: "SyncLayer",
+			}
+		);
+	}
+
+	/**
+	 * Gets the namespaced metrics registry instance.
+	 * @private
+	 * @returns {import('../../utils/MetricsRegistry.js').MetricsRegistry|null}
+	 */
+	#getMetrics() {
+		return this.#stateManager?.metricsRegistry?.namespace("sync");
+	}
+
+	/**
+	 * Creates a debounced function that delays invoking `func` until after `wait` milliseconds have elapsed.
+	 * @private
+	 * @param {Function} func The function to debounce.
+	 * @param {number} wait The number of milliseconds to delay.
+	 * @returns {Function} Returns the new debounced function.
+	 */
+	#debounce(func, wait) {
+		let timeout;
+		return function executedFunction(...args) {
+			const later = () => {
+				clearTimeout(timeout);
+				func.apply(this, args);
+			};
+			clearTimeout(timeout);
+			timeout = setTimeout(later, wait);
+		};
 	}
 }
 

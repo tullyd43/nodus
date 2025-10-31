@@ -9,20 +9,25 @@
  * @module DemoCrypto
  */
 export default class DemoCrypto {
+	/** @private @type {object} */
+	#config;
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager;
+
 	/**
 	 * Creates an instance of DemoCrypto.
-	 * @param {object} [config={}] - Configuration options for the module.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for the module.
 	 */
-	constructor(config = {}) {
-		/**
-		 * @private
-		 * @type {object}
-		 */
-		this.config = config;
-		console.log("[DemoCrypto] Initialized with config:", config);
+	constructor({ stateManager, options = {} }) {
+		this.#stateManager = stateManager;
+		this.#config = options;
+		console.log("[DemoCrypto] Loaded with config:", this.#config);
 	}
 
 	/**
+	 * Initializes the module. This is a stub for API consistency.
 	 * @description
 	 * "Encrypts" data by wrapping it in a string representation. This is not real encryption and provides no confidentiality.
 	 *
@@ -30,8 +35,17 @@ export default class DemoCrypto {
 	 * @returns {Promise<string>} A string representing the "encrypted" data.
 	 */
 	async encrypt(data) {
-		console.log("[DemoCrypto] Encrypting data (demo):", data);
-		return `encrypted(${JSON.stringify(data)})`;
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("demoCrypto");
+		const startTime = performance.now();
+		try {
+			console.log("[DemoCrypto] Encrypting data (demo):", data);
+			return `encrypted(${JSON.stringify(data)})`;
+		} finally {
+			const duration = performance.now() - startTime;
+			metrics?.increment("encryptionCount");
+			metrics?.updateAverage("encryptionTime", duration);
+		}
 	}
 
 	/**
@@ -42,11 +56,20 @@ export default class DemoCrypto {
 	 * @returns {Promise<*>} The original data.
 	 */
 	async decrypt(encryptedData) {
-		console.log("[DemoCrypto] Decrypting data (demo):", encryptedData);
-		const match = encryptedData.match(/^encrypted\((.*)\)$/);
-		if (match && match[1]) {
-			return JSON.parse(match[1]);
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("demoCrypto");
+		const startTime = performance.now();
+		try {
+			console.log("[DemoCrypto] Decrypting data (demo):", encryptedData);
+			const match = encryptedData.match(/^encrypted\((.*)\)$/);
+			if (match && match[1]) {
+				return JSON.parse(match[1]);
+			}
+			return encryptedData;
+		} finally {
+			const duration = performance.now() - startTime;
+			metrics?.increment("decryptionCount");
+			metrics?.updateAverage("decryptionTime", duration);
 		}
-		return encryptedData;
 	}
 }

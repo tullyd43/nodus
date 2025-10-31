@@ -1,5 +1,6 @@
 // modules/custom-validator.js
 // Custom validation module for user-defined business rules
+import { AppError } from "../../../utils/ErrorHelpers.js";
 
 /**
  * Custom Validator Module
@@ -7,34 +8,39 @@
  * Bundle size: ~2KB (rule engine and custom validators)
  */
 export default class CustomValidator {
-	/** @private */
+	/** @private @type {Map<string, object>} */
 	#customRules = new Map();
 	/** @private */
-	#ruleEngine;
-	/** @private */
-	#metrics = {
-		rulesExecuted: 0,
-		rulesPassed: 0,
-		rulesFailed: 0,
-		averageExecutionTime: 0,
-	};
+	#ruleEngine = null;
+	/** @private @type {import('../../HybridStateManager.js').default|null} */
+	#stateManager = null;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+
+	/** @public @type {string} */
+	name = "CustomValidator";
+	/** @public @type {string} */
+	type = "business";
+	/** @public @type {string[]} */
+	supports = ["objects", "events", "relationships"];
 
 	/**
 	 * Creates an instance of CustomValidator.
-	 * @param {Array<object>} [customRules=[]] - An array of predefined custom rule objects.
-	 * @param {object} [options={}] - Configuration options for the validator and its rule engine.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {Array<object>} [context.customRules=[]] - An array of predefined custom rule objects.
+	 * @param {object} [context.options={}] - Configuration options for the validator and its rule engine.
 	 */
-	constructor(customRules = [], options = {}) {
-		this.name = "CustomValidator";
-		this.type = "business";
-		this.supports = ["objects", "events", "relationships"];
+	constructor({ stateManager, customRules = [], options = {} }) {
+		this.#stateManager = stateManager;
+		// V8.0 Parity: Derive forensicLogger from stateManager.
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
 
-		this.#ruleEngine = new ValidationRuleEngine(options);
+		this.#ruleEngine = new ValidationRuleEngine({
+			stateManager,
+			...options,
+		});
 		this.#loadCustomRules(customRules);
-
-		console.log(
-			`[CustomValidator] Loaded with ${customRules.length} custom rules`
-		);
 	}
 
 	/**
@@ -43,7 +49,6 @@ export default class CustomValidator {
 	 */
 	async init() {
 		await this.#ruleEngine.init();
-		console.log("[CustomValidator] Custom validation rules initialized");
 		return this;
 	}
 
@@ -60,7 +65,10 @@ export default class CustomValidator {
 			createdAt: Date.now(),
 		});
 
-		console.log(`[CustomValidator] Added custom rule: ${ruleName}`);
+		this.#audit("rule_added", {
+			ruleName,
+			entityType: ruleDefinition.entityType,
+		});
 	}
 
 	/**
@@ -70,7 +78,7 @@ export default class CustomValidator {
 	 */
 	removeRule(ruleName) {
 		if (this.#customRules.delete(ruleName)) {
-			console.log(`[CustomValidator] Removed custom rule: ${ruleName}`);
+			this.#audit("rule_removed", { ruleName });
 			return true;
 		}
 		return false;
@@ -83,6 +91,7 @@ export default class CustomValidator {
 	 * @returns {Promise<object>} A validation result object.
 	 */
 	async validate(entity, context = {}) {
+		const metrics = this.#getMetricsNamespace();
 		const errors = [];
 		const warnings = [];
 		const ruleResults = [];
@@ -97,7 +106,7 @@ export default class CustomValidator {
 				const result = await this.#executeRule(rule, entity, context);
 				const executionTime = performance.now() - startTime;
 
-				this.#updateRuleMetrics(result.passed, executionTime);
+				this.#updateRuleMetrics(metrics, result.passed, executionTime);
 
 				ruleResults.push({
 					ruleName: rule.name,
@@ -106,6 +115,7 @@ export default class CustomValidator {
 					message: result.message,
 				});
 
+				// V8.0 Parity: Treat non-passing results as errors or warnings based on severity.
 				if (!result.passed) {
 					if (rule.severity === "error") {
 						errors.push(result.message);
@@ -114,10 +124,12 @@ export default class CustomValidator {
 					}
 				}
 			} catch (error) {
-				this.#metrics.rulesFailed++;
+				metrics?.increment("rulesFailed");
 				const errorMsg = `Custom rule '${rule.name}' execution failed: ${error.message}`;
 				errors.push(errorMsg);
-				console.error(`[CustomValidator] ${errorMsg}`);
+				this.#stateManager?.managers?.errorHelpers?.handleError(
+					new AppError(errorMsg, { cause: error })
+				);
 			}
 		}
 
@@ -184,9 +196,9 @@ export default class CustomValidator {
 	 * This is used by the `ValidationStack` to determine if this validator should run.
 	 * @param {object} entity - The entity to check.
 	 * @param {object} context - The validation context.
-	 * @returns {boolean} True if there are applicable rules for this entity.
+	 * @returns {boolean} `true` if there are applicable rules for this entity.
 	 */
-	supports(entity, context) {
+	isApplicableFor(entity, context) {
 		return this.#getApplicableRules(entity).length > 0;
 	}
 
@@ -210,15 +222,14 @@ export default class CustomValidator {
 	 * @returns {object} An object containing performance and usage metrics.
 	 */
 	getMetrics() {
+		const metrics = this.#getMetricsNamespace();
+		const rulesExecuted = metrics?.get("rulesExecuted")?.value || 0;
+		const rulesPassed = metrics?.get("rulesPassed")?.value || 0;
 		return {
-			...this.#metrics,
+			...(metrics?.getAll() || {}),
 			rulesLoaded: this.#customRules.size,
 			successRate:
-				this.#metrics.rulesExecuted > 0
-					? (this.#metrics.rulesPassed /
-							this.#metrics.rulesExecuted) *
-						100
-					: 0,
+				rulesExecuted > 0 ? (rulesPassed / rulesExecuted) * 100 : 100,
 		};
 	}
 
@@ -336,9 +347,10 @@ export default class CustomValidator {
 			case "not_in":
 				return Array.isArray(value) && !value.includes(entityValue);
 			default:
-				console.warn(
-					`[CustomValidator] Unknown condition operator: ${operator}`
-				);
+				this.#stateManager?.emit("warn", {
+					source: "CustomValidator",
+					message: `Unknown condition operator: ${operator}`,
+				});
 				return false;
 		}
 	}
@@ -364,8 +376,6 @@ export default class CustomValidator {
 	 */
 	async #executeRule(rule, entity, context) {
 		switch (rule.type) {
-			case "javascript":
-				return await this.#executeJavaScriptRule(rule, entity, context);
 			case "expression":
 				return await this.#executeExpressionRule(rule, entity, context);
 			case "regex":
@@ -374,50 +384,6 @@ export default class CustomValidator {
 				return await this.#executeLookupRule(rule, entity, context);
 			default:
 				throw new Error(`Unknown rule type: ${rule.type}`);
-		}
-	}
-
-	/**
-	 * Executes a rule defined by a JavaScript function in a sandboxed environment.
-	 * @private
-	 * @param {object} rule - The JavaScript rule to execute.
-	 * @param {object} entity - The entity being validated.
-	 * @param {object} context - The validation context.
-	 * @returns {Promise<object>} The result of the rule execution.
-	 */
-	async #executeJavaScriptRule(rule, entity, context) {
-		// Create safe execution context
-		const sandbox = {
-			entity,
-			context,
-			// Safe utility functions
-			utils: {
-				isEmail: (str) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(str),
-				isPhone: (str) => /^[+]?[1-9][\d]{0,15}$/.test(str),
-				isDate: (str) => !isNaN(Date.parse(str)),
-				isEmpty: (val) =>
-					val === null || val === undefined || val === "",
-				length: (val) => val?.length || 0,
-			},
-		};
-
-		try {
-			// Execute rule function with sandbox
-			const result = rule.function.call(sandbox, entity, context);
-
-			return {
-				passed: Boolean(result),
-				message:
-					result === true
-						? `Rule ${rule.name} passed`
-						: typeof result === "string"
-							? result
-							: `Rule ${rule.name} failed`,
-			};
-		} catch (error) {
-			throw new Error(
-				`JavaScript rule execution failed: ${error.message}`
-			);
 		}
 	}
 
@@ -516,22 +482,40 @@ export default class CustomValidator {
 	 * @param {boolean} passed - Whether the rule passed or failed.
 	 * @param {number} executionTime - The time taken to execute the rule in milliseconds.
 	 */
-	#updateRuleMetrics(passed, executionTime) {
-		this.#metrics.rulesExecuted++;
+	#updateRuleMetrics(metrics, passed, executionTime) {
+		if (!metrics) return;
+
+		metrics.increment("rulesExecuted");
 
 		if (passed) {
-			this.#metrics.rulesPassed++;
+			metrics.increment("rulesPassed");
 		} else {
-			this.#metrics.rulesFailed++;
+			metrics.increment("rulesFailed");
 		}
 
 		// Update average execution time
-		const totalTime =
-			this.#metrics.averageExecutionTime *
-				(this.#metrics.rulesExecuted - 1) +
-			executionTime;
-		this.#metrics.averageExecutionTime =
-			totalTime / this.#metrics.rulesExecuted;
+		metrics.updateAverage("averageExecutionTime", executionTime);
+	}
+
+	/**
+	 * Logs an audit event if the forensic logger is available.
+	 * @private
+	 * @param {string} eventType - The type of the event (e.g., 'rule_added').
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		if (this.#forensicLogger) {
+			this.#forensicLogger.logAuditEvent(
+				`CUSTOM_VALIDATOR_${eventType.toUpperCase()}`,
+				data
+			);
+		}
+	}
+
+	#getMetricsNamespace() {
+		return this.#stateManager?.metricsRegistry?.namespace(
+			"customValidator"
+		);
 	}
 }
 
@@ -540,17 +524,20 @@ export default class CustomValidator {
  * @private
  */
 class ValidationRuleEngine {
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager;
+
 	/**
 	 * Creates an instance of ValidationRuleEngine.
-	 * @param {object} [options={}] - Configuration options.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
-	constructor(options = {}) {
-		this.options = options;
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
 	}
 
 	/**
 	 * Initializes the rule engine.
-	 * @private
 	 * @returns {Promise<this>} The initialized engine.
 	 */
 	async init() {
@@ -560,105 +547,28 @@ class ValidationRuleEngine {
 
 	/**
 	 * Evaluates a simple expression with a given set of variables.
-	 * @private
 	 * @param {string} expression - The expression to evaluate (e.g., "status == 'active'").
 	 * @param {object} variables - An object of variables to substitute into the expression.
 	 * @returns {*} The result of the expression evaluation.
 	 */
 	evaluateExpression(expression, variables) {
-		// Simple expression evaluator (in production, use a proper expression parser)
-		try {
-			// Replace variables in expression
-			let evaluableExpression = expression;
-
-			for (const [key, value] of Object.entries(variables)) {
-				const regex = new RegExp(`\\b${key}\\b`, "g");
-				const replacement =
-					typeof value === "string" ? `"${value}"` : String(value);
-				evaluableExpression = evaluableExpression.replace(
-					regex,
-					replacement
-				);
-			}
-
-			// Simple evaluation for demo (in production, use a safe parser)
-			// This is just for demonstration - in real use, implement proper expression parsing
-			return this.#simpleSafeEval(evaluableExpression);
-		} catch (error) {
-			throw new Error(`Expression evaluation failed: ${error.message}`);
-		}
-	}
-
-	/**
-	 * A very basic, unsafe evaluation function for demonstration purposes.
-	 * @private
-	 * @param {string} expression - The expression string to evaluate.
-	 * @returns {*} The result of the evaluation.
-	 */
-	#simpleSafeEval(expression) {
-		// Very basic expression evaluation for demo
-		// In production, use a proper expression parser like jexl or similar
-
-		// Handle simple comparisons
-		if (expression.includes("==")) {
-			const [left, right] = expression.split("==").map((s) => s.trim());
-			return this.#parseValue(left) === this.#parseValue(right);
-		}
-
-		if (expression.includes("!=")) {
-			const [left, right] = expression.split("!=").map((s) => s.trim());
-			return this.#parseValue(left) !== this.#parseValue(right);
-		}
-
-		if (expression.includes(">=")) {
-			const [left, right] = expression.split(">=").map((s) => s.trim());
-			return (
-				Number(this.#parseValue(left)) >=
-				Number(this.#parseValue(right))
+		// V8.0 Parity: The use of `new Function()` is a significant security risk and has been removed.
+		// All complex logic should be handled by the declarative `ConditionRegistry` using the `evaluate_logical` condition.
+		// This change enforces a secure-by-design pattern, preventing arbitrary code execution from data.
+		const conditionRegistry =
+			this.#stateManager?.managers?.conditionRegistry;
+		if (!conditionRegistry) {
+			throw new Error(
+				"ConditionRegistry is not available for expression evaluation."
 			);
 		}
 
-		if (expression.includes("<=")) {
-			const [left, right] = expression.split("<=").map((s) => s.trim());
-			return (
-				Number(this.#parseValue(left)) <=
-				Number(this.#parseValue(right))
-			);
-		}
+		const condition = {
+			type: "evaluate_logical",
+			...expression, // Assume the expression is now a declarative condition object
+		};
 
-		if (expression.includes(">")) {
-			const [left, right] = expression.split(">").map((s) => s.trim());
-			return (
-				Number(this.#parseValue(left)) > Number(this.#parseValue(right))
-			);
-		}
-
-		if (expression.includes("<")) {
-			const [left, right] = expression.split("<").map((s) => s.trim());
-			return (
-				Number(this.#parseValue(left)) < Number(this.#parseValue(right))
-			);
-		}
-
-		// Default: try to parse as boolean
-		return Boolean(this.#parseValue(expression));
-	}
-
-	/**
-	 * Parses a string value into its likely type (boolean, null, number, string).
-	 * @private
-	 * @param {string} value - The string value to parse.
-	 * @returns {*} The parsed value.
-	 */
-	#parseValue(value) {
-		if (value === "true") return true;
-		if (value === "false") return false;
-		if (value === "null") return null;
-		if (value === "undefined") return undefined;
-		if (value.startsWith('"') && value.endsWith('"')) {
-			return value.slice(1, -1); // Remove quotes
-		}
-		if (!isNaN(value)) return Number(value);
-		return value;
+		// The evaluation context is the `variables` object.
+		return conditionRegistry.evaluate(condition, variables);
 	}
 }

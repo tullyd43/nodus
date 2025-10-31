@@ -1,5 +1,6 @@
 // modules/batch-sync.js
 // Batch synchronization module for efficient bulk operations
+import { StorageError } from "../../../utils/ErrorHelpers.js";
 
 /**
  * @description
@@ -12,36 +13,31 @@
  * @module BatchSync
  */
 export default class BatchSync {
-	/**
-	 * @private
-	 * @type {object}
-	 */
+	/** @private @type {object} */
 	#config;
-	/**
-	 * @private
-	 * @type {Map<string, object>}
-	 */
+	/** @private @type {Map<string, object>} */
 	#pendingBatches = new Map();
-	/**
-	 * @private
-	 * @type {Array<object>}
-	 */
+	/** @private @type {Array<object>} */
 	#syncQueue = [];
-	/**
-	 * @private
-	 * @type {object}
-	 */
-	#metrics = {
-		batchesProcessed: 0,
-		itemsProcessed: 0,
-		averageBatchSize: 0,
-		averageProcessingTime: 0,
-		compressionRatio: 0,
-	};
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+
+	/** @public @type {string} */
+	name = "BatchSync";
+	/** @public @type {boolean} */
+	supportsPush = true;
+	/** @public @type {boolean} */
+	supportsPull = true;
 
 	/**
 	 * Creates an instance of BatchSync.
-	 * @param {object} [options={}] - Configuration options for the batch sync module.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for the batch sync module.
 	 * @param {number} [options.batchSize=100] - The maximum number of items in a single batch.
 	 * @param {number} [options.maxBatchAge=30000] - The maximum age of a batch in milliseconds before it's automatically processed.
 	 * @param {number} [options.compressionThreshold=1024] - The payload size in bytes above which compression is attempted.
@@ -49,10 +45,11 @@ export default class BatchSync {
 	 * @param {number} [options.retryAttempts=3] - The number of times to retry a failed batch.
 	 * @param {number} [options.parallelBatches=3] - The number of batches to process in parallel.
 	 */
-	constructor(options = {}) {
-		this.name = "BatchSync";
-		this.supportsPush = true;
-		this.supportsPull = true;
+	constructor({ stateManager, options = {} }) {
+		this.#stateManager = stateManager;
+		// V8.0 Parity: Derive dependencies from the stateManager.
+		this.#forensicLogger = stateManager?.managers?.forensicLogger;
+		this.#errorHelpers = stateManager?.managers?.errorHelpers;
 
 		this.#config = {
 			batchSize: options.batchSize || 100,
@@ -63,8 +60,6 @@ export default class BatchSync {
 			parallelBatches: options.parallelBatches || 3,
 			...options,
 		};
-
-		console.log("[BatchSync] Loaded for batch synchronization");
 	}
 
 	/**
@@ -75,8 +70,7 @@ export default class BatchSync {
 	async init() {
 		// Start batch processing timer
 		this.#startBatchProcessor();
-
-		console.log("[BatchSync] Batch sync initialized");
+		this.#audit("init", { config: this.#config });
 		return this;
 	}
 
@@ -90,6 +84,7 @@ export default class BatchSync {
 	 */
 	async push(options) {
 		const { items = [], operation = "update" } = options;
+		this.#audit("push_start", { itemCount: items.length, operation });
 
 		// Group items by operation type for optimal batching
 		const groupedItems = this.#groupItemsByOperation(items, operation);
@@ -114,7 +109,7 @@ export default class BatchSync {
 			results.push(...batchResults);
 		}
 
-		return {
+		const summary = {
 			pushed: results.reduce(
 				(sum, r) => sum + (r.success ? r.itemCount : 0),
 				0
@@ -126,6 +121,9 @@ export default class BatchSync {
 			batches: results.length,
 			results,
 		};
+
+		this.#audit("push_complete", { summary });
+		return summary;
 	}
 
 	/**
@@ -138,6 +136,7 @@ export default class BatchSync {
 	 */
 	async pull(options) {
 		const { entityTypes = [], since, limit } = options;
+		this.#audit("pull_start", { entityTypes, since, limit });
 
 		try {
 			const batchRequest = {
@@ -149,15 +148,24 @@ export default class BatchSync {
 
 			const response = await this.#sendBatchPullRequest(batchRequest);
 
-			return {
+			const result = {
 				pulled: response.items?.length || 0,
 				items: response.items || [],
 				hasMore: response.hasMore || false,
 				nextToken: response.nextToken,
 			};
+
+			this.#audit("pull_complete", { pulled: result.pulled });
+			return result;
 		} catch (error) {
-			console.error("[BatchSync] Batch pull failed:", error);
-			throw error;
+			this.#audit("pull_failed", { error: error.message });
+			this.#errorHelpers?.handleError(
+				new StorageError("Batch pull failed", {
+					cause: error,
+					context: { entityTypes, since },
+				})
+			);
+			throw error; // Re-throw after handling
 		}
 	}
 
@@ -194,9 +202,7 @@ export default class BatchSync {
 			operation: "mixed", // Mixed operations in queue
 		});
 
-		console.log(
-			`[BatchSync] Flushed queue: ${result.pushed} items processed`
-		);
+		this.#audit("queue_flushed", { pushed: result.pushed });
 		return result;
 	}
 
@@ -232,9 +238,10 @@ export default class BatchSync {
 	 * Get batch metrics
 	 * @returns {object} An object containing performance and state metrics for the batch sync process.
 	 */
-	getMetrics() {
+	getStats() {
+		const metrics = this.#getMetrics();
 		return {
-			...this.#metrics,
+			...(metrics?.getAllAsObject() || {}),
 			queueSize: this.#syncQueue.length,
 			pendingBatches: this.#pendingBatches.size,
 		};
@@ -335,7 +342,7 @@ export default class BatchSync {
 
 			return {
 				batchId,
-				success: false,
+				success: false, // V8.0 Parity: Standardize error reporting.
 				itemCount: items.length,
 				error: error.message,
 			};
@@ -513,25 +520,12 @@ export default class BatchSync {
 	 * @param {boolean} compressed - Whether the batch was compressed.
 	 */
 	#updateBatchMetrics(itemCount, processingTime, compressed) {
-		this.#metrics.batchesProcessed++;
-		this.#metrics.itemsProcessed += itemCount;
-
-		// Update average batch size
-		this.#metrics.averageBatchSize =
-			this.#metrics.itemsProcessed / this.#metrics.batchesProcessed;
-
-		// Update average processing time
-		const totalTime =
-			this.#metrics.averageProcessingTime *
-				(this.#metrics.batchesProcessed - 1) +
-			processingTime;
-		this.#metrics.averageProcessingTime =
-			totalTime / this.#metrics.batchesProcessed;
-
-		// Update compression ratio
+		const metrics = this.#getMetrics();
+		metrics?.increment("batchesProcessed");
+		metrics?.increment("itemsProcessed", itemCount);
+		metrics?.updateAverage("averageProcessingTime", processingTime);
 		if (compressed) {
-			// In real implementation, track actual compression ratios
-			this.#metrics.compressionRatio = 0.7; // 30% compression
+			metrics?.set("compressionRatio", 0.7); // Simulate 30% compression
 		}
 	}
 
@@ -542,5 +536,28 @@ export default class BatchSync {
 	 */
 	#generateBatchId() {
 		return `batch_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+	}
+
+	/**
+	 * Gets the namespaced metrics registry.
+	 * @private
+	 */
+	#getMetrics() {
+		return this.#stateManager?.metricsRegistry?.namespace("batchSync");
+	}
+
+	/**
+	 * Logs an audit event if the forensic logger is available.
+	 * @private
+	 * @param {string} eventType - The type of the event (e.g., 'push_start').
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		if (this.#forensicLogger) {
+			this.#forensicLogger.logAuditEvent(
+				`BATCH_SYNC_${eventType.toUpperCase()}`,
+				data
+			);
+		}
 	}
 }

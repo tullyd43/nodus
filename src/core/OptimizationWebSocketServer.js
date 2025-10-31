@@ -1,6 +1,6 @@
 // server/OptimizationWebSocketServer.js
 // Real-time WebSocket server for database optimization updates
-
+// V8.0 Parity: Refactored for strict encapsulation, metrics integration, and service management.
 import { EventEmitter } from "node:events"; // Use node:events for clarity in Node.js environment
 
 import { WebSocketServer } from "ws";
@@ -11,58 +11,59 @@ import { WebSocketServer } from "ws";
  * @classdesc Manages a real-time WebSocket server for broadcasting database optimization
  * updates and performance metrics to connected clients. It handles client connections,
  * subscriptions, authentication, and communication with the `DatabaseOptimizer`.
+ * @privateFields {#server, #stateManager, #optimizer, #accessControl, #metrics, #forensicLogger, #wss, #clients, #healthCheckInterval}
  */
 export class OptimizationWebSocketServer extends EventEmitter {
+	// V8.0 Parity: Mandate 3.1 - All internal properties MUST be private.
+	/** @private @type {import('node:http').Server} */
+	#server;
+	/** @private @type {import('./HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('./DatabaseOptimizer.js').default|null} */
+	#optimizer = null;
+	/** @private @type {import('./OptimizationAccessControl.js').default|null} */
+	#accessControl = null;
+	/** @private @type {import('./ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {WebSocketServer|null} */
+	#wss = null;
+	/** @private @type {import('../utils/LRUCache.js').LRUCache|null} */
+	#clients = null;
+	/** @private @type {ReturnType<typeof setInterval>|null} */
+	#healthCheckInterval = null;
+
 	/**
 	 * Creates an instance of OptimizationWebSocketServer.
 	 * @param {import('node:http').Server} server - The HTTP server instance to attach the WebSocket server to.
-	 * @param {object} options - Configuration options.
-	 * @param {import('./DatabaseOptimizer.js').DatabaseOptimizer} options.optimizer - The DatabaseOptimizer instance.
-	 * @param {import('./OptimizationAccessControl.js').OptimizationAccessControl} options.accessControl - The Access Control instance.
+	 * @param {object} context - Configuration options.
+	 * @param {import('./HybridStateManager.js').default} context.stateManager - The application's state manager.
 	 */
-	constructor(server, { optimizer, accessControl }) {
+	constructor(server, { stateManager }) {
 		super();
-		/**
-		 * The HTTP server instance.
-		 * @type {import('node:http').Server}
-		 * @private
-		 */
-		this.server = server;
-		/**
-		 * The DatabaseOptimizer instance.
-		 * @type {import('./DatabaseOptimizer.js').DatabaseOptimizer}
-		 * @private
-		 */
-		this.optimizer = optimizer;
-		/**
-		 * The Access Control instance.
-		 * @type {import('./OptimizationAccessControl.js').OptimizationAccessControl}
-		 * @private
-		 */
-		this.accessControl = accessControl;
-		/**
-		 * The WebSocketServer instance.
-		 * @type {WebSocketServer|null}
-		 * @private
-		 */
-		this.wss = null;
-		/**
-		 * A map of connected clients, keyed by their unique ID.
-		 * @type {Map<string, object>}
-		 * @private
-		 */
-		this.clients = new Map();
-		/**
-		 * Performance and usage metrics for the WebSocket server.
-		 * @type {{connectionsTotal: number, connectionsActive: number, messagesTriggered: number, messagesSent: number}}
-		 * @private
-		 */
-		this.metrics = {
-			connectionsTotal: 0,
-			connectionsActive: 0,
-			messagesTriggered: 0,
-			messagesSent: 0,
-		};
+		this.#server = server;
+		this.#stateManager = stateManager;
+
+		// V8.0 Parity: Derive dependencies from the stateManager's managers.
+		this.#optimizer = stateManager.managers?.databaseOptimizer || null;
+		this.#accessControl =
+			stateManager.managers?.optimizationAccessControl || null;
+		this.#forensicLogger = stateManager.managers?.forensicLogger || null;
+
+		// V8.0 Parity: Mandate 4.3 - Use the central metrics registry.
+		this.#metrics =
+			stateManager.metricsRegistry?.namespace("optimizationWS");
+
+		// V8.0 Parity: Mandate 4.1 - All caches MUST be bounded.
+		// Use the central CacheManager to create a bounded cache for clients.
+		const cacheManager = stateManager.managers.cacheManager;
+		this.#clients = cacheManager?.getCache("wsClients", {
+			max: stateManager.config?.wsServer?.maxClients || 500,
+			onEvict: (key, value) => {
+				this.#handleEvictedClient(key, value);
+			},
+		});
 	}
 
 	/**
@@ -71,18 +72,35 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @throws {Error} If the WebSocket server fails to initialize.
 	 */
 	initialize() {
+		if (this.#wss) {
+			console.warn(
+				"⚠️ Optimization WebSocket server is already initialized."
+			);
+			return false;
+		}
+
+		// V8.0 Parity: Mandate 1.2 - Ensure core services are available.
+		if (!this.#optimizer || !this.#accessControl) {
+			console.error(
+				"❌ [OptimizationWebSocketServer] Cannot initialize. Required managers (databaseOptimizer, optimizationAccessControl) are missing from the state manager."
+			);
+			throw new Error(
+				"Initialization failed due to missing core service managers."
+			);
+		}
+
 		try {
-			this.wss = new WebSocketServer({
-				server: this.server,
+			this.#wss = new WebSocketServer({
+				server: this.#server,
 				path: "/admin/optimization-stream",
 				clientTracking: true,
 			});
 
-			this.setupWebSocketHandlers();
-			this.setupOptimizerListeners();
-			this.startHealthCheck();
+			this.#setupWebSocketHandlers();
+			this.#setupOptimizerListeners();
+			this.#startHealthCheck();
 
-			console.log("🔴 Optimization WebSocket server initialized");
+			console.log("🛰️  Optimization WebSocket server initialized");
 			return true;
 		} catch (error) {
 			console.error("Failed to initialize WebSocket server:", error);
@@ -95,22 +113,22 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @private
 	 * @returns {void}
 	 */
-	setupWebSocketHandlers() {
-		this.wss.on("connection", (ws, request) => {
-			const clientId = this.generateClientId();
+	#setupWebSocketHandlers() {
+		this.#wss.on("connection", (ws, request) => {
+			const clientId = this.#generateClientId();
 			const clientInfo = {
 				id: clientId,
 				ws,
 				ip: request.socket.remoteAddress,
 				userAgent: request.headers["user-agent"],
 				connectedAt: new Date(),
-				permissions: {},
+				permissions: [], // V8.0 Parity: Permissions are an array of strings.
 				subscriptions: new Set(["all"]), // Default subscription
 			};
 
-			this.clients.set(clientId, clientInfo);
-			this.metrics.connectionsTotal++;
-			this.metrics.connectionsActive++;
+			this.#clients?.set(clientId, clientInfo);
+			this.#metrics?.increment("connectionsTotal");
+			this.#metrics?.increment("connectionsActive", 1);
 
 			console.log(
 				`👤 Client connected: ${clientId} from ${clientInfo.ip}`
@@ -118,20 +136,20 @@ export class OptimizationWebSocketServer extends EventEmitter {
 
 			// Setup client event handlers
 			ws.on("message", (data) => {
-				this.handleClientMessage(clientId, data);
+				this.#handleClientMessage(clientId, data);
 			});
 
 			ws.on("close", (code, reason) => {
-				this.handleClientDisconnect(clientId, code, reason);
+				this.#handleClientDisconnect(clientId, code, reason);
 			});
 
 			ws.on("error", (error) => {
 				console.error(`WebSocket error for client ${clientId}:`, error);
-				this.handleClientDisconnect(clientId, 1011, "Internal error");
+				this.#handleClientDisconnect(clientId, 1011, "Internal error");
 			});
 
 			// Send initial connection confirmation
-			this.sendToClient(clientId, {
+			this.#sendToClient(clientId, {
 				type: "connection_established",
 				clientId,
 				serverTime: new Date().toISOString(),
@@ -144,10 +162,10 @@ export class OptimizationWebSocketServer extends EventEmitter {
 			});
 
 			// Send current system status
-			this.sendSystemStatus(clientId);
+			this.#sendSystemStatus(clientId);
 		});
 
-		this.wss.on("error", (error) => {
+		this.#wss.on("error", (error) => {
 			console.error("WebSocket server error:", error);
 		});
 	}
@@ -157,58 +175,49 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @private
 	 * @returns {void}
 	 */
-	setupOptimizerListeners() {
+	#setupOptimizerListeners() {
 		// Listen to optimizer events
-		if (this.optimizer.eventFlowEngine) {
-			this.optimizer.eventFlowEngine.on(
-				"optimization_applied",
-				(data) => {
-					this.broadcast({
-						type: "optimization_applied",
-						timestamp: new Date().toISOString(),
-						optimizationType: data.type,
+		if (this.#stateManager) {
+			this.#stateManager.on("optimization_applied", (data) => {
+				this.#broadcast({
+					type: "optimization_applied",
+					timestamp: new Date().toISOString(),
+					optimizationType: data.type,
+					table: data.table,
+					field: data.field,
+					approvedBy: data.approvedBy,
+					executionTime: data.executionTime,
+				});
+			});
+
+			this.#stateManager.on("suggestion_generated", (data) => {
+				this.#broadcast({
+					type: "suggestion_generated",
+					timestamp: new Date().toISOString(),
+					suggestion: {
+						id: data.id,
 						table: data.table,
 						field: data.field,
-						approvedBy: data.approvedBy,
-						executionTime: data.executionTime,
-					});
-				}
-			);
+						type: data.type,
+						estimatedBenefit: data.estimatedBenefit,
+					},
+				});
+			});
 
-			this.optimizer.eventFlowEngine.on(
-				"suggestion_generated",
-				(data) => {
-					this.broadcast({
-						type: "suggestion_generated",
-						timestamp: new Date().toISOString(),
-						suggestion: {
-							id: data.id,
-							table: data.table,
-							field: data.field,
-							type: data.type,
-							estimatedBenefit: data.estimatedBenefit,
-						},
-					});
-				}
-			);
-
-			this.optimizer.eventFlowEngine.on(
-				"health_status_changed",
-				(data) => {
-					this.broadcast({
-						type: "health_status_changed",
-						timestamp: new Date().toISOString(),
-						status: data.status,
-						previousStatus: data.previousStatus,
-						reason: data.reason,
-					});
-				}
-			);
+			this.#stateManager.on("health_status_changed", (data) => {
+				this.#broadcast({
+					type: "health_status_changed",
+					timestamp: new Date().toISOString(),
+					status: data.status,
+					previousStatus: data.previousStatus,
+					reason: data.reason,
+				});
+			});
 		}
 
 		// Listen for system log events
 		this.on("system_log", (logData) => {
-			this.broadcast(
+			this.#broadcast(
 				{
 					type: "system_log",
 					timestamp: new Date().toISOString(),
@@ -223,7 +232,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
 
 		// Periodic metrics updates
 		setInterval(() => {
-			this.broadcastMetricsUpdate();
+			this.#broadcastMetricsUpdate();
 		}, 30000); // Every 30 seconds
 	}
 
@@ -233,35 +242,35 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @param {string} clientId - The ID of the client sending the message.
 	 * @param {import('ws').RawData} data - The raw message data received from the client.
 	 */
-	handleClientMessage(clientId, data) {
+	#handleClientMessage(clientId, data) {
 		try {
-			const message = JSON.parse(data);
-			const client = this.clients.get(clientId);
+			const message = JSON.parse(data.toString()); // V8.0 Parity: Ensure data is a string before parsing.
+			const client = this.#clients.get(clientId);
 
 			if (!client) return;
 
 			switch (message.type) {
 				case "subscribe":
-					this.handleSubscription(clientId, message.subscriptions);
+					this.#handleSubscription(clientId, message.subscriptions);
 					break;
 
 				case "unsubscribe":
-					this.handleUnsubscription(clientId, message.subscriptions);
+					this.#handleUnsubscription(clientId, message.subscriptions);
 					break;
 
 				case "ping":
-					this.sendToClient(clientId, {
+					this.#sendToClient(clientId, {
 						type: "pong",
 						timestamp: new Date().toISOString(),
 					});
 					break;
 
 				case "request_status":
-					this.sendSystemStatus(clientId);
+					this.#sendSystemStatus(clientId);
 					break;
 
 				case "authenticate":
-					this.handleAuthentication(clientId, message.token);
+					this.#handleAuthentication(clientId, message.token);
 					break;
 
 				default:
@@ -274,8 +283,8 @@ export class OptimizationWebSocketServer extends EventEmitter {
 			console.error(
 				`Failed to handle message from client ${clientId}:`,
 				error
-			);
-			this.sendToClient(clientId, {
+			); // V8.0 Parity: Use private method
+			this.#sendToClient(clientId, {
 				type: "error",
 				message: "Invalid message format",
 			});
@@ -288,33 +297,46 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @param {string} clientId - The ID of the client attempting to authenticate.
 	 * @param {string} token - The authentication token provided by the client.
 	 */
-	async handleAuthentication(clientId, token) {
+	async #handleAuthentication(clientId, token) {
 		try {
-			const client = this.clients.get(clientId);
+			const client = this.#clients.get(clientId);
 			if (!client) return;
 
 			// Verify token and get permissions
-			const permissions = await this.verifyClientToken(token);
+			const permissions = await this.#verifyClientToken(clientId, token);
 
 			client.permissions = permissions;
 			client.authenticated = true;
 
-			this.sendToClient(clientId, {
+			// V8.0 Parity: Mandate 2.4 - Log successful authentication.
+			this.#forensicLogger?.logAuditEvent("AUTH_SUCCESS", {
+				component: "OptimizationWebSocketServer",
+				clientId: clientId,
+				userId: client.authenticatedUserId, // Stored from token verification
+			});
+
+			this.#sendToClient(clientId, {
 				type: "authentication_success",
 				permissions,
 				timestamp: new Date().toISOString(),
 			});
 
 			console.log(
-				`🔐 Client ${clientId} authenticated with permissions:`,
-				Object.keys(permissions)
+				`🔐 Client ${clientId} authenticated with ${permissions.length} permissions.`
 			);
 		} catch (error) {
 			console.error(
 				`Authentication failed for client ${clientId}:`,
 				error
 			);
-			this.sendToClient(clientId, {
+			// V8.0 Parity: Mandate 2.4 - Log failed authentication.
+			this.#forensicLogger?.logAuditEvent("AUTH_FAILURE", {
+				component: "OptimizationWebSocketServer",
+				clientId: clientId,
+				reason: error.message,
+			});
+
+			this.#sendToClient(clientId, {
 				type: "authentication_failed",
 				message: "Invalid or expired token",
 			});
@@ -326,20 +348,27 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @private
 	 * @param {string} token - The authentication token to verify.
 	 * @returns {Promise<object>} A promise that resolves with the client's permissions.
+	 * @param {string} clientId The ID of the client being verified.
 	 */
-	async verifyClientToken(token) {
-		if (!this.accessControl) {
-			throw new Error("Access control system is not configured.");
+	async #verifyClientToken(clientId, token) {
+		if (!this.#accessControl) {
+			throw new Error("AccessControl manager is not configured.");
 		}
 
 		try {
-			const sessionInfo = this.accessControl.getSessionInfo(token);
-			if (!sessionInfo) {
-				throw new Error("Invalid or expired session token.");
-			}
+			// V8.0 Parity: Use the session check method for validation.
+			const { valid, session } =
+				this.#accessControl.checkSessionPermission(
+					token,
+					"optimization:view"
+				);
+			if (!valid) throw new Error("Invalid or expired session token.");
 
-			// Return the permissions from the valid session
-			return sessionInfo.permissions;
+			// Store the authenticated user ID on the client for auditing purposes
+			const client = this.#clients.get(clientId);
+			if (client) client.authenticatedUserId = session.userId;
+
+			return session.permissions;
 		} catch (error) {
 			console.error(
 				"[OptimizationWebSocketServer] Token verification failed:",
@@ -355,15 +384,15 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @param {string} clientId - The ID of the client.
 	 * @param {string[]} subscriptions - An array of subscription topics.
 	 */
-	handleSubscription(clientId, subscriptions) {
-		const client = this.clients.get(clientId);
+	#handleSubscription(clientId, subscriptions) {
+		const client = this.#clients.get(clientId);
 		if (!client) return;
 
 		subscriptions.forEach((sub) => {
 			client.subscriptions.add(sub);
 		});
 
-		this.sendToClient(clientId, {
+		this.#sendToClient(clientId, {
 			type: "subscription_updated",
 			subscriptions: Array.from(client.subscriptions),
 			timestamp: new Date().toISOString(),
@@ -378,15 +407,15 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @param {string} clientId - The ID of the client.
 	 * @param {string[]} subscriptions - An array of subscription topics to unsubscribe from.
 	 */
-	handleUnsubscription(clientId, subscriptions) {
-		const client = this.clients.get(clientId);
+	#handleUnsubscription(clientId, subscriptions) {
+		const client = this.#clients.get(clientId);
 		if (!client) return;
 
 		subscriptions.forEach((sub) => {
 			client.subscriptions.delete(sub);
 		});
 
-		this.sendToClient(clientId, {
+		this.#sendToClient(clientId, {
 			type: "subscription_updated",
 			subscriptions: Array.from(client.subscriptions),
 			timestamp: new Date().toISOString(),
@@ -400,16 +429,35 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @param {number} code - The WebSocket close code.
 	 * @param {string} reason - The reason for the disconnection.
 	 */
-	handleClientDisconnect(clientId, code, reason) {
-		const client = this.clients.get(clientId);
+	#handleClientDisconnect(clientId, code, reason) {
+		const client = this.#clients.get(clientId);
 		if (client) {
 			const duration = Date.now() - client.connectedAt.getTime();
 			console.log(
 				`👋 Client disconnected: ${clientId} (connected for ${Math.round(duration / 1000)}s)`
 			);
-			this.clients.delete(clientId);
-			this.metrics.connectionsActive--;
+			this.#clients.delete(clientId);
+			this.#metrics?.increment("connectionsActive", -1);
 		}
+	}
+
+	/**
+	 * Handles a client being evicted from the LRU cache due to capacity limits.
+	 * @private
+	 * @param {string} clientId - The ID of the evicted client.
+	 * @param {object} client - The client object that was evicted.
+	 */
+	#handleEvictedClient(clientId, client) {
+		console.warn(
+			`🔌 Client ${clientId} evicted due to server capacity limit.`
+		);
+		this.#metrics?.increment("connectionsEvicted");
+		try {
+			client.ws.close(1013, "Server busy, please try again later.");
+		} catch {
+			// V8.0 Parity: Ignore errors if the socket is already closed.
+		}
+		this.#handleClientDisconnect(clientId, 1013, "Evicted");
 	}
 
 	/**
@@ -418,27 +466,33 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @param {string} clientId - The ID of the client to send the status to.
 	 * @returns {Promise<void>}
 	 */
-	async sendSystemStatus(clientId) {
+	async #sendSystemStatus(clientId) {
+		if (!this.#optimizer) {
+			this.#sendToClient(clientId, {
+				type: "error",
+				message: "Optimizer service is not available.",
+			});
+			return;
+		}
 		try {
-			const [health, metrics, suggestions, applied] = await Promise.all([
-				this.optimizer.getHealthStatus(),
-				this.optimizer.getMetrics(),
-				this.optimizer.getPendingSuggestions(),
-				this.optimizer.getAppliedOptimizations(),
+			const [metrics, suggestions, applied] = await Promise.all([
+				this.#optimizer.getMetrics(),
+				this.#optimizer.getPendingSuggestions(),
+				this.#optimizer.getAppliedOptimizations(),
 			]);
 
-			this.sendToClient(clientId, {
+			this.#sendToClient(clientId, {
 				type: "system_status",
 				timestamp: new Date().toISOString(),
-				health,
+				// V8.0 Parity: Health status is part of the optimizer's metrics.
 				metrics,
 				pendingSuggestions: suggestions.length,
 				appliedOptimizations: applied.length,
-				serverMetrics: this.metrics,
+				serverMetrics: this.getStats(),
 			});
 		} catch (error) {
-			console.error("Failed to send system status:", error);
-			this.sendToClient(clientId, {
+			console.error("Failed to send system status:", error); // V8.0 Parity: Use private method
+			this.#sendToClient(clientId, {
 				type: "error",
 				message: "Failed to retrieve system status",
 			});
@@ -450,22 +504,26 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @private
 	 * @returns {Promise<void>}
 	 */
-	async broadcastMetricsUpdate() {
+	async #broadcastMetricsUpdate() {
+		if (!this.#optimizer) {
+			console.warn(
+				"[OptimizationWebSocketServer] Cannot broadcast metrics, optimizer not available."
+			);
+			return;
+		}
 		try {
-			const metrics = await this.optimizer.getEnhancedMetrics();
+			const metrics = await this.#optimizer.getPerformanceMetrics();
 
-			this.broadcast(
+			this.#broadcast(
 				{
 					type: "metrics_updated",
 					timestamp: new Date().toISOString(),
-					metrics: metrics.current,
-					database: metrics.database,
-					batchStatus: metrics.batchStatus,
+					metrics,
 				},
 				["performance_metrics", "all"]
 			);
 
-			this.metrics.messagesTriggered++;
+			this.#metrics?.increment("messagesTriggered");
 		} catch (error) {
 			console.error("Failed to broadcast metrics update:", error);
 		}
@@ -477,15 +535,15 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @param {string} clientId - The ID of the target client.
 	 * @param {object} message - The message object to send.
 	 */
-	sendToClient(clientId, message) {
-		const client = this.clients.get(clientId);
+	#sendToClient(clientId, message) {
+		const client = this.#clients.get(clientId);
 		if (!client || client.ws.readyState !== client.ws.OPEN) {
 			return false;
 		}
 
 		try {
 			client.ws.send(JSON.stringify(message));
-			this.metrics.messagesSent++;
+			this.#metrics?.increment("messagesSent");
 			return true;
 		} catch (error) {
 			console.error(
@@ -503,10 +561,10 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @param {string[]} [subscriptions=['all']] - An array of subscription topics relevant to the message.
 	 * @returns {number} The number of clients the message was sent to.
 	 */
-	broadcast(message, subscriptions = ["all"]) {
+	#broadcast(message, subscriptions = ["all"]) {
 		let sentCount = 0;
 
-		this.clients.forEach((client, clientId) => {
+		this.#clients.forEach((client, clientId) => {
 			// Check if client is subscribed to any of the message subscriptions
 			const isSubscribed = subscriptions.some(
 				(sub) =>
@@ -514,7 +572,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
 					client.subscriptions.has("all")
 			);
 
-			if (isSubscribed && this.sendToClient(clientId, message)) {
+			if (isSubscribed && this.#sendToClient(clientId, message)) {
 				sentCount++;
 			}
 		});
@@ -528,9 +586,9 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @private
 	 * @returns {void}
 	 */
-	startHealthCheck() {
-		setInterval(() => {
-			this.clients.forEach((client, clientId) => {
+	#startHealthCheck() {
+		this.#healthCheckInterval = setInterval(() => {
+			this.#clients.forEach((client, clientId) => {
 				if (client.ws.readyState === client.ws.OPEN) {
 					try {
 						client.ws.ping();
@@ -539,14 +597,14 @@ export class OptimizationWebSocketServer extends EventEmitter {
 							`Health check failed for client ${clientId}:`,
 							error
 						);
-						this.handleClientDisconnect(
+						this.#handleClientDisconnect(
 							clientId,
 							1011,
 							"Health check failed"
 						);
 					}
 				} else {
-					this.handleClientDisconnect(
+					this.#handleClientDisconnect(
 						clientId,
 						1006,
 						"Connection lost"
@@ -561,7 +619,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @private
 	 * @returns {string} A unique client ID.
 	 */
-	generateClientId() {
+	#generateClientId() {
 		return `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 	}
 
@@ -571,19 +629,20 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * @public
 	 */
 	getStats() {
-		const activeClients = Array.from(this.clients.values()).map(
-			(client) => ({
-				id: client.id,
-				ip: client.ip,
-				connectedAt: client.connectedAt,
-				subscriptions: Array.from(client.subscriptions),
-				authenticated: client.authenticated || false,
-			})
+		const activeClients = Array.from(this.#clients.values()).map(
+			(client) =>
+				client && {
+					// Add a check in case a client is evicted during iteration
+					id: client.id,
+					ip: client.ip,
+					connectedAt: client.connectedAt,
+					subscriptions: Array.from(client.subscriptions),
+					authenticated: client.authenticated || false,
+				}
 		);
 
 		return {
-			...this.metrics,
-			activeClients: activeClients.length,
+			...this.#metrics?.getAllAsObject(),
 			clients: activeClients,
 			uptime: process.uptime(),
 		};
@@ -597,15 +656,20 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	async shutdown() {
 		console.log("🛑 Shutting down WebSocket server...");
 
+		if (this.#healthCheckInterval) {
+			clearInterval(this.#healthCheckInterval);
+			this.#healthCheckInterval = null;
+		}
+
 		// Notify all clients about shutdown
-		this.broadcast({
+		this.#broadcast({
 			type: "server_shutdown",
 			message: "Server is shutting down",
 			timestamp: new Date().toISOString(),
 		});
 
 		// Close all client connections
-		this.clients.forEach((client, clientId) => {
+		this.#clients.forEach((client, clientId) => {
 			try {
 				client.ws.close(1001, "Server shutdown");
 			} catch (error) {
@@ -614,56 +678,17 @@ export class OptimizationWebSocketServer extends EventEmitter {
 		});
 
 		// Close WebSocket server
-		if (this.wss) {
+		if (this.#wss) {
 			await new Promise((resolve) => {
-				this.wss.close(() => {
+				this.#wss.close(() => {
 					console.log("✅ WebSocket server closed");
 					resolve();
 				});
 			});
 		}
 
-		this.clients.clear();
+		this.#clients?.clear();
 	}
-}
-
-// Express middleware for WebSocket integration
-/**
- * Creates an Express middleware that attaches the `OptimizationWebSocketServer` instance
- * to the `req` object, making it accessible in subsequent route handlers.
- * @param {import('./DatabaseOptimizer.js').DatabaseOptimizer} optimizer - The DatabaseOptimizer instance.
- * @returns {import('express').RequestHandler} The Express middleware function.
- */
-export function createOptimizationWebSocketMiddleware(optimizer) {
-	return function optimizationWebSocketMiddleware(req, res, next) {
-		// Add WebSocket server reference to request
-		req.optimizationWS = req.app.get("optimizationWS");
-		next();
-	};
-}
-
-// Express route for WebSocket stats
-/**
- * Creates an Express route handler to expose WebSocket server statistics.
- * @param {OptimizationWebSocketServer} wsServer - The OptimizationWebSocketServer instance.
- * @returns {import('express').RequestHandler} The Express route handler function.
- */
-export function createWebSocketStatsRoute(wsServer) {
-	return function getWebSocketStats(req, res) {
-		try {
-			const stats = wsServer.getStats();
-			res.json({
-				success: true,
-				stats,
-				timestamp: new Date().toISOString(),
-			});
-		} catch (error) {
-			res.status(500).json({
-				success: false,
-				error: error.message,
-			});
-		}
-	};
 }
 
 export default OptimizationWebSocketServer;

@@ -8,11 +8,6 @@
  * and the user's security context. It acts as a factory for the `ModularOfflineStorage` class.
  *
  * @property {Map<string, Function>} _loadedModules - A cache for loaded module constructors.
- * @property {StorageLoaderConfig} _config - The configuration for the loader.
- * @property {boolean} _ready - A flag indicating if the loader is initialized.
- * @property {Map<string, Function[]>|null} _listeners - A map for event listeners.
- * @property {import('../security/ClassificationCrypto.js').ClassificationCrypto|null} crypto - The crypto router instance.
- * @property {import('../security/MACEngine.js').MACEngine|null} _mac - The Mandatory Access Control engine instance.
  *
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
@@ -20,23 +15,6 @@
 import { DateCore } from "@utils/DateUtils.js";
 
 import { constantTimeCheck } from "../security/ct.js"; // timing-channel padding
-import { KeyringAdapter } from "../security/KeyringAdapter.js";
-
-/**
- * @description These imports are optional. If the cryptographic modules are not wired or available,
- * the StorageLoader will still function, but without encryption capabilities.
- * @type {typeof import("../security/ClassificationCrypto.js").ClassificationCrypto | null}
- */
-let ClassificationCrypto = null;
-
-try {
-	/** @description Dynamically import cryptographic classes. */
-	// KeyringAdapter and its dependencies are now imported statically.
-	const cc = await import("../security/ClassificationCrypto.js");
-	ClassificationCrypto = cc.ClassificationCrypto;
-} catch {
-	// Crypto is optional; we’ll degrade gracefully when not present.
-}
 
 /**
  * @typedef {object} StorageLoaderConfig
@@ -70,42 +48,27 @@ try {
  * **Composability** and **Extensibility** pillars by using a data-driven approach to build module stacks.
  */
 export class StorageLoader {
-	/**
-	 * A cache for loaded module constructors.
-	 * @type {Map<string, Function>}
-	 * @private
-	 */
-	/** @type {Map<string, Function>} */
-	_loadedModules = new Map();
-	/**
-	 * The configuration for the loader.
-	 * @type {StorageLoaderConfig}
-	 * @private
-	 */
-	/** @type {StorageLoaderConfig} */
-	_config;
-	/**
-	 * A flag indicating if the loader is initialized.
-	 * @type {boolean}
-	 * @private
-	 */
-	/** @type {boolean} */
-	_ready = false;
-
-	/** Optional event emitter hooks */
-	/**
-	 * A map for event listeners.
-	 * @type {Map<string, Function[]>|null}
-	 * @private
-	 */
-	_listeners = null;
+	/** @private @type {Map<string, Function>} */
+	#loadedModules = new Map();
+	/** @private @type {StorageLoaderConfig} */
+	#config;
+	/** @private @type {boolean} */
+	#ready = false;
+	/** @private @type {import('../HybridStateManager.js').default} */
+	#stateManager;
 
 	/**
 	 * Creates an instance of StorageLoader.
-	 * @param {StorageLoaderConfig} [options={}] - Configuration options for the loader.
+	 * @param {object} context - The application context.
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {StorageLoaderConfig} [context.options={}] - Configuration options for the loader.
 	 */
-	constructor(options = {}) {
-		this._config = {
+	constructor({ stateManager, ...options }) {
+		if (!stateManager) {
+			throw new Error("StorageLoader requires a stateManager instance.");
+		}
+		this.#stateManager = stateManager;
+		this.#config = {
 			baseURL: options.baseURL ?? "/src/core/storage/modules/",
 			preloadModules: options.preloadModules ?? [],
 			demoMode: options.demoMode ?? false,
@@ -140,53 +103,13 @@ export class StorageLoader {
 			...options,
 		};
 
-		// Optional crypto router (only if available)
-		// Use the KeyringAdapter to select dev or prod keyring.
-		this.crypto = ClassificationCrypto
-			? new ClassificationCrypto({
-					keyring: new KeyringAdapter({
-						mode: this._config.demoMode ? "dev" : "prod",
-					}),
-				})
-			: null;
-
-		// Pre-bind MAC for convenience
-		this._mac = this._config.mac || null;
-
+		this.#audit("STORAGE_LOADER_CREATED", {
+			demoMode: this.#config.demoMode,
+		});
 		console.log(
-			"[StorageLoader] Initialized with demoMode:",
-			this._config.demoMode
+			"[StorageLoader] Created with demoMode:",
+			this.#config.demoMode
 		);
-	}
-
-	// ---------------------------------------------------------------------------
-	// Event system (tiny)
-	/**
-	 * Registers a callback for a specific event.
-	 * @public
-	 * @param {string} event - The name of the event.
-	 * @param {Function} cb - The callback function to execute.
-	 */
-	on(event, cb) {
-		if (!this._listeners) this._listeners = new Map();
-		if (!this._listeners.has(event)) this._listeners.set(event, []);
-		this._listeners.get(event).push(cb);
-	}
-	/**
-	 * Emits an event, triggering all registered listeners.
-	 * @public
-	 * @param {string} event - The name of the event to emit.
-	 * @param {*} data - The data to pass to the listeners.
-	 */
-	emit(event, data) {
-		if (!this._listeners?.has(event)) return;
-		for (const cb of this._listeners.get(event)) {
-			try {
-				cb(data);
-			} catch (e) {
-				console.error("[StorageLoader] Event handler error:", e);
-			}
-		}
 	}
 
 	// ---------------------------------------------------------------------------
@@ -197,17 +120,17 @@ export class StorageLoader {
 	 * @returns {Promise<this>} The initialized StorageLoader instance.
 	 */
 	async init() {
-		if (this._ready) return this;
-		await this._loadCoreValidation();
+		if (this.#ready) return this;
+		await this.#loadCoreValidation();
 		// Preload requested modules (best-effort; ignore failures in demo/dev)
-		for (const name of this._config.preloadModules) {
+		for (const name of this.#config.preloadModules) {
 			try {
-				await this._loadModule(name);
+				await this.#loadModule(name);
 			} catch (e) {
 				console.warn("[StorageLoader] Preload failed:", name, e);
 			}
 		}
-		this._ready = true;
+		this.#ready = true;
 		console.log("[StorageLoader] Ready with dynamic module loading");
 		return this;
 	}
@@ -220,16 +143,14 @@ export class StorageLoader {
 	 * @returns {Promise<ModularOfflineStorage>} A promise that resolves with an initialized `ModularOfflineStorage` instance.
 	 */
 	async createStorage(authContext = {}, options = {}) {
-		if (!this._ready) await this.init();
+		if (!this.#ready) await this.init();
 
-		const needs = await this._analyzeRequirements(authContext, options);
-		const classes = await this._loadRequiredModules(needs);
+		const needs = await this.#analyzeRequirements(authContext, options);
+		const classes = await this.#loadRequiredModules(needs);
 
-		const storage = new ModularOfflineStorage(classes, {
-			demoMode: !!this._config.demoMode,
-			mac: this._mac,
-			crypto: this.crypto, // optional
-			indexeddb: options.indexeddbConfig, // pass to adapter
+		const storage = new ModularOfflineStorage({
+			moduleClasses: classes,
+			stateManager: this.#stateManager,
 		});
 
 		await storage.init();
@@ -245,10 +166,11 @@ export class StorageLoader {
 	 * @param {StorageCreationOptions} options - The options for creating the storage instance.
 	 * @returns {Promise<object>} An object detailing the required modules for each category (core, security, crypto, sync).
 	 */
-	async _analyzeRequirements(authContext, options) {
-		// 1) demo
-		if (this._config.demoMode) {
-			return { ...this._config.moduleStacks.demo };
+	async #analyzeRequirements(authContext, options) {
+		// 1) demo mode check
+		if (this.#config.demoMode) {
+			this.#audit("STORAGE_PROFILE_SELECTED", { profile: "demo" });
+			return { ...this.#config.moduleStacks.demo };
 		}
 
 		// 2) security profile (RBAC+classification-based)
@@ -256,13 +178,14 @@ export class StorageLoader {
 			authContext?.clearanceLevel || "internal"
 		).toLowerCase();
 		let profile = "basic";
-		if (this._isNATO(level)) profile = "nato";
-		else if (this._isHigh(level)) profile = "high_security";
+		if (this.#isNATO(level)) profile = "nato";
+		else if (this.#isHigh(level)) profile = "high_security";
 
+		this.#audit("STORAGE_PROFILE_SELECTED", { profile, level });
 		const base = JSON.parse(
 			JSON.stringify(
-				this._config.moduleStacks[profile] ||
-					this._config.moduleStacks.basic
+				this.#config.moduleStacks[profile] ||
+					this.#config.moduleStacks.basic
 			)
 		);
 
@@ -304,17 +227,17 @@ export class StorageLoader {
 	 * @param {object} requirements - An object detailing the required modules.
 	 * @returns {Promise<object>} An object containing the loaded module classes, ready for instantiation.
 	 */
-	async _loadRequiredModules(requirements) {
+	async #loadRequiredModules(requirements) {
 		const modules = {
-			validation: await this._loadValidationStack(
+			validation: await this.#loadValidationStack(
 				requirements.core || []
 			),
-			security: await this._loadSecurityStack(
+			security: await this.#loadSecurityStack(
 				requirements.security || []
 			),
-			crypto: await this._loadCryptoStack(requirements.crypto || []),
-			sync: await this._loadSyncStack(requirements.sync || []),
-			indexeddb: await this._ensureIndexedDB(
+			crypto: await this.#loadCryptoStack(requirements.crypto || []),
+			sync: await this.#loadSyncStack(requirements.sync || []),
+			indexeddb: await this.#ensureIndexedDB(
 				requirements.indexeddb || ["indexeddb-adapter"]
 			),
 		};
@@ -327,26 +250,28 @@ export class StorageLoader {
 	 * @param {string[]} req - An array of required validator module names.
 	 * @returns {Promise<import('./modules/validation-stack.js').default>} An initialized `ValidationStack` instance.
 	 */
-	async _loadValidationStack(req) {
-		const ValidationStack = await this._loadModule("validation-stack");
+	async #loadValidationStack(req) {
+		const ValidationStack = await this.#loadModule("validation-stack");
 		const validators = [];
 
 		if (req.includes("strict-validator")) {
 			try {
-				validators.push(await this._loadModule("strict-validator"));
+				validators.push(await this.#loadModule("strict-validator"));
 			} catch (e) {
 				console.warn("[StorageLoader] strict-validator missing:", e);
 			}
 		}
 		if (req.includes("custom-validator")) {
 			try {
-				validators.push(await this._loadModule("custom-validator"));
+				validators.push(await this.#loadModule("custom-validator"));
 			} catch (e) {
 				console.warn("[StorageLoader] custom-validator missing:", e);
 			}
 		}
 
-		return new ValidationStack(validators);
+		return new ValidationStack({
+			stateManager: this.#stateManager,
+		});
 	}
 
 	/**
@@ -355,7 +280,7 @@ export class StorageLoader {
 	 * @param {string[]} req - An array of required security module names.
 	 * @returns {Promise<object|null>} An initialized security module instance.
 	 */
-	async _loadSecurityStack(req) {
+	async #loadSecurityStack(req) {
 		if (!req?.length) return null;
 		let SecurityClass = null;
 		const extras = [];
@@ -366,11 +291,11 @@ export class StorageLoader {
 				r === "enterprise-security" ||
 				r === "nato-security"
 			) {
-				SecurityClass = await this._loadModule(r);
+				SecurityClass = await this.#loadModule(r);
 			} else {
 				// supplementary (e.g., compartment-security)
 				try {
-					extras.push(await this._loadModule(r));
+					extras.push(await this.#loadModule(r));
 				} catch (e) {
 					console.warn(
 						"[StorageLoader] security extra missing:",
@@ -380,7 +305,10 @@ export class StorageLoader {
 				}
 			}
 		}
-		return SecurityClass ? new SecurityClass(extras) : null;
+		// V8.0 Parity: Pass stateManager to the constructor.
+		return SecurityClass
+			? new SecurityClass({ stateManager: this.#stateManager, extras })
+			: null;
 	}
 
 	/**
@@ -389,7 +317,7 @@ export class StorageLoader {
 	 * @param {string[]} req - An array of required crypto module names.
 	 * @returns {Promise<object|null>} An initialized crypto module instance.
 	 */
-	async _loadCryptoStack(req) {
+	async #loadCryptoStack(req) {
 		if (!req?.length) return null;
 		let CryptoClass = null;
 		const extras = [];
@@ -401,16 +329,19 @@ export class StorageLoader {
 				r === "aes-crypto" ||
 				r === "zero-knowledge-crypto"
 			) {
-				CryptoClass = await this._loadModule(r);
+				CryptoClass = await this.#loadModule(r);
 			} else {
 				try {
-					extras.push(await this._loadModule(r));
+					extras.push(await this.#loadModule(r));
 				} catch (e) {
 					console.warn("[StorageLoader] crypto extra missing:", r, e);
 				}
 			}
 		}
-		return CryptoClass ? new CryptoClass(extras) : null;
+		// V8.0 Parity: Pass stateManager to the constructor.
+		return CryptoClass
+			? new CryptoClass({ stateManager: this.#stateManager, extras })
+			: null;
 	}
 
 	/**
@@ -419,26 +350,20 @@ export class StorageLoader {
 	 * @param {string[]} req - An array of required sync module names.
 	 * @returns {Promise<import('./modules/sync-stack.js').default|null>} An initialized `SyncStack` instance.
 	 */
-	async _loadSyncStack(req) {
+	async #loadSyncStack(req) {
 		if (!req.includes("sync-stack")) return null; // guard: only build if requested
 
-		const SyncStack = await this._loadModule("sync-stack");
+		const SyncStack = await this.#loadModule("sync-stack");
 
 		// Filter out the stack itself; pass only concrete submodules
 		const submodules = [];
 		for (const name of req) {
 			if (name === "sync-stack") continue;
-			submodules.push(await this._loadModule(name));
+			submodules.push(await this.#loadModule(name));
 		}
 
-		return new SyncStack(submodules, {
-			// You can thread extra config knobs here if needed
-			maxRetries: 3,
-			retryDelay: 1000,
-			batchSize: 50,
-			offlineQueueLimit: 1000,
-			enableConflictResolution: true,
-		});
+		// V8.0 Parity: Pass stateManager to the constructor.
+		return new SyncStack({ stateManager: this.#stateManager, submodules });
 	}
 
 	/**
@@ -447,10 +372,10 @@ export class StorageLoader {
 	 * @param {string[]} req - An array containing the name of the adapter module.
 	 * @returns {Promise<Function>} The IndexedDB adapter class.
 	 */
-	async _ensureIndexedDB(req) {
+	async #ensureIndexedDB(req) {
 		// Require at least the adapter
 		const name = req[0] || "indexeddb-adapter";
-		return await this._loadModule(name);
+		return await this.#loadModule(name);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -462,19 +387,19 @@ export class StorageLoader {
 	 * @returns {Promise<Function>} The default or named export (class) from the module.
 	 * @throws {Error} If the module fails to load or has no valid export.
 	 */
-	async _loadModule(moduleName) {
-		if (this._loadedModules.has(moduleName)) {
-			return this._loadedModules.get(moduleName);
+	async #loadModule(moduleName) {
+		if (this.#loadedModules.has(moduleName)) {
+			return this.#loadedModules.get(moduleName);
 		}
 		console.log("[StorageLoader] Loading module:", moduleName);
 
-		const url = `${this._config.baseURL}${moduleName}.js`;
+		const url = `${this.#config.baseURL}${moduleName}.js`;
 		try {
 			const mod = await import(/* @vite-ignore */ url);
-			const Klass = mod.default || mod[this._toPascalCase(moduleName)];
+			const Klass = mod.default || mod[this.#toPascalCase(moduleName)];
 			if (!Klass) throw new Error("No default or named export found");
-			if (this._config.cacheModules)
-				this._loadedModules.set(moduleName, Klass);
+			if (this.#config.cacheModules)
+				this.#loadedModules.set(moduleName, Klass);
 			return Klass;
 		} catch (e) {
 			console.error(
@@ -493,8 +418,8 @@ export class StorageLoader {
 	 * @private
 	 * @returns {Promise<void>}
 	 */
-	async _loadCoreValidation() {
-		if (this._loadedModules.has("core-validation")) return;
+	async #loadCoreValidation() {
+		if (this.#loadedModules.has("core-validation")) return;
 
 		class CoreValidation {
 			validateBasic(entity) {
@@ -506,7 +431,7 @@ export class StorageLoader {
 				return { valid: errors.length === 0, errors };
 			}
 		}
-		this._loadedModules.set("core-validation", CoreValidation);
+		this.#loadedModules.set("core-validation", CoreValidation);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -517,7 +442,7 @@ export class StorageLoader {
 	 * @param {string} level - The security level string.
 	 * @returns {boolean}
 	 */
-	_isNATO(level) {
+	#isNATO(level) {
 		return [
 			"nato_restricted",
 			"nato_confidential",
@@ -531,14 +456,28 @@ export class StorageLoader {
 	 * @param {string} level - The security level string.
 	 * @returns {boolean}
 	 */
-	_isHigh(level) {
+	#isHigh(level) {
 		return ["confidential", "secret", "top_secret"].includes(level);
 	}
-	_toPascalCase(s) {
+	#toPascalCase(s) {
 		return String(s)
 			.split("-")
 			.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
 			.join("");
+	}
+
+	/**
+	 * Logs an audit event via the state manager's forensic logger.
+	 * @private
+	 * @param {string} eventType - The type of the event.
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		this.#stateManager?.managers?.forensicLogger?.logAuditEvent(
+			eventType,
+			data,
+			{ component: "StorageLoader" }
+		);
 	}
 
 	// Getters
@@ -548,7 +487,7 @@ export class StorageLoader {
 	 * @returns {boolean}
 	 */
 	get isReady() {
-		return this._ready;
+		return this.#ready;
 	}
 	/**
 	 * Gets a list of all loaded module names.
@@ -556,7 +495,7 @@ export class StorageLoader {
 	 * @returns {string[]}
 	 */
 	get loadedModules() {
-		return Array.from(this._loadedModules.keys());
+		return Array.from(this.#loadedModules.keys());
 	}
 }
 
@@ -570,70 +509,60 @@ export class StorageLoader {
  * and manages polyinstantiation for multi-level security.
  */
 class ModularOfflineStorage {
-	/**
-	 * @private
-	 * @type {object}
-	 */
-	_modules = {};
+	/** @private @type {Map<string, object>} */
+	#modules = new Map();
 	/** @private @type {boolean} */
-	_ready = false;
+	#isReady = false;
+	/** @private @type {import('../HybridStateManager.js').default|null} */
+	#stateManager;
+
 	/**
 	 * Creates an instance of ModularOfflineStorage.
-	 * @param {object} moduleClasses - An object containing the loaded module classes or instances.
-	 * @param {object} config - Configuration options for the storage.
-	 * @param {boolean} config.demoMode - If true, enables demo-specific behaviors.
-	 * @param {import('../security/MACEngine.js').MACEngine|null} config.mac - An instance of the MAC engine.
-	 * @param {ClassificationCrypto|null} config.crypto - The crypto instance for encryption/decryption.
-	 * @param {object} [config.indexeddb] - Configuration for the IndexedDB adapter.
+	 * @param {object} context - The application context.
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} context.moduleClasses - An object containing the loaded module classes.
 	 */
-	constructor(moduleClasses, config) {
-		this._mac = config.mac || null;
-		this._crypto = config.crypto || null;
-		this._demo = !!config.demoMode;
-
-		this.stateManager = null; // HSM may bind later
+	constructor({ stateManager, moduleClasses }) {
+		if (!stateManager) {
+			throw new Error(
+				"ModularOfflineStorage requires a stateManager instance."
+			);
+		}
+		this.#stateManager = stateManager;
 
 		// Instantiate modules
 		for (const type of Object.keys(moduleClasses)) {
 			const Cls = moduleClasses[type];
 			if (!Cls) continue;
 
-			if (type === "indexeddb") {
-				// Pass IndexedDB config only to adapter
-				this._modules[type] = new Cls(config.indexeddb || {});
-			} else if (typeof Cls === "function") {
-				this._modules[type] = new Cls({});
-			} else {
-				// Some stacks may already be instances
-				this._modules[type] = Cls;
-			}
-		}
-	}
+			// V8.0 Parity: All modules receive the stateManager context.
+			const moduleContext = { stateManager: this.#stateManager };
 
-	/**
-	 * Registers a callback for a specific event.
-	 * @param {string} event - The name of the event.
-	 * @param {Function} cb - The callback function to execute.
-	 */
-	on(event, cb) {
-		if (!this._listeners) this._listeners = new Map();
-		if (!this._listeners.has(event)) this._listeners.set(event, []);
-		this._listeners.get(event).push(cb);
-	}
-	/**
-	 * Emits an event, triggering all registered listeners.
-	 * @param {string} event - The name of the event to emit.
-	 * @param {*} data - The data to pass to the listeners.
-	 */
-	emit(event, data) {
-		if (!this._listeners?.has(event)) return;
-		for (const cb of this._listeners.get(event)) {
-			try {
-				cb(data);
-			} catch (e) {
-				console.error("[ModularOfflineStorage] Event error:", e);
+			if (type === "indexeddb") {
+				const indexeddbConfig =
+					this.#stateManager.config.storageConfig?.indexeddb;
+				// Pass IndexedDB config only to adapter
+				this.#modules.set(
+					type,
+					new Cls({
+						...(indexeddbConfig || {}),
+						...moduleContext,
+					})
+				);
+			} else if (typeof Cls === "function") {
+				// It's a class constructor
+				this.#modules.set(type, new Cls(moduleContext));
+			} else {
+				this.#modules.set(type, Cls); // Some stacks may already be instances
 			}
 		}
+		this.#audit("MODULAR_STORAGE_CREATED", {
+			modules: this.modules,
+			demoMode: this.#isDemoMode,
+		});
+	}
+	get #isDemoMode() {
+		return this.#stateManager.config.demoMode === true;
 	}
 
 	/**
@@ -642,43 +571,47 @@ class ModularOfflineStorage {
 	 * @returns {Promise<this>} The initialized storage instance.
 	 */
 	async init() {
-		if (this._ready) return this;
+		if (this.#isReady) return this;
 		// Deterministic init order
 		const order = ["indexeddb", "crypto", "security", "validation", "sync"];
-		for (const k of order) {
-			const m = this._modules[k];
-			if (m?.init && typeof m.init === "function") {
+		for (const moduleName of order) {
+			const m = this.#modules.get(moduleName);
+			if (m && typeof m.init === "function") {
 				await m.init();
 			}
 		}
-		this._ready = true;
+		this.#isReady = true;
 		console.log("[ModularOfflineStorage] Initialized with dynamic modules");
 		return this;
 	}
 
+	// -------------------------------------------------------------------------
+	// V8.0 Parity: MAC and Crypto helpers now derive dependencies from stateManager
 	/**
-	 * Binds a state manager to this instance and all sub-modules that support it.
-	 * @public
-	 * @param {object} hsm - The Hybrid State Manager instance.
+	 * @private
+	 * @returns {import('../security/MACEngine.js').MACEngine|null}
 	 */
-	bindStateManager(hsm) {
-		this.stateManager = hsm;
-		for (const m of Object.values(this._modules)) {
-			if (typeof m?.bindStateManager === "function")
-				m.bindStateManager(hsm);
-		}
+	get #mac() {
+		return this.#stateManager?.managers?.securityManager?.mac;
 	}
 
-	// -------------------------------------------------------------------------
-	// MAC helpers
+	/**
+	 * Retrieves the crypto router from the security manager.
+	 * @private
+	 * @returns {object|null}
+	 */
+	#getCryptoRouter() {
+		return this.#stateManager?.managers?.securityManager?.cryptoRouter;
+	}
+
 	/**
 	 * Retrieves the subject's security clearance from the MAC engine.
 	 * @private
 	 * @returns {{level: string, compartments: Set<string>}} The subject's security label.
 	 */
-	_subject() {
+	#subject() {
 		return (
-			this._mac?.subject?.() || {
+			this.#mac?.subject() || {
 				level: "unclassified",
 				compartments: new Set(),
 			}
@@ -691,7 +624,7 @@ class ModularOfflineStorage {
 	 * @param {object} [options] - Additional options.
 	 * @returns {{level: string, compartments: Set<string>}} The object's security label.
 	 */
-	_label(obj, { storeName } = {}) {
+	#getLabel(obj, { storeName } = {}) {
 		if (!obj || typeof obj !== "object")
 			return { level: "unclassified", compartments: new Set() };
 		const isPoly =
@@ -710,7 +643,7 @@ class ModularOfflineStorage {
 	 * @param {string} level - The classification level string.
 	 * @returns {number} The numeric rank.
 	 */
-	_rank(level) {
+	#getRank(level) {
 		const order = [
 			"unclassified",
 			"confidential",
@@ -729,14 +662,14 @@ class ModularOfflineStorage {
 	 * @param {object[]} rows - An array of polyinstantiated entity instances.
 	 * @returns {object|null} The merged logical entity.
 	 */
-	_mergePolyRows(rows) {
+	#mergePolyRows(rows) {
 		if (!Array.isArray(rows) || rows.length === 0) return null;
 
 		// 1. Sort rows from highest classification to lowest. This is crucial.
 		const sorted = [...rows].sort(
 			(a, b) =>
-				this._rank(b.classification_level) -
-				this._rank(a.classification_level)
+				this.#getRank(b.classification_level) -
+				this.#getRank(a.classification_level)
 		);
 
 		// 2. The highest classification row serves as the base for top-level properties.
@@ -780,7 +713,7 @@ class ModularOfflineStorage {
 		base.merged_at = new Date().toISOString();
 
 		// Info flow (optional)
-		this.stateManager?.informationFlow?.derived(
+		this.#stateManager?.informationFlow?.derived(
 			rows.map((r) => ({
 				level: r.classification_level,
 				compartments: r.compartments,
@@ -803,14 +736,16 @@ class ModularOfflineStorage {
 	 * @returns {Promise<IDBValidKey>} The key of the stored item.
 	 */
 	async put(storeName, item) {
-		const idx = this._modules.indexeddb;
+		// V8.0 Parity: Simplified logic
+		const idx = this.#modules.get("indexeddb");
 		if (!idx?.put) throw new Error("IndexedDB adapter not loaded");
 
 		// MAC write (no write down)
-		if (!this._demo && this._mac) {
-			const canWrite = this._mac.canWrite(
-				this._subject(),
-				this._label(item, { storeName })
+		const mac = this.#mac;
+		if (!this.#isDemoMode && mac) {
+			const canWrite = this.#mac.canWrite(
+				this.#subject(),
+				this.#getLabel(item, { storeName })
 			);
 			if (!canWrite) {
 				throw new Error(
@@ -835,10 +770,11 @@ class ModularOfflineStorage {
 			// could be added here, but the current model relies on the MAC check as the primary guard.
 		}
 
-		if (!this._demo && this._crypto) {
-			// Encrypt either whole record or instance_data for poly
+		const cryptoRouter = this.#getCryptoRouter();
+		if (!this.#isDemoMode && cryptoRouter) {
+			// Encrypt either the whole record or just instance_data for polyinstantiated entities
 			const isPoly = storeName === "objects_polyinstantiated";
-			const label = this._label(item, { storeName });
+			const label = this.#getLabel(item, { storeName });
 
 			if (isPoly && record.instance_data) {
 				const pt = new TextEncoder().encode(
@@ -856,7 +792,7 @@ class ModularOfflineStorage {
 				const aad = new TextEncoder().encode(
 					JSON.stringify(aadPayload)
 				);
-				const env = await this._crypto.encrypt(label, pt, aad);
+				const env = await cryptoRouter.encrypt(label, pt, aad);
 				record = {
 					...record,
 					encrypted: true,
@@ -878,16 +814,16 @@ class ModularOfflineStorage {
 				const aad = new TextEncoder().encode(
 					JSON.stringify(aadPayload)
 				);
-				const env = await this._crypto.encrypt(label, pt, aad);
+				const env = await cryptoRouter.encrypt(label, pt, aad);
 				record.envelope = env;
 				record.encrypted = true;
 			}
 		}
 
 		const res = await idx.put(storeName, record);
-		this.stateManager?.emit?.("entitySaved", {
-			storeName,
-			item: record, // `item` key doesn't match `record` variable, so no shorthand here.
+		this.#stateManager.emit("entitySaved", {
+			store: storeName,
+			item: record,
 		});
 		return res;
 	}
@@ -903,7 +839,8 @@ class ModularOfflineStorage {
 	 * @returns {Promise<object|null>} The decrypted and merged item, or null.
 	 */
 	async get(storeName, id) {
-		const idx = this._modules.indexeddb;
+		// V8.0 Parity: Simplified logic
+		const idx = this.#modules.get("indexeddb");
 		if (!idx?.get) throw new Error("IndexedDB adapter not loaded");
 
 		return constantTimeCheck(async () => {
@@ -914,11 +851,11 @@ class ModularOfflineStorage {
 					"logical_id",
 					id
 				);
-				const readable = this._filterReadable(rows || [], storeName);
+				const readable = this.#filterReadable(rows || [], storeName);
 				const dec = await Promise.all(
-					readable.map((r) => this._maybeDecryptPoly(r))
+					readable.map((r) => this.#maybeDecryptPoly(r))
 				);
-				return this._mergePolyRows(dec);
+				return this.#mergePolyRows(dec);
 			}
 
 			// Normal store
@@ -926,17 +863,18 @@ class ModularOfflineStorage {
 			if (!raw) return null;
 
 			// MAC read (no read up)
-			if (!this._demo && this._mac) {
-				const canRead = this._mac.canRead(
-					this._subject(),
-					this._label(raw, { storeName })
+			const mac = this.#mac;
+			if (!this.#isDemoMode && mac) {
+				const canRead = mac.canRead(
+					this.#subject(),
+					this.#getLabel(raw, { storeName })
 				);
 				if (!canRead) {
 					// In a constant-time check, this will just return null after a delay.
 					throw new Error("MAC_READ_DENIED");
 				}
 			}
-			return this._maybeDecryptNormal(raw);
+			return this.#maybeDecryptNormal(raw);
 		}, 100);
 	}
 
@@ -948,7 +886,8 @@ class ModularOfflineStorage {
 	 * @returns {Promise<void>}
 	 */
 	async delete(storeName, id) {
-		const idx = this._modules.indexeddb;
+		// V8.0 Parity: Simplified logic
+		const idx = this.#modules.get("indexeddb");
 		if (!idx?.delete) throw new Error("IndexedDB adapter not loaded");
 
 		return constantTimeCheck(async () => {
@@ -960,7 +899,7 @@ class ModularOfflineStorage {
 					"logical_id",
 					logicalId
 				);
-				const readableRows = this._filterReadable(
+				const readableRows = this.#filterReadable(
 					rows || [],
 					storeName
 				);
@@ -968,12 +907,13 @@ class ModularOfflineStorage {
 				if (readableRows.length === 0) return; // Nothing to delete.
 
 				// MAC check: Treat delete like a write. User must dominate all readable instances.
-				if (!this._demo && this._mac) {
-					const subject = this._subject();
+				const mac = this.#mac;
+				if (!this.#isDemoMode && mac) {
+					const subject = this.#subject();
 					for (const row of readableRows) {
-						const canDelete = this._mac.canWrite(
+						const canDelete = mac.canWrite(
 							subject,
-							this._label(row, { storeName })
+							this.#getLabel(row, { storeName })
 						);
 						if (!canDelete) {
 							throw new Error(
@@ -989,7 +929,7 @@ class ModularOfflineStorage {
 				);
 				await Promise.all(deletePromises);
 
-				this.stateManager?.emit?.("entityDeleted", {
+				this.#stateManager.emit("entityDeleted", {
 					store: storeName,
 					id: logicalId,
 				});
@@ -1001,10 +941,11 @@ class ModularOfflineStorage {
 			if (!item) return; // Item doesn't exist or is not readable.
 
 			// MAC check: Treat delete like a write.
-			if (!this._demo && this._mac) {
-				const canDelete = this._mac.canWrite(
-					this._subject(),
-					this._label(item, { storeName })
+			const mac = this.#mac;
+			if (!this.#isDemoMode && mac) {
+				const canDelete = mac.canWrite(
+					this.#subject(),
+					this.#getLabel(item, { storeName })
 				);
 				if (!canDelete) {
 					// This will be caught by constantTimeCheck and return a uniform error.
@@ -1013,8 +954,8 @@ class ModularOfflineStorage {
 			}
 
 			await idx.delete(storeName, id);
-			this.stateManager?.emit?.("entityDeleted", {
-				storeName,
+			this.#stateManager.emit("entityDeleted", {
+				store: storeName,
 				id,
 			});
 		}, 100);
@@ -1029,18 +970,18 @@ class ModularOfflineStorage {
 	 * @returns {Promise<object[]>} An array of readable items.
 	 */
 	async query(storeName, index, value) {
-		const idx = this._modules.indexeddb;
+		const idx = this.#modules.get("indexeddb");
 		if (!idx?.queryByIndex) throw new Error("IndexedDB adapter not loaded");
 
 		return constantTimeCheck(async () => {
 			const out = await idx.queryByIndex(storeName, index, value);
-			const readable = this._filterReadable(out || [], storeName);
+			const readable = this.#filterReadable(out || [], storeName);
 			const decrypted = await Promise.all(
 				readable.map((r) => {
 					if (storeName === "objects_polyinstantiated") {
-						return this._maybeDecryptPoly(r);
+						return this.#maybeDecryptPoly(r);
 					}
-					return this._maybeDecryptNormal(r);
+					return this.#maybeDecryptNormal(r);
 				})
 			);
 			return decrypted;
@@ -1054,18 +995,18 @@ class ModularOfflineStorage {
 	 * @returns {Promise<object[]>} An array of all readable items.
 	 */
 	async getAll(storeName) {
-		const idx = this._modules.indexeddb;
+		const idx = this.#modules.get("indexeddb");
 		if (!idx?.getAll) throw new Error("IndexedDB adapter not loaded");
 
 		return constantTimeCheck(async () => {
 			const out = await idx.getAll(storeName);
-			const readable = this._filterReadable(out || [], storeName);
+			const readable = this.#filterReadable(out || [], storeName);
 			const decrypted = await Promise.all(
 				readable.map((r) => {
 					if (storeName === "objects_polyinstantiated") {
-						return this._maybeDecryptPoly(r);
+						return this.#maybeDecryptPoly(r);
 					}
-					return this._maybeDecryptNormal(r);
+					return this.#maybeDecryptNormal(r);
 				})
 			);
 			return decrypted;
@@ -1084,7 +1025,7 @@ class ModularOfflineStorage {
 			return []; // History is only supported for polyinstantiated entities.
 		}
 
-		const idx = this._modules.indexeddb;
+		const idx = this.#modules.get("indexeddb");
 		if (!idx?.queryByIndex) throw new Error("IndexedDB adapter not loaded");
 
 		return constantTimeCheck(async () => {
@@ -1096,11 +1037,11 @@ class ModularOfflineStorage {
 			);
 
 			// 2. Filter out rows the user cannot read based on MAC policy.
-			const readableRows = this._filterReadable(allRows || [], storeName);
+			const readableRows = this.#filterReadable(allRows || [], storeName);
 
 			// 3. Decrypt the instance_data for each readable row.
 			const decryptedVersions = await Promise.all(
-				readableRows.map((row) => this._maybeDecryptPoly(row))
+				readableRows.map((row) => this.#maybeDecryptPoly(row))
 			);
 
 			// 4. Sort by update timestamp, newest first.
@@ -1117,9 +1058,10 @@ class ModularOfflineStorage {
 	 * @param {object} row - The raw row from the database.
 	 * @returns {Promise<object>} The row with its `instance_data` decrypted.
 	 */
-	async _maybeDecryptPoly(row) {
-		if (this._demo || !this._crypto || !row?.encrypted) return row;
-		const label = this._label(row, {
+	async #maybeDecryptPoly(row) {
+		const cryptoRouter = this.#getCryptoRouter();
+		if (this.#isDemoMode || !cryptoRouter || !row?.encrypted) return row;
+		const label = this.#getLabel(row, {
 			storeName: "objects_polyinstantiated",
 		});
 
@@ -1132,7 +1074,7 @@ class ModularOfflineStorage {
 			id: row.id,
 		};
 		const aad = new TextEncoder().encode(JSON.stringify(aadPayload));
-		const pt = await this._crypto.decrypt(
+		const pt = await cryptoRouter.decrypt(
 			label,
 			{
 				ciphertext: row.ciphertext,
@@ -1160,9 +1102,10 @@ class ModularOfflineStorage {
 	 * @param {object} row - The raw row from the database.
 	 * @returns {Promise<object>} The decrypted object.
 	 */
-	async _maybeDecryptNormal(row) {
-		if (this._demo || !this._crypto || !row?.encrypted) return row;
-		const label = this._label(row);
+	async #maybeDecryptNormal(row) {
+		const cryptoRouter = this.#getCryptoRouter();
+		if (this.#isDemoMode || !cryptoRouter || !row?.encrypted) return row;
+		const label = this.#getLabel(row);
 
 		// Reconstruct the AAD payload for verification.
 		const aadPayload = {
@@ -1170,7 +1113,7 @@ class ModularOfflineStorage {
 			id: row.id,
 		};
 		const aad = new TextEncoder().encode(JSON.stringify(aadPayload));
-		const pt = await this._crypto.decrypt(label, row.envelope, aad);
+		const pt = await cryptoRouter.decrypt(label, row.envelope, aad);
 		const obj = JSON.parse(new TextDecoder().decode(pt));
 		return obj;
 	}
@@ -1182,16 +1125,14 @@ class ModularOfflineStorage {
 	 * @param {string} storeName - The name of the store the entities belong to.
 	 * @returns {object[]} An array containing only the readable entities.
 	 */
-	_filterReadable(list, storeName) {
+	#filterReadable(list, storeName) {
 		if (!Array.isArray(list)) return [];
-		if (!this._mac) return list; // dev fallback when MAC not wired
-		const s = this._subject();
+		const mac = this.#mac;
+		if (!mac) return list; // dev fallback when MAC not wired
+		const s = this.#subject();
 		const out = [];
 		for (const it of list) {
-			const canRead = this._mac.canRead(
-				s,
-				this._label(it, { storeName })
-			);
+			const canRead = mac.canRead(s, this.#getLabel(it, { storeName }));
 			if (canRead) {
 				out.push(it);
 			}
@@ -1200,11 +1141,25 @@ class ModularOfflineStorage {
 	}
 
 	/**
+	 * Logs an audit event via the state manager's forensic logger.
+	 * @private
+	 * @param {string} eventType - The type of the event.
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		this.#stateManager?.managers?.forensicLogger?.logAuditEvent(
+			eventType,
+			data,
+			{ component: "ModularOfflineStorage" }
+		);
+	}
+
+	/**
 	 * Gets the names of all loaded modules.
 	 * @public
 	 * @returns {string[]}
 	 */
 	get modules() {
-		return Object.keys(this._modules);
+		return Array.from(this.#modules.keys());
 	}
 }

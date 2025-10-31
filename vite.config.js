@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { visualizer } from "rollup-plugin-visualizer";
 
 // Vitest config is integrated here
 export default defineConfig({
@@ -17,6 +18,13 @@ export default defineConfig({
 		minify: "esbuild",
 		assetsInlineLimit: 4096,
 		rollupOptions: {
+			plugins: [
+				visualizer({
+					filename: "dist/stats.html", // Output file for the visualization
+					open: true, // Automatically open in browser after build
+					gzipSize: true, // Show gzipped sizes
+				}),
+			],
 			output: {
 				manualChunks(id) {
 					if (id.includes("node_modules")) return "vendor";
@@ -41,7 +49,7 @@ export default defineConfig({
 	test: {
 		globals: true, // Use Vitest's globals (describe, test, expect)
 		environment: "jsdom", // Simulate a browser environment for tests
-		include: ["tests/unit/**/*.test.js"], // Specify where to find unit tests
+		include: ["tests/**/*.test.js"], // Specify where to find unit tests
 		setupFiles: [], // Optional: for global test setup
 	},
 });

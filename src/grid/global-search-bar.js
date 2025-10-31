@@ -10,6 +10,7 @@ class GlobalSearchBar extends HTMLElement {
 	constructor() {
 		super();
 		this.attachShadow({ mode: "open" });
+		this.stateManager = window.stateManager; // Align with global state contract
 		this.queryService = null;
 		this.results = [];
 		this.selectedIndex = -1;
@@ -33,6 +34,12 @@ class GlobalSearchBar extends HTMLElement {
 
 	setQueryService(service) {
 		this.queryService = service;
+		// In a fully aligned system, this would be replaced by:
+		// this.queryService = this.stateManager.managers.queryService;
+		// This method is kept for backward compatibility during transition.
+		console.warn(
+			"[GlobalSearchBar] Direct query service injection is deprecated. Use stateManager."
+		);
 	}
 
 	async onInput(event) {
@@ -43,7 +50,11 @@ class GlobalSearchBar extends HTMLElement {
 			return;
 		}
 
-		if (this.queryService) {
+		// Align with V8.0 plan: use the state manager's query service if available
+		const queryService =
+			this.stateManager?.managers?.queryService || this.queryService;
+
+		if (queryService) {
 			this.results = await this.queryService.search(query, { limit: 10 });
 			this.selectedIndex = -1;
 			this.renderResults();
@@ -147,21 +158,28 @@ class GlobalSearchBar extends HTMLElement {
           max-width: 600px;
           margin: 0 auto;
         }
+        /* Use global CSS variables for theme alignment */
         #search-input {
           width: 100%;
           padding: 12px 16px;
           font-size: 16px;
-          border-radius: 8px;
-          border: 1px solid #ccc;
+          border-radius: var(--border-radius, 8px);
+          border: 1px solid var(--border, #404040);
+          background-color: var(--surface-elevated, #2d2d2d);
+          color: var(--text, #f5f5f5);
           box-sizing: border-box;
+        }
+        #search-input::placeholder {
+          color: var(--text-muted, #b0b0b0);
         }
         #results-list {
           position: absolute;
           top: 100%;
           left: 0;
           right: 0;
-          background: white;
-          border: 1px solid #ccc;
+          background: var(--surface-elevated, #2d2d2d);
+          color: var(--text, #f5f5f5);
+          border: 1px solid var(--border, #404040);
           border-top: none;
           border-radius: 0 0 8px 8px;
           list-style: none;
@@ -180,22 +198,22 @@ class GlobalSearchBar extends HTMLElement {
           align-items: center;
         }
         li:hover, li.selected {
-          background-color: #f0f0f0;
+          background-color: var(--primary, #007acc);
+          color: white;
         }
         .item-source {
           font-size: 12px;
-          color: #888;
-          background: #eee;
+          color: var(--text-muted, #b0b0b0);
+          background: var(--surface, #1e1e1e);
           padding: 2px 6px;
-          border-radius: 4px;
+          border-radius: var(--border-radius, 6px);
           margin-right: 10px;
         }
         .item-title {
           flex-grow: 1;
         }
         .item-relevance {
-          font-size: 12px;
-          color: #aaa;
+          font-size: 12px;          
         }
       </style>
       <div id="search-container">

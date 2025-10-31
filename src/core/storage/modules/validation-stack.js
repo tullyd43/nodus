@@ -10,54 +10,42 @@
  * @module ValidationStack
  */
 export default class ValidationStack {
-	/**
-	 * @private
-	 * @type {Array<object>}
-	 */
+	/** @private @type {Array<object>} */
 	#validators = [];
-	/**
-	 * @private
-	 * @type {Map<string, object>}
-	 */
-	#validationCache = new Map();
-	/**
-	 * @private
-	 * @type {Array<object>}
-	 */
+	/** @private @type {import('../../../utils/LRUCache.js').LRUCache|null} */
+	#validationCache = null;
+	/** @private @type {Array<object>} */
 	#validationHistory = [];
-	/**
-	 * @private
-	 * @type {object}
-	 */
+	/** @private @type {object} */
 	#config;
-	/**
-	 * @private
-	 * @type {{validationsPerformed: number, validationsFailed: number, averageValidationTime: number, cacheHitRate: number}}
-	 */
-	#metrics = {
-		validationsPerformed: 0,
-		validationsFailed: 0,
-		averageValidationTime: 0,
-		cacheHitRate: 0,
-	};
-	/** @type {object|null} */
-	stateManager = null;
-
-	bindStateManager(manager) {
-		this.stateManager = manager;
-	}
+	/** @private @type {import('../../HybridStateManager.js').default|null} */
+	#stateManager = null;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
 
 	/**
 	 * Creates an instance of ValidationStack.
-	 * @param {Array<object>} [validators=[]] - An array of validator module instances.
-	 * @param {object} [options={}] - Configuration options for the validation stack.
-	 * @param {boolean} [options.enableCaching=true] - Whether to cache validation results for performance.
-	 * @param {number} [options.cacheTTL=300000] - Time-to-live for cache entries in milliseconds (default: 5 minutes).
-	 * @param {boolean} [options.trackHistory=false] - Whether to keep a history of validation results.
-	 * @param {boolean} [options.failFast=false] - If true, stops validation on the first error.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {Array<object>} [context.validators=[]] - An array of validator module instances.
+	 * @param {object} [context.options={}] - Configuration options for the validation stack.
 	 */
-	constructor(validators = [], options = {}) {
-		this.#validators = validators;
+	constructor({ stateManager, validators = [], options = {} }) {
+		this.#stateManager = stateManager;
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("validationStack");
+
+		// V8.0 Parity: Pass stateManager to each validator's constructor.
+		this.#validators = validators.map((ValidatorClass) => {
+			if (typeof ValidatorClass === "function") {
+				return new ValidatorClass({
+					stateManager: this.#stateManager,
+					options: options.validatorOptions?.[ValidatorClass.name],
+				});
+			}
+			return ValidatorClass; // Already an instance
+		});
+
 		this.#config = {
 			enableCaching: options.enableCaching !== false,
 			cacheSize: options.cacheSize || 1000,
@@ -68,7 +56,7 @@ export default class ValidationStack {
 		};
 
 		console.log(
-			`[ValidationStack] Loaded with ${validators.length} validators`
+			`[ValidationStack] Loaded with ${this.#validators.length} validators`
 		);
 	}
 
@@ -84,6 +72,18 @@ export default class ValidationStack {
 			}
 		}
 
+		// V8.0 Parity: Use the centralized CacheManager.
+		if (this.#config.enableCaching) {
+			const cacheManager = this.#stateManager?.managers?.cacheManager;
+			if (cacheManager) {
+				this.#validationCache = cacheManager.getCache(
+					"validationStack",
+					{
+						ttl: this.#config.cacheTTL,
+					}
+				);
+			}
+		}
 		console.log("[ValidationStack] Validation stack initialized");
 		return this;
 	}
@@ -110,14 +110,12 @@ export default class ValidationStack {
 		const cacheKey = this.#generateCacheKey(entity, context);
 
 		// Check cache first
-		if (this.#config.enableCaching && this.#validationCache.has(cacheKey)) {
-			const cached = this.#validationCache.get(cacheKey);
-			if (Date.now() < cached.expires) {
-				this.#updateCacheMetrics(true);
-				return cached.result;
-			} else {
-				this.#validationCache.delete(cacheKey);
-			}
+		if (
+			this.#config.enableCaching &&
+			this.#validationCache?.has(cacheKey)
+		) {
+			this.#updateCacheMetrics(true);
+			return this.#validationCache.get(cacheKey);
 		}
 
 		this.#updateCacheMetrics(false);
@@ -126,29 +124,22 @@ export default class ValidationStack {
 		const result = await this.#performValidation(entity, context);
 
 		// Cache result
-		if (this.#config.enableCaching) {
-			this.#validationCache.set(cacheKey, {
-				result,
-				expires: Date.now() + this.#config.cacheTTL,
-			});
-
-			// Cleanup cache if too large
-			if (this.#validationCache.size > this.#config.cacheSize) {
-				this.#cleanupCache();
-			}
+		// V8.0 Parity: The LRUCache from CacheManager handles its own size and TTL.
+		if (this.#config.enableCaching && this.#validationCache) {
+			this.#validationCache.set(cacheKey, result);
 		}
 
 		// Update metrics
 		const validationTime = performance.now() - startTime;
 		this.#updateValidationMetrics(result.valid, validationTime);
 
-		// Track history if enabled
+		// V8.0 Parity: Track history if enabled
 		if (this.#config.trackHistory) {
 			this.#addToHistory(entity, result, validationTime);
 		}
 
-		if (!result.valid) {
-			this.stateManager?.emit?.("validationError", {
+		if (!result.valid && this.#stateManager) {
+			this.#stateManager.emit("validationError", {
 				entity,
 				errors: result.errors || [],
 			});
@@ -210,7 +201,7 @@ export default class ValidationStack {
 	 */
 	getValidationMetrics() {
 		return {
-			...this.#metrics,
+			...this.#metrics?.getAllAsObject(),
 			validatorsLoaded: this.#validators.length,
 			cacheSize: this.#validationCache.size,
 			historySize: this.#validationHistory.length,
@@ -229,7 +220,7 @@ export default class ValidationStack {
 	 */
 	clearCache() {
 		this.#validationCache.clear();
-		console.log("[ValidationStack] Validation cache cleared");
+		console.log("[ValidationStack] Validation result cache cleared.");
 	}
 
 	/**
@@ -258,11 +249,11 @@ export default class ValidationStack {
 
 		for (const validator of this.#validators) {
 			try {
-				// Check if validator applies to this entity
-				if (
-					validator.supports &&
-					!validator.supports(entity, context)
-				) {
+				// V8.0 Parity: Use isApplicableFor to avoid name collision with 'supports' property.
+				if (typeof validator.isApplicableFor === "function") {
+					if (!validator.isApplicableFor(entity, context)) continue;
+				} else if (validator.supports) {
+					// Fallback for older validators
 					continue;
 				}
 
@@ -301,51 +292,29 @@ export default class ValidationStack {
 	}
 
 	#generateCacheKey(entity, context) {
-		// Create deterministic cache key
-		const entityKey = JSON.stringify({
+		// V8.0 Parity: Create a deterministic cache key from relevant data.
+		const keyObject = {
 			id: entity.id,
 			entity_type: entity.entity_type,
 			updated_at: entity.updated_at,
-			// Include relevant context
 			classification: context.classification,
 			user: context.userId,
-		});
-
-		// Simple hash for shorter keys
-		let hash = 0;
-		for (let i = 0; i < entityKey.length; i++) {
-			const char = entityKey.charCodeAt(i);
-			hash = (hash << 5) - hash + char;
-			hash = hash & hash; // Convert to 32-bit integer
-		}
-
-		return Math.abs(hash).toString(16);
+		};
+		return JSON.stringify(keyObject);
 	}
 
 	#updateValidationMetrics(isValid, validationTime) {
-		this.#metrics.validationsPerformed++;
+		this.#metrics?.increment("validationsPerformed");
 
 		if (!isValid) {
-			this.#metrics.validationsFailed++;
+			this.#metrics?.increment("validationsFailed");
 		}
 
-		// Update average validation time
-		const totalTime =
-			this.#metrics.averageValidationTime *
-				(this.#metrics.validationsPerformed - 1) +
-			validationTime;
-		this.#metrics.averageValidationTime =
-			totalTime / this.#metrics.validationsPerformed;
+		this.#metrics?.updateAverage("averageValidationTime", validationTime);
 	}
 
 	#updateCacheMetrics(isHit) {
-		const totalRequests = this.#metrics.validationsPerformed + 1;
-		const hits = isHit ? 1 : 0;
-
-		// Update hit rate (running average)
-		this.#metrics.cacheHitRate =
-			(this.#metrics.cacheHitRate * (totalRequests - 1) + hits) /
-			totalRequests;
+		this.#metrics?.increment(isHit ? "cacheHits" : "cacheMisses");
 	}
 
 	#addToHistory(entity, result, validationTime) {
@@ -362,35 +331,6 @@ export default class ValidationStack {
 		// Keep history manageable
 		if (this.#validationHistory.length > 1000) {
 			this.#validationHistory = this.#validationHistory.slice(-500);
-		}
-	}
-
-	#cleanupCache() {
-		const now = Date.now();
-		const toDelete = [];
-
-		// Remove expired entries
-		for (const [key, value] of this.#validationCache.entries()) {
-			if (now >= value.expires) {
-				toDelete.push(key);
-			}
-		}
-
-		for (const key of toDelete) {
-			this.#validationCache.delete(key);
-		}
-
-		// If still too large, remove oldest entries
-		if (this.#validationCache.size > this.#config.cacheSize) {
-			const entries = Array.from(this.#validationCache.entries());
-			const toRemove = entries.slice(
-				0,
-				entries.length - this.#config.cacheSize
-			);
-
-			for (const [key] of toRemove) {
-				this.#validationCache.delete(key);
-			}
 		}
 	}
 }

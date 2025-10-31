@@ -1,6 +1,8 @@
 // modules/realtime-sync.js
 // Real-time synchronization module for low-latency updates
 
+import { StorageError } from "../../../utils/ErrorHelpers.js";
+
 /**
  * @description
  * Manages real-time data synchronization using a WebSocket connection.
@@ -11,64 +13,47 @@
  * @module RealtimeSync
  */
 export default class RealtimeSync {
-	/**
-	 * @private
-	 * @type {WebSocket|null}
-	 */
-	#connection;
-	/**
-	 * @private
-	 * @type {Array<object>}
-	 */
+	/** @private @type {WebSocket|null} */
+	#connection = null;
+	/** @private @type {Array<object>} */
 	#messageQueue = [];
-	/**
-	 * @private
-	 * @type {Map<string, Set<Function>>}
-	 */
+	/** @private @type {Map<string, Set<Function>>} */
 	#subscriptions = new Map();
-	/**
-	 * @private
-	 * @type {number}
-	 */
+	/** @private @type {number} */
 	#reconnectAttempts = 0;
-	/**
-	 * @private
-	 * @type {object}
-	 */
+	/** @private @type {object} */
 	#config;
-	/**
-	 * @private
-	 * @type {{messagesReceived: number, messagesSent: number, reconnections: number, averageLatency: number, connectionUptime: number}}
-	 */
-	#metrics = {
-		messagesReceived: 0,
-		messagesSent: 0,
-		reconnections: 0,
-		averageLatency: 0,
-		connectionUptime: 0,
-	};
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {Map<string, {resolve: Function, reject: Function}>} */
+	#pendingRequests = new Map();
+	/** @private @type {number|null} */
+	#heartbeatInterval = null;
+
+	/** @public @type {string} */
+	name = "RealtimeSync";
+	/** @public @type {boolean} */
+	supportsPush = true;
+	/** @public @type {boolean} */
+	supportsPull = true;
 
 	/**
 	 * Creates an instance of RealtimeSync.
-	 * @param {object} [options={}] - Configuration options for the WebSocket connection.
-	 * @param {string} [options.serverUrl='wss://api.nodus.com/realtime'] - The URL of the real-time server.
-	 * @param {number} [options.reconnectDelay=1000] - The base delay for reconnection attempts in milliseconds.
-	 * @param {number} [options.maxReconnectAttempts=5] - The maximum number of times to try reconnecting.
-	 * @param {number} [options.heartbeatInterval=30000] - The interval for sending heartbeat messages to keep the connection alive.
-	 * @param {number} [options.messageTimeout=5000] - The timeout for waiting for a response to a request.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for the WebSocket connection.
 	 */
-	constructor(options = {}) {
-		this.name = "RealtimeSync";
-		this.supportsPush = true;
-		this.supportsPull = true;
+	constructor({ stateManager, options = {} }) {
+		this.#stateManager = stateManager;
 
 		this.#config = {
 			serverUrl: options.serverUrl || "wss://api.nodus.com/realtime",
 			reconnectDelay: options.reconnectDelay || 1000,
 			maxReconnectAttempts: options.maxReconnectAttempts || 5,
 			heartbeatInterval: options.heartbeatInterval || 30000,
-			messageTimeout: options.messageTimeout || 5000,
+			messageTimeout: options.messageTimeout || 10000, // Increased timeout
 			enableCompression: options.enableCompression || true,
+			authTimeout: options.authTimeout || 5000,
 			...options,
 		};
 
@@ -176,32 +161,30 @@ export default class RealtimeSync {
 	 * @returns {Promise<{pulled: number, items?: Array<object>, error?: string}>} The pulled data.
 	 */
 	async pull(options) {
-		// Real-time sync doesn't need explicit pulls - data comes via subscriptions
-		// But we can request latest state if needed
 		const { entityTypes = [], since } = options;
 
-		return new Promise((resolve) => {
+		return new Promise((resolve, reject) => {
 			const requestId = this.#generateRequestId();
 			const timeout = setTimeout(() => {
-				resolve({
-					pulled: 0,
-					error: "Request timeout",
-				});
+				this.#pendingRequests.delete(requestId);
+				reject(new Error("Pull request timeout"));
 			}, this.#config.messageTimeout);
 
-			// Set up one-time listener for response
-			const responseHandler = (message) => {
-				if (message.requestId === requestId) {
+			this.#pendingRequests.set(requestId, {
+				resolve: (response) => {
 					clearTimeout(timeout);
-					this.#removeMessageListener(responseHandler);
+					this.#pendingRequests.delete(requestId);
 					resolve({
-						pulled: message.items?.length || 0,
-						items: message.items || [],
+						pulled: response.items?.length || 0,
+						items: response.items || [],
 					});
-				}
-			};
-
-			this.#addMessageListener(responseHandler);
+				},
+				reject: (error) => {
+					clearTimeout(timeout);
+					this.#pendingRequests.delete(requestId);
+					reject(error);
+				},
+			});
 
 			// Send pull request
 			this.#sendMessage({
@@ -239,16 +222,20 @@ export default class RealtimeSync {
 	 * @returns {object} An object containing various metrics.
 	 */
 	getMetrics() {
-		const connectionDuration =
-			this.#connection?.readyState === WebSocket.OPEN
-				? Date.now() - this.#metrics.connectionStartTime
-				: 0;
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
+		if (this.#connection?.readyState === WebSocket.OPEN) {
+			const uptime =
+				Date.now() -
+				(metrics?.get("connectionStartTime")?.value || Date.now());
+			metrics?.set("connectionUptime", uptime);
+		}
 
 		return {
-			...this.#metrics,
-			connectionUptime: connectionDuration,
+			...(metrics?.getAllAsObject() || {}),
 			isConnected: this.#isConnected(),
 			subscriptions: this.#subscriptions.size,
+			pendingRequests: this.#pendingRequests.size,
 			queuedMessages: this.#messageQueue.length,
 		};
 	}
@@ -257,6 +244,11 @@ export default class RealtimeSync {
 	 * Disconnects from the server and cleans up resources.
 	 */
 	async disconnect() {
+		if (this.#heartbeatInterval) {
+			clearInterval(this.#heartbeatInterval);
+			this.#heartbeatInterval = null;
+		}
+
 		if (this.#connection) {
 			this.#connection.close();
 			this.#connection = null;
@@ -276,20 +268,36 @@ export default class RealtimeSync {
 	 */
 	async #connect() {
 		return new Promise((resolve, reject) => {
+			const metrics =
+				this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
 			try {
-				this.#connection = new WebSocket(this.#config.serverUrl);
+				// V8.0 Parity: Use securityManager to get auth token for connection.
+				const authToken =
+					this.#stateManager?.managers?.securityManager?.getAuthToken();
+				if (!authToken) {
+					return reject(
+						new StorageError(
+							"Authentication token not available for WebSocket connection."
+						)
+					);
+				}
+
+				// Append auth token as a query parameter for secure connection handshake.
+				const url = new URL(this.#config.serverUrl);
+				url.searchParams.append("token", authToken);
+
+				this.#connection = new WebSocket(url.toString());
 
 				this.#connection.onopen = () => {
 					console.log("[RealtimeSync] Connected to real-time server");
 					this.#reconnectAttempts = 0;
-					this.#metrics.connectionStartTime = Date.now();
+					metrics?.set("connectionStartTime", Date.now());
 
 					// Process queued messages
 					this.#processMessageQueue();
 
 					// Setup heartbeat
 					this.#setupHeartbeat();
-
 					resolve();
 				};
 
@@ -304,7 +312,11 @@ export default class RealtimeSync {
 
 				this.#connection.onerror = (error) => {
 					console.error("[RealtimeSync] Connection error:", error);
-					reject(error);
+					reject(
+						new StorageError("WebSocket connection error.", {
+							cause: error,
+						})
+					);
 				};
 			} catch (error) {
 				reject(error);
@@ -323,7 +335,9 @@ export default class RealtimeSync {
 		}
 
 		this.#reconnectAttempts++;
-		this.#metrics.reconnections++;
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
+		metrics?.increment("reconnections");
 
 		const delay =
 			this.#config.reconnectDelay *
@@ -350,12 +364,23 @@ export default class RealtimeSync {
 	#handleMessage(data) {
 		try {
 			const message = JSON.parse(data);
-			this.#metrics.messagesReceived++;
+			const metrics =
+				this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
+			metrics?.increment("messagesReceived");
 
 			// Calculate latency if timestamp provided
 			if (message.timestamp) {
 				const latency = Date.now() - message.timestamp;
 				this.#updateLatencyMetrics(latency);
+			}
+
+			// Handle request-response
+			if (
+				message.requestId &&
+				this.#pendingRequests.has(message.requestId)
+			) {
+				this.#handleResponseMessage(message);
+				return;
 			}
 
 			switch (message.type) {
@@ -379,6 +404,28 @@ export default class RealtimeSync {
 			}
 		} catch (error) {
 			console.error("[RealtimeSync] Failed to parse message:", error);
+		}
+	}
+
+	/**
+	 * Handles a response message by resolving or rejecting the corresponding pending promise.
+	 * @private
+	 * @param {object} message - The parsed response message.
+	 */
+	#handleResponseMessage(message) {
+		const pending = this.#pendingRequests.get(message.requestId);
+		if (pending) {
+			if (message.success) {
+				pending.resolve(message);
+			} else {
+				pending.reject(
+					new Error(message.error || "Unknown server error")
+				);
+			}
+		} else {
+			console.warn(
+				`[RealtimeSync] Received response for unknown request ID: ${message.requestId}`
+			);
 		}
 	}
 
@@ -470,7 +517,9 @@ export default class RealtimeSync {
 	#sendMessage(message) {
 		if (this.#isConnected()) {
 			this.#connection.send(JSON.stringify(message));
-			this.#metrics.messagesSent++;
+			const metrics =
+				this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
+			metrics?.increment("messagesSent");
 		} else {
 			// Queue message for when connection is restored
 			this.#messageQueue.push(message);
@@ -488,24 +537,22 @@ export default class RealtimeSync {
 		return new Promise((resolve, reject) => {
 			const requestId = this.#generateRequestId();
 			const timeout = setTimeout(() => {
+				this.#pendingRequests.delete(requestId);
 				reject(new Error("Push timeout"));
 			}, this.#config.messageTimeout);
 
-			// Set up one-time listener for response
-			const responseHandler = (message) => {
-				if (message.requestId === requestId) {
+			this.#pendingRequests.set(requestId, {
+				resolve: (response) => {
 					clearTimeout(timeout);
-					this.#removeMessageListener(responseHandler);
-
-					if (message.success) {
-						resolve(message.result);
-					} else {
-						reject(new Error(message.error));
-					}
-				}
-			};
-
-			this.#addMessageListener(responseHandler);
+					this.#pendingRequests.delete(requestId);
+					resolve(response.result);
+				},
+				reject: (error) => {
+					clearTimeout(timeout);
+					this.#pendingRequests.delete(requestId);
+					reject(error);
+				},
+			});
 
 			// Send push message
 			this.#sendMessage({
@@ -534,7 +581,8 @@ export default class RealtimeSync {
 	 * @private
 	 */
 	#setupHeartbeat() {
-		setInterval(() => {
+		if (this.#heartbeatInterval) clearInterval(this.#heartbeatInterval);
+		this.#heartbeatInterval = setInterval(() => {
 			if (this.#isConnected()) {
 				this.#sendMessage({
 					type: "heartbeat",
@@ -568,36 +616,8 @@ export default class RealtimeSync {
 	 * @param {number} latency - The latency of the last message in milliseconds.
 	 */
 	#updateLatencyMetrics(latency) {
-		const totalMessages = this.#metrics.messagesReceived;
-		const totalLatency =
-			this.#metrics.averageLatency * (totalMessages - 1) + latency;
-		this.#metrics.averageLatency = totalLatency / totalMessages;
-	}
-
-	/**
-	 * Adds a one-time message listener for request-response correlation.
-	 * @private
-	 * @param {Function} handler - The handler function to add.
-	 */
-	#addMessageListener(handler) {
-		// Add to a list of message listeners (simplified implementation)
-		if (!this._messageListeners) {
-			this._messageListeners = [];
-		}
-		this._messageListeners.push(handler);
-	}
-
-	/**
-	 * Removes a one-time message listener.
-	 * @private
-	 * @param {Function} handler - The handler function to remove.
-	 */
-	#removeMessageListener(handler) {
-		if (this._messageListeners) {
-			const index = this._messageListeners.indexOf(handler);
-			if (index > -1) {
-				this._messageListeners.splice(index, 1);
-			}
-		}
+		const metrics =
+			this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
+		metrics?.updateAverage("averageLatency", latency);
 	}
 }

@@ -5,16 +5,39 @@
  * @class OptimizationAccessControl
  * @classdesc Manages Role-Based Access Control (RBAC) for database optimization features.
  * It defines roles with specific permissions, manages user-to-role assignments, and handles session-based permission checks.
+ * @privateFields {#stateManager, #roles, #userRoles, #sessions, #cacheManager}
  */
 export class OptimizationAccessControl {
+	// V8.0 Parity: Mandate 3.1 - All internal properties MUST be private and declared at the top.
+	/** @private @type {import('./HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {object} */
+	#roles;
+	/** @private @type {Map<string, Set<string>>} */
+	#userRoles;
+	/** @private @type {import('../utils/LRUCache.js').LRUCache|null} */
+	#sessions;
+	/** @private @type {import('../managers/CacheManager.js').CacheManager|null} */
+	#cacheManager;
+
 	/**
 	 * Creates an instance of OptimizationAccessControl.
+	 * @param {object} context - The application context.
+	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
-	constructor() {
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
+		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
+		this.#cacheManager = this.#stateManager.managers.cacheManager;
+
+		// Initialize private fields
+		this.#userRoles = new Map(); // userId -> Set of roles
+		this.#sessions = null; // sessionId -> { userId, permissions, expires }
+
 		/**
-		 * @property {object} roles - A map of role definitions, where each role has a set of permissions.
+		 * @property {object} #roles - A map of role definitions, where each role has a set of permissions.
 		 */
-		this.roles = {
+		this.#roles = {
 			// Super admin - full access
 			super_admin: {
 				permissions: [
@@ -69,15 +92,19 @@ export class OptimizationAccessControl {
 				description: "Analytics and reporting access",
 			},
 		};
+	}
 
-		/**
-		 * @property {Map<string, Set<string>>} userRoles - A map of user IDs to a set of their assigned roles.
-		 */
-		this.userRoles = new Map(); // userId -> Set of roles
-		/**
-		 * @property {Map<string, object>} sessions - A map of session IDs to session objects, which include user info and permissions.
-		 */
-		this.sessions = new Map(); // sessionId -> { userId, permissions, expires }
+	/**
+	 * Initializes the access control system.
+	 */
+	initialize() {
+		// V8.0 Parity: Mandate 4.1 - Replace unbounded map with a bounded LRUCache from the central CacheManager.
+		if (!this.#cacheManager) {
+			throw new Error(
+				"CacheManager is not available. OptimizationAccessControl cannot initialize."
+			);
+		}
+		this.#sessions = this.#cacheManager.getCache("authSessions");
 	}
 
 	/**
@@ -87,11 +114,11 @@ export class OptimizationAccessControl {
 	 * @returns {boolean} `true` if the user has the permission, `false` otherwise.
 	 */
 	hasPermission(userId, permission) {
-		const userRoles = this.userRoles.get(userId);
+		const userRoles = this.#userRoles.get(userId);
 		if (!userRoles) return false;
 
 		for (const roleName of userRoles) {
-			const role = this.roles[roleName];
+			const role = this.#roles[roleName];
 			if (role && role.permissions.includes(permission)) {
 				return true;
 			}
@@ -106,13 +133,13 @@ export class OptimizationAccessControl {
 	 * @returns {string[]} An array of all permissions the user has.
 	 */
 	getUserPermissions(userId) {
-		const userRoles = this.userRoles.get(userId);
+		const userRoles = this.#userRoles.get(userId);
 		if (!userRoles) return [];
 
 		const permissions = new Set();
 
 		for (const roleName of userRoles) {
-			const role = this.roles[roleName];
+			const role = this.#roles[roleName];
 			if (role) {
 				role.permissions.forEach((perm) => permissions.add(perm));
 			}
@@ -128,15 +155,15 @@ export class OptimizationAccessControl {
 	 * @throws {Error} If the specified role does not exist.
 	 */
 	assignRole(userId, roleName) {
-		if (!this.roles[roleName]) {
+		if (!this.#roles[roleName]) {
 			throw new Error(`Role '${roleName}' does not exist`);
 		}
 
-		if (!this.userRoles.has(userId)) {
-			this.userRoles.set(userId, new Set());
+		if (!this.#userRoles.has(userId)) {
+			this.#userRoles.set(userId, new Set());
 		}
 
-		this.userRoles.get(userId).add(roleName);
+		this.#userRoles.get(userId).add(roleName);
 		console.log(`👤 Assigned role '${roleName}' to user ${userId}`);
 	}
 
@@ -146,7 +173,7 @@ export class OptimizationAccessControl {
 	 * @param {string} roleName - The name of the role to remove.
 	 */
 	removeRole(userId, roleName) {
-		const userRoles = this.userRoles.get(userId);
+		const userRoles = this.#userRoles.get(userId);
 		if (userRoles) {
 			userRoles.delete(roleName);
 			console.log(`👤 Removed role '${roleName}' from user ${userId}`);
@@ -164,13 +191,13 @@ export class OptimizationAccessControl {
 		const session = {
 			userId,
 			permissions,
-			roles: Array.from(this.userRoles.get(userId) || []),
+			roles: Array.from(this.#userRoles.get(userId) || []),
 			created: new Date(),
 			expires: new Date(Date.now() + 8 * 60 * 60 * 1000), // 8 hours
 			lastActivity: new Date(),
 		};
 
-		this.sessions.set(sessionId, session);
+		this.#sessions?.set(sessionId, session);
 		return session;
 	}
 
@@ -181,14 +208,14 @@ export class OptimizationAccessControl {
 	 * @returns {{valid: boolean, reason?: string, requiredRoles?: string[], session?: object}} An object indicating if the permission is granted.
 	 */
 	checkSessionPermission(sessionId, permission) {
-		const session = this.sessions.get(sessionId);
+		const session = this.#sessions?.get(sessionId);
 
 		if (!session) {
 			return { valid: false, reason: "Session not found" };
 		}
 
 		if (session.expires < new Date()) {
-			this.sessions.delete(sessionId);
+			this.#sessions?.delete(sessionId);
 			return { valid: false, reason: "Session expired" };
 		}
 
@@ -214,7 +241,7 @@ export class OptimizationAccessControl {
 	getRolesWithPermission(permission) {
 		const rolesWithPermission = [];
 
-		for (const [roleName, role] of Object.entries(this.roles)) {
+		for (const [roleName, role] of Object.entries(this.#roles)) {
 			if (role.permissions.includes(permission)) {
 				rolesWithPermission.push(roleName);
 			}
@@ -231,12 +258,12 @@ export class OptimizationAccessControl {
 		const now = new Date();
 		let cleanedCount = 0;
 
-		for (const [sessionId, session] of this.sessions) {
+		this.#sessions?.forEach((session, sessionId) => {
 			if (session.expires < now) {
-				this.sessions.delete(sessionId);
+				this.#sessions?.delete(sessionId);
 				cleanedCount++;
 			}
-		}
+		});
 
 		if (cleanedCount > 0) {
 			console.log(`🧹 Cleaned ${cleanedCount} expired sessions`);
@@ -251,7 +278,7 @@ export class OptimizationAccessControl {
 	 * @returns {object|null} An object with session details, or `null` if the session is not found.
 	 */
 	getSessionInfo(sessionId) {
-		const session = this.sessions.get(sessionId);
+		const session = this.#sessions?.get(sessionId);
 		if (!session) return null;
 
 		return {
@@ -272,7 +299,7 @@ export class OptimizationAccessControl {
 	 * @returns {boolean} `true` if the session was found and extended, `false` otherwise.
 	 */
 	extendSession(sessionId, hours = 8) {
-		const session = this.sessions.get(sessionId);
+		const session = this.#sessions?.get(sessionId);
 		if (session) {
 			session.expires = new Date(Date.now() + hours * 60 * 60 * 1000);
 			session.lastActivity = new Date();
@@ -287,7 +314,7 @@ export class OptimizationAccessControl {
 	 * @returns {boolean} `true` if the session was found and deleted, `false` otherwise.
 	 */
 	revokeSession(sessionId) {
-		return this.sessions.delete(sessionId);
+		return this.#sessions?.delete(sessionId);
 	}
 
 	/**
@@ -298,7 +325,7 @@ export class OptimizationAccessControl {
 		const now = new Date();
 		const activeSessions = [];
 
-		for (const [sessionId, session] of this.sessions) {
+		this.#sessions?.forEach((session, sessionId) => {
 			if (session.expires > now) {
 				activeSessions.push({
 					sessionId,
@@ -309,7 +336,7 @@ export class OptimizationAccessControl {
 					lastActivity: session.lastActivity,
 				});
 			}
-		}
+		});
 
 		return activeSessions;
 	}
@@ -330,7 +357,7 @@ export class OptimizationAccessControl {
 			action,
 			resource,
 			result, // 'success', 'denied', 'error'
-			userRoles: Array.from(this.userRoles.get(userId) || []),
+			userRoles: Array.from(this.#userRoles.get(userId) || []),
 			metadata,
 			ip: metadata.ip,
 			userAgent: metadata.userAgent,

@@ -2,10 +2,10 @@
 
 /**
  * Maps a security label to a unique cryptographic domain string.
- * This string is used to select the correct Key Encryption Key (KEK) from a KMS/HSM
- * for envelope encryption, ensuring cryptographic separation between data of
- * different classifications and compartment sets.
+ * This canonical string is used to select the correct cryptographic key from the keyring,
+ * ensuring cryptographic separation between data of different classifications and compartment sets.
  *
+ * @param {object} label - The security label of the data.
  * @param {object} label - The security label of the data.
  * @param {string} label.classification - The classification level (e.g., 'secret').
  * @param {string[]} [label.compartments=[]] - An array of compartment strings.
@@ -20,11 +20,10 @@ export function getCryptoDomain({ classification, compartments = [] }) {
 
 	const base = String(classification).toLowerCase();
 
-	// Sort compartments for a canonical representation, ensuring
-	// ['A','B'] and ['B','A'] map to the same domain.
-	const safeCompartments = Array.isArray(compartments) ? compartments : [];
+	// V8.0 Parity: Sort compartments for a canonical representation, ensuring
+	// ['A','B'] and ['B','A'] map to the same domain. Use `??` for safer defaults.
 	const compKey =
-		[...safeCompartments].sort().join("+").toLowerCase() || "none";
+		[...(compartments ?? [])].sort().join("+").toLowerCase() || "none";
 
 	return `${base}::${compKey}`;
 }

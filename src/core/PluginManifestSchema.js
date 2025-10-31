@@ -1,11 +1,10 @@
-// schemas/PluginManifestSchema.js
-// Complete plugin manifest schema definition for declarative plugin system
-
 /**
  * @file Defines the schema for the `plugin.json` manifest files.
  * @module PluginManifestSchema
  * @description This file provides a comprehensive schema definition for the declarative plugin system.
- * It outlines the structure and validation rules for plugin manifests, ensuring consistency and robustness.
+ * It outlines the structure and validation rules for plugin manifests, ensuring consistency, security, and robustness
+ * in alignment with the V8 Parity Mandate.
+ * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} for architectural rules.
  */
 
 /**
@@ -14,485 +13,523 @@
  * @type {object}
  */
 export const PluginManifestSchema = {
-  // Core plugin metadata
-  id: {
-    type: "string",
-    required: true,
-    description: "Unique plugin identifier",
-    pattern: "^[a-z0-9-_]+$",
-    examples: ["fitness-tracker", "analytics-dashboard"],
-  },
+	// Core plugin metadata
+	id: {
+		type: "string",
+		required: true,
+		description:
+			"A unique, machine-readable identifier for the plugin. Must be lowercase, and may contain hyphens or underscores.",
+		pattern: "^[a-z0-9-_]+$",
+		examples: ["fitness-tracker", "analytics-dashboard"],
+	},
 
-  name: {
-    type: "string",
-    required: true,
-    description: "Human-readable plugin name",
-    maxLength: 100,
-    examples: ["Fitness Tracker", "Analytics Dashboard"],
-  },
+	name: {
+		type: "string",
+		required: true,
+		description:
+			"A human-readable name for the plugin, displayed in the UI.",
+		maxLength: 100,
+		examples: ["Fitness Tracker", "Analytics Dashboard"],
+	},
 
-  version: {
-    type: "string",
-    required: true,
-    description: "Plugin version (semantic versioning)",
-    pattern: "^\\d+\\.\\d+\\.\\d+(-[a-z0-9-]+)?$",
-    examples: ["1.0.0", "2.1.3-beta"],
-  },
+	version: {
+		type: "string",
+		required: true,
+		description:
+			"The version of the plugin, following the Semantic Versioning (SemVer) specification.",
+		pattern: "^\\d+\\.\\d+\\.\\d+(-[a-z0-9-]+)?$",
+		examples: ["1.0.0", "2.1.3-beta"],
+	},
 
-  description: {
-    type: "string",
-    description: "Plugin description",
-    maxLength: 500,
-  },
+	description: {
+		type: "string", // V8.0 Parity: Keep descriptions concise.
+		description: "Plugin description",
+		maxLength: 500,
+	},
 
-  author: {
-    type: "object",
-    properties: {
-      name: { type: "string", required: true },
-      email: { type: "string", format: "email" },
-      url: { type: "string", format: "url" },
-    },
-  },
+	author: {
+		type: "object",
+		properties: {
+			name: { type: "string", required: true },
+			email: { type: "string", format: "email" },
+			url: { type: "string", format: "url" },
+		},
+	},
 
-  // Plugin configuration
-  enabled: {
-    type: "boolean",
-    default: true,
-    description: "Whether plugin is enabled",
-  },
+	// Plugin configuration
+	enabled: {
+		type: "boolean",
+		default: true,
+		description: "If false, the plugin will not be loaded by the system.",
+	},
 
-  autoload: {
-    type: "boolean",
-    default: true,
-    description: "Whether to load plugin automatically on startup",
-  },
+	autoload: {
+		type: "boolean",
+		default: true,
+		description:
+			"If true, the plugin will be loaded automatically on application startup.",
+	},
 
-  priority: {
-    type: "string",
-    enum: ["low", "normal", "high"],
-    default: "normal",
-    description: "Plugin loading priority",
-  },
+	priority: {
+		type: "string",
+		enum: ["low", "normal", "high"],
+		default: "normal",
+		description:
+			"Determines the loading order of plugins. 'high' priority plugins are loaded first.",
+	},
 
-  // Plugin components
-  components: {
-    type: "object",
-    properties: {
-      widgets: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              required: true,
-              description: "Widget identifier",
-            },
-            name: {
-              type: "string",
-              required: true,
-              description: "Widget display name",
-            },
-            description: {
-              type: "string",
-              description: "Widget description",
-            },
-            entity_types: {
-              type: "array",
-              items: { type: "string" },
-              description: "Entity types this widget can display",
-            },
-            adaptations: {
-              type: "object",
-              description: "Adaptive rendering configurations",
-              properties: {
-                minimal: {
-                  type: "object",
-                  properties: {
-                    trigger: { type: "object" },
-                    render: { type: "object" },
-                  },
-                },
-                standard: {
-                  type: "object",
-                  properties: {
-                    trigger: { type: "object" },
-                    render: { type: "object" },
-                  },
-                },
-                detailed: {
-                  type: "object",
-                  properties: {
-                    trigger: { type: "object" },
-                    render: { type: "object" },
-                  },
-                },
-              },
-            },
-            config_schema: {
-              type: "object",
-              description: "Configuration schema for widget",
-            },
-            default_config: {
-              type: "object",
-              description: "Default configuration values",
-            },
-          },
-        },
-      },
+	// Plugin components
+	components: {
+		type: "object",
+		properties: {
+			widgets: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						id: {
+							type: "string",
+							required: true, // V8.0 Parity: Consistent naming with ComponentDefinition
+							description:
+								"A unique identifier for the widget within the plugin.",
+						},
+						name: {
+							type: "string",
+							required: true,
+							description: "The display name of the widget.",
+						},
+						description: {
+							type: "string",
+							description: "Widget description",
+						},
+						supportedEntityTypes: {
+							// V8.0 Parity: Consistent naming with ComponentDefinition
+							type: "array",
+							items: { type: "string" },
+							description: "Entity types this widget can display",
+						},
+						adaptations: {
+							type: "object",
+							description: "Adaptive rendering configurations",
+							properties: {
+								minimal: {
+									type: "object",
+									properties: {
+										trigger: { type: "object" },
+										render: { type: "object" },
+									},
+								},
+								standard: {
+									type: "object",
+									properties: {
+										trigger: { type: "object" },
+										render: { type: "object" },
+									},
+								},
+								detailed: {
+									type: "object",
+									properties: {
+										trigger: { type: "object" },
+										render: { type: "object" },
+									},
+								},
+							},
+						},
+						configSchema: {
+							// V8.0 Parity: Consistent naming with ComponentDefinition
+							type: "object",
+							description: "Configuration schema for widget",
+						},
+						defaultConfig: {
+							// V8.0 Parity: Consistent naming with ComponentDefinition
+							type: "object",
+							description: "Default configuration values",
+						},
+					},
+				},
+			},
 
-      actions: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              required: true,
-              description: "Action identifier",
-            },
-            name: {
-              type: "string",
-              required: true,
-              description: "Action display name",
-            },
-            description: {
-              type: "string",
-              description: "Action description",
-            },
-            entity_types: {
-              type: "array",
-              items: { type: "string" },
-              description: "Entity types this action applies to",
-            },
-            category: {
-              type: "string",
-              enum: ["essential", "common", "advanced"],
-              default: "common",
-              description: "Action category for adaptive display",
-            },
-            visibility: {
-              type: "object",
-              properties: {
-                conditions: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Visibility conditions (JavaScript expressions)",
-                },
-                permissions: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Required permissions",
-                },
-                contexts: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "UI contexts where action is visible",
-                },
-              },
-            },
-            target: {
-              type: "string",
-              enum: ["self", "related", "selected", "new", "external"],
-              default: "self",
-              description: "Action target type",
-            },
-            confirmation: {
-              type: "object",
-              properties: {
-                required: { type: "boolean", default: false },
-                message: { type: "string" },
-                level: {
-                  type: "string",
-                  enum: ["info", "warning", "danger"],
-                  default: "info",
-                },
-              },
-            },
-          },
-        },
-      },
+			actions: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						id: {
+							type: "string",
+							required: true, // V8.0 Parity: Consistent naming with ComponentDefinition
+							description:
+								"A unique identifier for the action within the plugin.",
+						},
+						name: {
+							type: "string",
+							required: true,
+							description: "The display name of the action.",
+						},
+						description: {
+							type: "string",
+							description: "Action description",
+						},
+						supportedEntityTypes: {
+							// V8.0 Parity: Consistent naming with ComponentDefinition
+							type: "array",
+							items: { type: "string" },
+							description: "Entity types this action applies to",
+						},
+						category: {
+							type: "string",
+							enum: ["essential", "common", "advanced"],
+							default: "common",
+							description:
+								"Category for adaptive UI display (e.g., in menus).",
+						},
+						visibility: {
+							type: "object",
+							properties: {
+								conditions: {
+									type: "array",
+									items: { type: "string" },
+									description:
+										"An array of declarative rule objects evaluated by the ConditionRegistry. All conditions must pass.",
+									examples: [
+										[
+											{
+												type: "property_equals",
+												property: "entity.status",
+												value: "active",
+											},
+										],
+										[
+											{
+												type: "user_has_permission",
+												permissions: [
+													"can_edit_entity",
+												],
+											},
+										],
+									],
+								},
+								permissions: {
+									type: "array",
+									items: { type: "string" },
+									description:
+										"DEPRECATED: Use a 'user_has_permission' condition instead for better composability.",
+								},
+							},
+						},
+						target: {
+							type: "string",
+							enum: [
+								"self",
+								"related",
+								"selected",
+								"new",
+								"external",
+							],
+							default: "self",
+							description:
+								"The target entity or context for the action.",
+						},
+						confirmation: {
+							type: "object",
+							properties: {
+								required: { type: "boolean", default: false },
+								message: { type: "string" },
+								level: {
+									type: "string",
+									enum: ["info", "warning", "danger"],
+									default: "info",
+								},
+							},
+						},
+					},
+				},
+			},
 
-      field_renderers: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            entity_type: {
-              type: "string",
-              required: true,
-              description: "Entity type (* for all types)",
-            },
-            field: {
-              type: "string",
-              required: true,
-              description: "Field name or pattern",
-            },
-            field_type: {
-              type: "string",
-              description: "Field data type",
-            },
-            adaptations: {
-              type: "object",
-              description: "Rendering adaptations by context",
-              properties: {
-                minimal: { type: "object" },
-                standard: { type: "object" },
-                detailed: { type: "object" },
-              },
-            },
-            priority: {
-              type: "number",
-              default: 0,
-              description: "Renderer priority (higher = preferred)",
-            },
-          },
-        },
-      },
+			field_renderers: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						entityType: {
+							// V8.0 Parity: camelCase
+							type: "string",
+							required: true,
+							description: "Entity type (* for all types)",
+						},
+						field: {
+							type: "string",
+							required: true, // V8.0 Parity: camelCase
+							description: "Field name or pattern",
+						},
+						fieldType: {
+							// V8.0 Parity: camelCase
+							type: "string",
+							description: "Field data type",
+						},
+						adaptations: {
+							type: "object",
+							description: "Rendering adaptations by context",
+							properties: {
+								minimal: { type: "object" },
+								standard: { type: "object" },
+								detailed: { type: "object" },
+							},
+						},
+						priority: {
+							type: "number",
+							default: 0,
+							description:
+								"Renderer priority (higher values are preferred).",
+						},
+					},
+				},
+			},
 
-      command_handlers: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            command: {
-              type: "string",
-              required: true,
-              description: "Command type to handle",
-            },
-            priority: {
-              type: "number",
-              default: 0,
-              description: "Handler priority",
-            },
-            async: {
-              type: "boolean",
-              default: false,
-              description: "Whether handler is asynchronous",
-            },
-          },
-        },
-      },
+			command_handlers: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						command: {
+							type: "string",
+							required: true,
+							description:
+								"The command type to handle (e.g., 'core:save').",
+						},
+						priority: {
+							type: "number",
+							default: 0,
+							description:
+								"Handler priority (higher values are preferred).",
+						},
+						async: {
+							type: "boolean",
+							default: false,
+							description: "Whether handler is asynchronous",
+						},
+					},
+				},
+			},
 
-      event_flows: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              required: true,
-              description: "Flow identifier",
-            },
-            name: {
-              type: "string",
-              required: true,
-              description: "Flow name",
-            },
-            trigger: {
-              type: "object",
-              required: true,
-              properties: {
-                events: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Events that trigger this flow",
-                },
-              },
-            },
-            conditions: {
-              type: "object",
-              description: "Condition definitions",
-            },
-            actions: {
-              type: "object",
-              description: "Actions to execute per condition",
-            },
-          },
-        },
-      },
-    },
-  },
+			event_flows: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						id: {
+							type: "string",
+							required: true,
+							description:
+								"A unique identifier for the event flow.",
+						},
+						name: {
+							type: "string",
+							required: true,
+							description: "A human-readable name for the flow.",
+						},
+						trigger: {
+							type: "object",
+							required: true,
+							properties: {
+								events: {
+									type: "array", // V8.0 Parity: Consistent naming with EventFlowEngine
+									items: { type: "string" },
+									description:
+										"An array of event names that trigger this flow.",
+								},
+							},
+						},
+						conditions: {
+							type: "object",
+							description: "Condition definitions",
+						}, // V8.0 Parity: These are evaluated by the ConditionRegistry
+						actions: {
+							type: "object",
+							description: "Actions to execute per condition",
+						}, // V8.0 Parity: These are executed by the ActionHandlerRegistry
+					},
+				},
+			},
+		},
+	},
 
-  // Dependencies
-  dependencies: {
-    type: "object",
-    properties: {
-      plugins: {
-        type: "array",
-        items: { type: "string" },
-        description: "Required plugin dependencies",
-      },
-      frontend: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            name: { type: "string", required: true },
-            version: { type: "string" },
-            cdn_url: { type: "string", format: "url" },
-          },
-        },
-        description: "Frontend library dependencies",
-      },
-      backend: {
-        type: "array",
-        items: { type: "string" },
-        description: "Backend service dependencies",
-      },
-      api_version: {
-        type: "string",
-        description: "Required platform API version",
-      },
-    },
-  },
+	// Dependencies
+	dependencies: {
+		type: "object",
+		properties: {
+			plugins: {
+				type: "array",
+				items: { type: "string" },
+				description:
+					"An array of plugin IDs that this plugin depends on.",
+			},
+			frontend: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						name: { type: "string", required: true },
+						version: { type: "string" },
+						cdn_url: { type: "string", format: "url" },
+					},
+				},
+				description:
+					"External frontend library dependencies (e.g., from a CDN).",
+			},
+			backend: {
+				type: "array",
+				items: { type: "string" },
+				description:
+					"Backend service dependencies (e.g., API endpoints).",
+			},
+			api_version: {
+				type: "string",
+				description: "Required platform API version",
+			},
+		},
+	},
 
-  // Runtime configuration
-  runtime: {
-    type: "object",
-    oneOf: [
-      {
-        // External runtime
-        properties: {
-          frontend: {
-            type: "string",
-            format: "url",
-            description: "Frontend runtime URL",
-          },
-          backend: {
-            type: "string",
-            format: "url",
-            description: "Backend service URL",
-          },
-        },
-      },
-      {
-        // Inline runtime
-        properties: {
-          inline: {
-            type: "object",
-            description: "Inline component definitions",
-          },
-        },
-      },
-    ],
-  },
+	// Runtime configuration
+	runtime: {
+		type: "object",
+		properties: {
+			entrypoint: {
+				type: "string",
+				format: "url",
+				description:
+					"The URL to the main JavaScript module for the plugin. This module must export an `initialize(context)` function.",
+			},
+		},
+		description:
+			"Defines the execution environment for the plugin. The `inline` runtime is removed for security reasons as per V8.0 mandates.",
+	},
 
-  // Security configuration
-  permissions: {
-    type: "array",
-    items: { type: "string" },
-    description: "Permissions required by plugin",
-  },
+	// Security configuration
+	permissions: {
+		type: "array",
+		items: { type: "string" },
+		description:
+			"A list of permissions this plugin requires to function. These are checked during installation and runtime.",
+		examples: [
+			["storage.read", "storage.write", "ui.notifications.create"],
+		],
+	},
 
-  sandbox: {
-    type: "boolean",
-    default: true,
-    description: "Whether to run plugin in sandbox",
-  },
+	sandbox: {
+		type: "boolean",
+		default: true,
+		description: "Whether to run plugin in sandbox",
+	},
 
-  content_security_policy: {
-    type: "object",
-    properties: {
-      script_src: { type: "array", items: { type: "string" } },
-      style_src: { type: "array", items: { type: "string" } },
-      connect_src: { type: "array", items: { type: "string" } },
-    },
-  },
+	content_security_policy: {
+		type: "object",
+		properties: {
+			script_src: { type: "array", items: { type: "string" } },
+			style_src: { type: "array", items: { type: "string" } },
+			connect_src: { type: "array", items: { type: "string" } },
+		},
+	},
 
-  // Configuration schema
-  config: {
-    type: "object",
-    description: "Plugin configuration values",
-  },
+	// Configuration schema
+	config: {
+		type: "object",
+		description:
+			"Default configuration values for the plugin. These can be overridden by the user.",
+	},
 
-  config_schema: {
-    type: "object",
-    description: "Schema for plugin configuration",
-  },
+	configSchema: {
+		// V8.0 Parity: camelCase
+		type: "object",
+		description:
+			"A JSON Schema object that defines the structure and validation rules for the plugin's configuration.",
+	},
 
-  // Marketplace metadata
-  marketplace: {
-    type: "object",
-    properties: {
-      category: {
-        type: "string",
-        enum: [
-          "productivity",
-          "analytics",
-          "communication",
-          "integration",
-          "visualization",
-          "automation",
-          "security",
-          "development",
-        ],
-        description: "Marketplace category",
-      },
-      tags: {
-        type: "array",
-        items: { type: "string" },
-        description: "Plugin tags for discovery",
-      },
-      screenshots: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            url: { type: "string", format: "url" },
-            caption: { type: "string" },
-          },
-        },
-      },
-      demo_url: {
-        type: "string",
-        format: "url",
-        description: "Demo or documentation URL",
-      },
-      pricing: {
-        type: "object",
-        properties: {
-          model: {
-            type: "string",
-            enum: ["free", "freemium", "paid", "subscription"],
-          },
-          price: { type: "number" },
-          currency: { type: "string" },
-          billing_period: {
-            type: "string",
-            enum: ["one-time", "monthly", "yearly"],
-          },
-        },
-      },
-    },
-  },
+	// Marketplace metadata
+	marketplace: {
+		type: "object",
+		properties: {
+			category: {
+				type: "string",
+				enum: [
+					"productivity",
+					"analytics",
+					"communication",
+					"integration",
+					"visualization",
+					"automation",
+					"security",
+					"development",
+				],
+				description:
+					"The category under which the plugin is listed in the marketplace.",
+			},
+			tags: {
+				type: "array",
+				items: { type: "string" },
+				description: "Keywords that help users discover the plugin.",
+			},
+			screenshots: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						url: { type: "string", format: "url" },
+						caption: { type: "string" },
+					},
+				},
+			},
+			demo_url: {
+				type: "string",
+				format: "url",
+				description: "A URL to a live demo or detailed documentation.",
+			},
+			pricing: {
+				type: "object",
+				properties: {
+					model: {
+						type: "string",
+						enum: ["free", "freemium", "paid", "subscription"],
+					},
+					price: { type: "number" },
+					currency: { type: "string" },
+					billing_period: {
+						type: "string",
+						enum: ["one-time", "monthly", "yearly"],
+					},
+				},
+			},
+		},
+	},
 
-  // Lifecycle hooks
-  lifecycle: {
-    type: "object",
-    properties: {
-      install: {
-        type: "object",
-        properties: {
-          scripts: { type: "array", items: { type: "string" } },
-          migrations: { type: "array", items: { type: "object" } },
-        },
-      },
-      update: {
-        type: "object",
-        properties: {
-          scripts: { type: "array", items: { type: "string" } },
-          migrations: { type: "array", items: { type: "object" } },
-        },
-      },
-      uninstall: {
-        type: "object",
-        properties: {
-          cleanup_scripts: { type: "array", items: { type: "string" } },
-        },
-      },
-    },
-  },
+	// Lifecycle hooks
+	lifecycle: {
+		type: "object",
+		properties: {
+			install: {
+				type: "object",
+				properties: {
+					scripts: { type: "array", items: { type: "string" } },
+					migrations: { type: "array", items: { type: "object" } },
+				},
+			},
+			update: {
+				type: "object",
+				properties: {
+					scripts: { type: "array", items: { type: "string" } },
+					migrations: { type: "array", items: { type: "object" } },
+				},
+			},
+			uninstall: {
+				type: "object",
+				properties: {
+					cleanup_scripts: {
+						type: "array",
+						items: { type: "string" },
+					},
+				},
+			},
+		},
+	},
 };
 
 /**
@@ -503,193 +540,188 @@ export const PluginManifestSchema = {
  * Example plugin manifests for reference
  */
 export const ExampleManifests = {
-  // Simple widget plugin
-  simpleWidget: {
-    id: "simple-clock",
-    name: "Simple Clock Widget",
-    version: "1.0.0",
-    description: "A simple clock widget for dashboards",
-    author: { name: "Nodus Team" },
+	// Simple widget plugin
+	simpleWidget: {
+		id: "simple-clock",
+		name: "Simple Clock Widget",
+		version: "1.0.0",
+		description: "A simple clock widget for dashboards",
+		author: { name: "Nodus Team" },
 
-    components: {
-      widgets: [
-        {
-          id: "clock_widget",
-          name: "Clock",
-          description: "Digital clock display",
-          entity_types: ["*"],
-          adaptations: {
-            minimal: {
-              trigger: { containerWidth: { max: 200 } },
-              render: { format: "HH:MM" },
-            },
-            standard: {
-              trigger: { containerWidth: { min: 200, max: 400 } },
-              render: { format: "HH:MM:SS", showDate: false },
-            },
-            detailed: {
-              trigger: { containerWidth: { min: 400 } },
-              render: { format: "full", showDate: true, showTimezone: true },
-            },
-          },
-        },
-      ],
-    },
+		components: {
+			widgets: [
+				{
+					id: "clock_widget",
+					name: "Clock",
+					description: "Digital clock display",
+					supportedEntityTypes: ["*"],
+					adaptations: {
+						minimal: {
+							trigger: { containerWidth: { max: 200 } },
+							render: { format: "HH:MM" },
+						},
+						standard: {
+							trigger: { containerWidth: { min: 200, max: 400 } },
+							render: { format: "HH:MM:SS", showDate: false },
+						},
+						detailed: {
+							trigger: { containerWidth: { min: 400 } },
+							render: {
+								format: "full",
+								showDate: true,
+								showTimezone: true,
+							},
+						},
+					},
+				},
+			],
+		},
 
-    runtime: {
-      inline: {
-        components: {
-          clock_widget: {
-            render: (context) => {
-              const div = document.createElement("div");
-              div.className = "clock-widget";
-              const now = new Date();
+		// V8.0 Parity: The `inline` runtime is removed for security.
+		// Plugins must provide an external entrypoint.
+		runtime: {
+			entrypoint:
+				"https://cdn.example.com/plugins/simple-clock/v1.0.0/main.js",
+			// The main.js file would contain:
+			// export function initialize(context) {
+			//   context.registerComponent('clock_widget', {
+			//     render: (renderContext) => {
+			//       const div = document.createElement('div');
+			//       div.className = 'clock-widget';
+			//       div.textContent = new Date().toLocaleTimeString();
+			//       const intervalId = setInterval(() => {
+			//         div.textContent = new Date().toLocaleTimeString();
+			//       }, 1000);
+			//       // It's crucial for components to handle their own cleanup.
+			//       renderContext.hooks.onCleanup = () => clearInterval(intervalId);
+			//       return div;
+			//     },
+			//   });
+			// }
+		},
 
-              const formatTime = (format) => {
-                switch (format) {
-                  case "HH:MM":
-                    return now.toTimeString().slice(0, 5);
-                  case "HH:MM:SS":
-                    return now.toTimeString().slice(0, 8);
-                  case "full":
-                  default:
-                    return now.toLocaleString();
-                }
-              };
+		marketplace: {
+			category: "productivity",
+			tags: ["clock", "time", "widget", "dashboard"],
+			pricing: { model: "free" },
+		},
+	},
 
-              div.innerHTML = `
-                <div class="time">${formatTime(context.config.format)}</div>
-                ${context.config.showDate ? `<div class="date">${now.toDateString()}</div>` : ""}
-                ${context.config.showTimezone ? `<div class="timezone">${Intl.DateTimeFormat().resolvedOptions().timeZone}</div>` : ""}
-              `;
+	// Complex integration plugin
+	complexIntegration: {
+		id: "google-calendar-integration",
+		name: "Google Calendar Integration",
+		version: "2.1.0",
+		description: "Integrate with Google Calendar for event management",
+		author: { name: "Integration Team", email: "integrations@example.com" },
 
-              // Update every second
-              setInterval(() => {
-                const now = new Date();
-                div.querySelector(".time").textContent = formatTime(
-                  context.config.format,
-                );
-                if (context.config.showDate) {
-                  div.querySelector(".date").textContent = now.toDateString();
-                }
-              }, 1000);
+		dependencies: {
+			plugins: ["authentication-manager"],
+			frontend: [
+				{
+					name: "google-apis",
+					version: "^1.0.0",
+					cdn_url: "https://apis.google.com/js/api.js",
+				},
+			],
+			api_version: "6.0",
+		},
 
-              return div;
-            },
-          },
-        },
-      },
-    },
+		permissions: ["calendar.read", "calendar.write", "user.profile.read"],
 
-    marketplace: {
-      category: "productivity",
-      tags: ["clock", "time", "widget", "dashboard"],
-      pricing: { model: "free" },
-    },
-  },
+		components: {
+			widgets: [
+				{
+					id: "calendar_view",
+					name: "Calendar View",
+					supportedEntityTypes: ["event", "calendar"],
+					adaptations: {
+						minimal: {
+							trigger: { containerArea: { max: 40000 } },
+							render: { view: "agenda", events: 5 },
+						},
+						standard: {
+							trigger: {
+								containerArea: { min: 40000, max: 100000 },
+							},
+							render: { view: "week", toolbar: true },
+						},
+						detailed: {
+							trigger: { containerArea: { min: 100000 } },
+							render: {
+								view: "month",
+								toolbar: true,
+								sidebar: true,
+							},
+						},
+					},
+				},
+			],
 
-  // Complex integration plugin
-  complexIntegration: {
-    id: "google-calendar-integration",
-    name: "Google Calendar Integration",
-    version: "2.1.0",
-    description: "Integrate with Google Calendar for event management",
-    author: { name: "Integration Team", email: "integrations@example.com" },
+			actions: [
+				{
+					id: "sync_google_calendar",
+					name: "Sync with Google Calendar",
+					supportedEntityTypes: ["calendar"],
+					category: "common",
+					target: "self",
+					visibility: {
+						conditions: [
+							{
+								type: "user_has_permission",
+								permissions: ["calendar.write"],
+							},
+						],
+					},
+				},
+			],
 
-    dependencies: {
-      plugins: ["authentication-manager"],
-      frontend: [
-        {
-          name: "google-apis",
-          version: "^1.0.0",
-          cdn_url: "https://apis.google.com/js/api.js",
-        },
-      ],
-      api_version: "6.0",
-    },
+			event_flows: [
+				{
+					id: "calendar_sync_flow",
+					name: "Calendar Sync Flow",
+					trigger: { events: ["calendar_updated", "event_created"] },
+					conditions: {
+						sync_enabled: {
+							type: "property_equals",
+							property: "entity.sync_enabled",
+							value: true,
+						},
+					},
+					actions: {
+						sync_enabled: [
+							{
+								type: "sync_to_google",
+								target: "google_calendar",
+							},
+							{
+								type: "show_notification",
+								message: "Calendar synced successfully",
+							},
+						],
+					},
+				},
+			],
+		},
 
-    permissions: ["calendar.read", "calendar.write", "user.profile.read"],
+		runtime: {
+			entrypoint:
+				"https://cdn.example.com/plugins/google-calendar/v2.1.0/runtime.js",
+		},
 
-    components: {
-      widgets: [
-        {
-          id: "calendar_view",
-          name: "Calendar View",
-          entity_types: ["event", "calendar"],
-          adaptations: {
-            minimal: {
-              trigger: { containerArea: { max: 40000 } },
-              render: { view: "agenda", events: 5 },
-            },
-            standard: {
-              trigger: { containerArea: { min: 40000, max: 100000 } },
-              render: { view: "week", toolbar: true },
-            },
-            detailed: {
-              trigger: { containerArea: { min: 100000 } },
-              render: { view: "month", toolbar: true, sidebar: true },
-            },
-          },
-        },
-      ],
+		configSchema: {
+			google_client_id: { type: "string", required: true },
+			sync_interval: { type: "number", default: 300000 },
+			default_calendar: { type: "string" },
+		},
 
-      actions: [
-        {
-          id: "sync_google_calendar",
-          name: "Sync with Google Calendar",
-          entity_types: ["calendar"],
-          category: "common",
-          target: "self",
-          visibility: {
-            permissions: ["calendar.write"],
-            conditions: ['entity.type === "calendar"'],
-          },
-        },
-      ],
-
-      event_flows: [
-        {
-          id: "calendar_sync_flow",
-          name: "Calendar Sync Flow",
-          trigger: { events: ["calendar_updated", "event_created"] },
-          conditions: {
-            sync_enabled: { "entity.sync_enabled": true },
-            has_permissions: {
-              type: "user_permission",
-              permissions: ["calendar.write"],
-            },
-          },
-          actions: {
-            sync_enabled: [
-              { type: "sync_to_google", target: "google_calendar" },
-              {
-                type: "show_notification",
-                message: "Calendar synced successfully",
-              },
-            ],
-          },
-        },
-      ],
-    },
-
-    runtime: {
-      frontend:
-        "https://cdn.example.com/plugins/google-calendar/v2.1.0/runtime.js",
-    },
-
-    config_schema: {
-      google_client_id: { type: "string", required: true },
-      sync_interval: { type: "number", default: 300000 },
-      default_calendar: { type: "string" },
-    },
-
-    marketplace: {
-      category: "integration",
-      tags: ["google", "calendar", "sync", "productivity"],
-      pricing: { model: "freemium" },
-      demo_url: "https://docs.example.com/plugins/google-calendar",
-    },
-  },
+		marketplace: {
+			category: "integration",
+			tags: ["google", "calendar", "sync", "productivity"],
+			pricing: { model: "freemium" },
+			demo_url: "https://docs.example.com/plugins/google-calendar",
+		},
+	},
 };
 
 /**
@@ -701,81 +733,83 @@ export const ExampleManifests = {
  * Manifest validation function
  */
 export function validateManifest(manifest) {
-  const errors = [];
-  const warnings = [];
+	const errors = [];
+	const warnings = [];
 
-  // Check required fields
-  if (!manifest.id) errors.push("Missing required field: id");
-  if (!manifest.name) errors.push("Missing required field: name");
-  if (!manifest.version) errors.push("Missing required field: version");
+	// Check required fields
+	if (!manifest.id) errors.push("Missing required field: id");
+	if (!manifest.name) errors.push("Missing required field: name");
+	if (!manifest.version) errors.push("Missing required field: version");
 
-  // Validate ID format
-  if (manifest.id && !/^[a-z0-9-_]+$/.test(manifest.id)) {
-    errors.push(
-      "ID must contain only lowercase letters, numbers, hyphens, and underscores",
-    );
-  }
+	// Validate ID format
+	if (manifest.id && !/^[a-z0-9-_]+$/.test(manifest.id)) {
+		errors.push(
+			"ID must contain only lowercase letters, numbers, hyphens, and underscores"
+		);
+	}
 
-  // Validate version format
-  if (
-    manifest.version &&
-    !/^\d+\.\d+\.\d+(-[a-z0-9-]+)?$/.test(manifest.version)
-  ) {
-    errors.push("Version must follow semantic versioning format (e.g., 1.0.0)");
-  }
+	// Validate version format
+	if (
+		manifest.version &&
+		!/^\d+\.\d+\.\d+(-[a-z0-9-]+)?$/.test(manifest.version)
+	) {
+		errors.push(
+			"Version must follow semantic versioning format (e.g., 1.0.0)"
+		);
+	}
 
-  // Check components
-  if (manifest.components) {
-    // Validate widgets
-    if (manifest.components.widgets) {
-      manifest.components.widgets.forEach((widget, index) => {
-        if (!widget.id) errors.push(`Widget ${index}: missing id`);
-        if (!widget.name) errors.push(`Widget ${index}: missing name`);
-      });
-    }
+	// Check components
+	if (manifest.components) {
+		// Validate widgets
+		if (manifest.components.widgets) {
+			manifest.components.widgets.forEach((widget, index) => {
+				if (!widget.id) errors.push(`Widget ${index}: missing id`);
+				if (!widget.name) errors.push(`Widget ${index}: missing name`);
+			});
+		}
 
-    // Validate actions
-    if (manifest.components.actions) {
-      manifest.components.actions.forEach((action, index) => {
-        if (!action.id) errors.push(`Action ${index}: missing id`);
-        if (!action.name) errors.push(`Action ${index}: missing name`);
-        if (
-          action.category &&
-          !["essential", "common", "advanced"].includes(action.category)
-        ) {
-          warnings.push(
-            `Action ${index}: invalid category '${action.category}'`,
-          );
-        }
-      });
-    }
-  }
+		// Validate actions
+		if (manifest.components.actions) {
+			manifest.components.actions.forEach((action, index) => {
+				if (!action.id) errors.push(`Action ${index}: missing id`);
+				if (!action.name) errors.push(`Action ${index}: missing name`);
+				if (
+					action.category &&
+					!["essential", "common", "advanced"].includes(
+						action.category
+					)
+				) {
+					warnings.push(
+						`Action ${index}: invalid category '${action.category}'`
+					);
+				}
+			});
+		}
+	}
 
-  // Check runtime configuration
-  if (!manifest.runtime) {
-    warnings.push(
-      "No runtime configuration specified - plugin will use default runtime",
-    );
-  } else if (!manifest.runtime.frontend && !manifest.runtime.inline) {
-    warnings.push(
-      "Runtime configuration incomplete - specify either frontend URL or inline definition",
-    );
-  }
+	// Check runtime configuration
+	if (!manifest.runtime) {
+		errors.push("Missing required field: runtime");
+	} else if (!manifest.runtime.entrypoint) {
+		errors.push(
+			"Missing required field: runtime.entrypoint. Inline runtimes are forbidden."
+		);
+	}
 
-  // Check dependencies
-  if (manifest.dependencies?.plugins) {
-    manifest.dependencies.plugins.forEach((pluginId) => {
-      if (!/^[a-z0-9-_]+$/.test(pluginId)) {
-        warnings.push(`Invalid plugin dependency ID: ${pluginId}`);
-      }
-    });
-  }
+	// Check dependencies
+	if (manifest.dependencies?.plugins) {
+		manifest.dependencies.plugins.forEach((pluginId) => {
+			if (!/^[a-z0-9-_]+$/.test(pluginId)) {
+				warnings.push(`Invalid plugin dependency ID: ${pluginId}`);
+			}
+		});
+	}
 
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-  };
+	return {
+		valid: errors.length === 0,
+		errors,
+		warnings,
+	};
 }
 
 /**
@@ -787,51 +821,49 @@ export function validateManifest(manifest) {
  * Create manifest from template
  */
 export function createManifestTemplate(type = "simple") {
-  const templates = {
-    simple: {
-      id: "",
-      name: "",
-      version: "1.0.0",
-      description: "",
-      author: { name: "" },
-      components: {
-        widgets: [],
-      },
-      runtime: {
-        inline: {
-          components: {},
-        },
-      },
-    },
+	const templates = {
+		simple: {
+			id: "",
+			name: "",
+			version: "1.0.0",
+			description: "",
+			author: { name: "" },
+			components: {
+				widgets: [],
+			},
+			runtime: {
+				entrypoint: "",
+			},
+		},
 
-    complex: {
-      id: "",
-      name: "",
-      version: "1.0.0",
-      description: "",
-      author: { name: "", email: "" },
-      dependencies: {
-        plugins: [],
-        frontend: [],
-      },
-      permissions: [],
-      components: {
-        widgets: [],
-        actions: [],
-        event_flows: [],
-      },
-      runtime: {
-        frontend: "",
-      },
-      config_schema: {},
-      marketplace: {
-        category: "productivity",
-        tags: [],
-      },
-    },
-  };
+		complex: {
+			id: "",
+			name: "",
+			version: "1.0.0",
+			description: "",
+			author: { name: "", email: "" },
+			dependencies: {
+				plugins: [],
+				frontend: [],
+			},
+			permissions: [],
+			components: {
+				widgets: [],
+				actions: [],
+				event_flows: [],
+			},
+			runtime: {
+				entrypoint: "",
+			},
+			configSchema: {},
+			marketplace: {
+				category: "productivity",
+				tags: [],
+			},
+		},
+	};
 
-  return JSON.parse(JSON.stringify(templates[type] || templates.simple));
+	return JSON.parse(JSON.stringify(templates[type] || templates.simple));
 }
 
 export default PluginManifestSchema;

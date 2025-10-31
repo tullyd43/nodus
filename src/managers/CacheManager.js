@@ -16,18 +16,17 @@ export class CacheManager {
 	/**
 	 * Creates an instance of CacheManager.
 	 * @param {object} context - The global application context.
-	 * @param {object} context.managers - The collection of system managers.
-	 * @param {import('../utils/MetricsRegistry.js').MetricsRegistry} context.managers.metricsRegistry - The central metrics registry.
-	 * @param {object} context.eventFlow - The application's EventFlowEngine.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
-	constructor(context = {}) {
+	constructor({ stateManager }) {
 		/**
 		 * A map of all managed cache instances, keyed by name.
 		 * @type {Map<string, LRUCache>}
 		 * @private
 		 */
 		this.caches = new Map();
-		this.context = context;
+		// V8.0 Parity: The stateManager is the single source of truth for all dependencies.
+		this.stateManager = stateManager;
 	}
 
 	/**
@@ -50,8 +49,8 @@ export class CacheManager {
 
 		// Create a new cache, injecting shared dependencies
 		const newCache = new LRUCache(maxSize, {
+			stateManager: this.stateManager, // Pass the stateManager directly.
 			keyPrefix: name,
-			...this.context, // Pass the full context down to the LRUCache
 			...options,
 		});
 

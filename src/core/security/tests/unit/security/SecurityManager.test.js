@@ -106,11 +106,12 @@ describe("SecurityManager", () => {
 	test("cleanup should stop the TTL check interval", async () => {
 		const sm = new SecurityManager({ ttlCheckIntervalMs: 100 });
 		await sm.initialize();
+		// When using fake timers, spy on the mock provided by Vitest
 		const clearIntervalSpy = vi.spyOn(vi.getTimerMock(), "clearInterval");
 
 		sm.cleanup();
 
 		expect(clearIntervalSpy).toHaveBeenCalledOnce();
-		clearIntervalSpy.mockRestore();
+		clearIntervalSpy.mockRestore(); // It's good practice to restore spies
 	});
 });

@@ -42,17 +42,15 @@ export class AILayoutAssistant {
 	 * @private
 	 */
 	setupEventListeners() {
-		// Listen for layout changes to build pattern database
-		if (typeof window.eventFlowEngine !== "undefined") {
-			window.eventFlowEngine.on(
-				"layoutChanged",
-				this.onLayoutChanged.bind(this)
-			);
-			window.eventFlowEngine.on(
-				"policyChanged",
-				this.onPolicyChanged.bind(this)
-			);
-		}
+		// Listen for layout changes via the state manager's event bus
+		this.stateManager?.on?.(
+			"layoutChanged",
+			this.onLayoutChanged.bind(this)
+		);
+		this.stateManager?.on?.(
+			"policyChanged",
+			this.onPolicyChanged.bind(this)
+		);
 	}
 
 	/**
@@ -97,15 +95,11 @@ export class AILayoutAssistant {
 	 */
 	isEnabled() {
 		try {
-			// Check policy first
-			const context = window.appViewModel?.context;
-			if (context) {
-				return context.getBooleanPolicy(
-					"system",
-					"grid_ai_suggestions",
-					false
-				);
-			}
+			// Align with V8.0: Check policy via the state manager
+			return (
+				this.stateManager?.getPolicy?.("system.grid_ai_suggestions") ??
+				this.options.enabled
+			);
 		} catch (error) {
 			console.warn(
 				"Could not check AI suggestions policy:",
@@ -123,7 +117,11 @@ export class AILayoutAssistant {
 	 */
 	getCurrentUserId() {
 		try {
-			return window.appViewModel?.getCurrentUser?.()?.id || "anonymous";
+			// Align with V8.0: Get user context from the security manager
+			return (
+				this.stateManager?.managers?.securityManager?.context?.userId ||
+				"anonymous"
+			);
 		} catch (error) {
 			console.warn("Could not get current user ID:", error.message);
 			return "anonymous";
@@ -284,7 +282,7 @@ export class AILayoutAssistant {
 				this.storeSuggestions(suggestions);
 				this.lastSuggestionTime = DateCore.timestamp();
 
-				window.eventFlowEngine.emit("aiLayoutSuggestions", {
+				this.stateManager?.emit?.("aiLayoutSuggestions", {
 					suggestions: suggestions.slice(
 						0,
 						this.options.maxSuggestions
@@ -476,7 +474,7 @@ export class AILayoutAssistant {
 
 			// Mark as applied and emit event
 			suggestion.applied = true;
-			window.eventFlowEngine.emit("aiSuggestionApplied", {
+			this.stateManager?.emit?.("aiSuggestionApplied", {
 				suggestionId,
 				suggestion,
 			});
@@ -495,7 +493,7 @@ export class AILayoutAssistant {
 		const suggestion = this.suggestions.get(suggestionId);
 		if (suggestion) {
 			suggestion.dismissed = true;
-			window.eventFlowEngine.emit("aiSuggestionDismissed", {
+			this.stateManager?.emit?.("aiSuggestionDismissed", {
 				suggestionId,
 			});
 		}
@@ -551,7 +549,7 @@ export class AILayoutAssistant {
 	 */
 	clearSuggestions() {
 		this.suggestions.clear();
-		window.eventFlowEngine.emit("aiSuggestionsCleared");
+		this.stateManager?.emit?.("aiSuggestionsCleared");
 	}
 
 	// Analytics and monitoring
@@ -593,12 +591,11 @@ export class AISuggestionPanel {
 	 * @private
 	 */
 	setupEventListeners() {
-		if (typeof window.eventFlowEngine !== "undefined") {
-			window.eventFlowEngine.on(
-				"aiLayoutSuggestions",
-				this.onSuggestionsReceived.bind(this)
-			);
-		}
+		// This component is instantiated by CompleteGridSystem, which has the stateManager
+		this.assistant.stateManager?.on?.(
+			"aiLayoutSuggestions",
+			this.onSuggestionsReceived.bind(this)
+		);
 	}
 
 	/**

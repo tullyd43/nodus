@@ -6,52 +6,49 @@
  * @classdesc Analyzes query performance and suggests/applies optimizations for JSONB data, such as creating GIN indexes or materialized views.
  */
 export class DatabaseOptimizer {
+	// V8.0 Parity: Declare all private fields at the top of the class.
+	/** @private @type {import('./HybridStateManager.js').default|null} */ #stateManager =
+		null;
+	/** @private @type {import('./storage/ModernIndexedDB.js').ModernIndexedDB|null} */ #db =
+		null;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */ #metrics =
+		null;
+	/** @private @type {object} */ #thresholds = {
+		slowQueryMs: 50,
+		hotQueryCount: 100,
+		criticalLatencyMs: 100,
+		materializedViewRows: 10000,
+		partitionRows: 1000000,
+	};
+	/** @private @type {object} */ #intervals = {
+		queryAnalysis: 5 * 60 * 1000, // 5 minutes
+		optimization: 60 * 60 * 1000, // 1 hour
+		viewRefresh: 30 * 60 * 1000, // 30 minutes
+	};
+	/** @private @type {ReturnType<typeof setInterval>|null} */ #queryAnalysisInterval =
+		null;
+	/** @private @type {ReturnType<typeof setInterval>|null} */ #viewRefreshInterval =
+		null;
+	/** @private @type {ReturnType<typeof setInterval>|null} */ #autoSuggestionsInterval =
+		null;
+
+	monitoring = true;
+	/** @type {boolean} */
+	autoSuggestions = true;
+
 	/**
 	 * Creates an instance of DatabaseOptimizer.
-	 * @param {object} dbConnection - An active database connection object with a `query` method.
-	 * @param {import('./HybridStateManager.js').HybridStateManager|null} [stateManager=null] - The application's state manager for event emission.
+	 * @param {object} context - The application context, containing the stateManager.
+	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
-	constructor(dbConnection, stateManager = null) {
-		/** @type {object} */
-		this.db = dbConnection;
-		/** @type {import('./HybridStateManager.js').HybridStateManager|null} */
-		this.stateManager = stateManager;
-		/** @type {boolean} */
-		this.monitoring = true;
-		/** @type {boolean} */
-		this.autoSuggestions = true;
-		/**
-		 * @property {object} metrics - Performance and usage metrics for the optimizer.
-		 * @property {number} metrics.queriesLogged - The number of queries logged for performance analysis.
-		 * @property {number} metrics.optimizationsApplied - The number of optimizations successfully applied.
-		 * @property {number} metrics.averageLatency - The average latency of logged queries.
-		 * @property {number} metrics.suggestionsGenerated - The number of new optimization suggestions created.
-		 * @private
-		 */
-		this.metrics = {
-			queriesLogged: 0,
-			optimizationsApplied: 0,
-			averageLatency: 0,
-			suggestionsGenerated: 0,
-		};
-
-		// Optimization thresholds
-		/** @private */
-		this.thresholds = {
-			slowQueryMs: 50,
-			hotQueryCount: 100,
-			criticalLatencyMs: 100,
-			materializedViewRows: 10000,
-			partitionRows: 1000000,
-		};
-
-		// Performance monitoring intervals
-		/** @private */
-		this.intervals = {
-			queryAnalysis: 5 * 60 * 1000, // 5 minutes
-			optimization: 60 * 60 * 1000, // 1 hour
-			viewRefresh: 30 * 60 * 1000, // 30 minutes
-		};
+	constructor(context) {
+		// V8.0 Parity: This is a server-side module. It should receive a dedicated DB client, not the stateManager.
+		this.#stateManager = context.stateManager; // Keep for eventing if needed
+		this.#db = context.dbClient; // Expect a dedicated SQL database client
+		this.#metrics =
+			context.stateManager?.metricsRegistry?.namespace(
+				"databaseOptimizer"
+			);
 	}
 
 	/**
@@ -63,11 +60,18 @@ export class DatabaseOptimizer {
 		try {
 			console.log("🔧 Initializing DatabaseOptimizer...");
 
+			// V8.0 Parity: Add a guard to ensure this runs only with a compatible DB client.
+			if (!this.#db || typeof this.#db.query !== "function") {
+				throw new Error(
+					"DatabaseOptimizer requires a compatible SQL database client with a .query() method."
+				);
+			}
+
 			// Verify schema exists
-			await this.verifySchema();
+			await this.#verifySchema();
 
 			// Load existing optimizations
-			await this.loadOptimizations();
+			await this.#loadOptimizations();
 
 			// Start monitoring if enabled
 			if (this.monitoring) {
@@ -92,7 +96,7 @@ export class DatabaseOptimizer {
 	 * @private
 	 * @throws {Error} If a required table is not found.
 	 */
-	async verifySchema() {
+	async #verifySchema() {
 		const requiredTables = [
 			"database_optimizations",
 			"query_performance_log",
@@ -100,8 +104,9 @@ export class DatabaseOptimizer {
 		];
 
 		for (const table of requiredTables) {
-			const result = await this.db.query(
-				`
+			// V8.0 Parity: Use the private field #db
+			const result = await this.#db.query(
+				` 
         SELECT EXISTS (
           SELECT FROM information_schema.tables 
           WHERE table_name = $1
@@ -122,9 +127,9 @@ export class DatabaseOptimizer {
 	 * Loads a summary of previously applied optimizations from the database to provide context.
 	 * @private
 	 */
-	async loadOptimizations() {
+	async #loadOptimizations() {
 		try {
-			const result = await this.db.query(`
+			const result = await this.#db.query(`
         SELECT 
           optimization_type,
           COUNT(*) as count,
@@ -146,14 +151,14 @@ export class DatabaseOptimizer {
 	 */
 	startMonitoring() {
 		// Analyze query patterns
-		setInterval(() => {
-			this.analyzeQueryPatterns();
-		}, this.intervals.queryAnalysis);
+		this.#queryAnalysisInterval = setInterval(() => {
+			this.#analyzeQueryPatterns();
+		}, this.#intervals.queryAnalysis);
 
 		// Refresh materialized views
-		setInterval(() => {
-			this.refreshMaterializedViews();
-		}, this.intervals.viewRefresh);
+		this.#viewRefreshInterval = setInterval(() => {
+			this.#refreshMaterializedViews();
+		}, this.#intervals.viewRefresh);
 
 		console.log("📈 Performance monitoring started");
 	}
@@ -163,9 +168,9 @@ export class DatabaseOptimizer {
 	 * @private
 	 */
 	startAutoSuggestions() {
-		setInterval(() => {
-			this.generateOptimizationSuggestions();
-		}, this.intervals.optimization);
+		this.#autoSuggestionsInterval = setInterval(() => {
+			this.#generateOptimizationSuggestions();
+		}, this.#intervals.optimization);
 
 		console.log("💡 Auto-suggestions enabled");
 	}
@@ -195,7 +200,7 @@ export class DatabaseOptimizer {
 			if (!this.monitoring) return;
 
 			// Insert into performance log
-			await this.db.query(
+			await this.#db.query(
 				`
         INSERT INTO query_performance_log 
         (table_name, query_pattern, jsonb_path, execution_time_ms, row_count, scan_type, index_used)
@@ -212,10 +217,10 @@ export class DatabaseOptimizer {
 				]
 			);
 
-			this.metrics.queriesLogged++;
+			this.#metrics?.increment("queriesLogged");
 
 			// Check if this query needs immediate attention
-			if (executionTime > this.thresholds.criticalLatencyMs) {
+			if (executionTime > this.#thresholds.criticalLatencyMs) {
 				await this.handleCriticalSlowQuery(
 					tableName,
 					jsonbPath,
@@ -237,7 +242,7 @@ export class DatabaseOptimizer {
 	async handleCriticalSlowQuery(tableName, jsonbPath, executionTime) {
 		try {
 			// Check if we already have a suggestion for this
-			const existing = await this.db.query(
+			const existing = await this.#db.query(
 				`
         SELECT id FROM index_suggestions 
         WHERE table_name = $1 AND jsonb_path = $2 
@@ -271,10 +276,10 @@ export class DatabaseOptimizer {
 	 * Analyzes recently logged query performance data to identify patterns of slow or frequent queries that could be optimized.
 	 * @private
 	 */
-	async analyzeQueryPatterns() {
+	async #analyzeQueryPatterns() {
 		try {
 			// Get slow query patterns from last hour
-			const result = await this.db.query(
+			const result = await this.#db.query(
 				`
         SELECT 
           table_name,
@@ -291,11 +296,11 @@ export class DatabaseOptimizer {
         ORDER BY AVG(execution_time_ms) DESC
         LIMIT 20
       `,
-				[this.thresholds.slowQueryMs, this.thresholds.hotQueryCount]
+				[this.#thresholds.slowQueryMs, this.#thresholds.hotQueryCount]
 			);
 
 			for (const pattern of result.rows) {
-				await this.evaluateOptimizationOpportunity(pattern);
+				await this.#evaluateOptimizationOpportunity(pattern);
 			}
 
 			if (result.rows.length > 0) {
@@ -313,7 +318,7 @@ export class DatabaseOptimizer {
 	 * @private
 	 * @param {object} pattern - An object containing details about the slow query pattern.
 	 */
-	async evaluateOptimizationOpportunity(pattern) {
+	async #evaluateOptimizationOpportunity(pattern) {
 		const {
 			table_name,
 			jsonb_path,
@@ -328,7 +333,7 @@ export class DatabaseOptimizer {
 			let optimizationType;
 			let estimatedBenefit;
 
-			if (query_count > this.thresholds.materializedViewRows) {
+			if (query_count > this.#thresholds.materializedViewRows) {
 				optimizationType = "materialized_view";
 				estimatedBenefit = Math.min(avg_latency * 0.8, 90); // Up to 90% improvement
 			} else if (
@@ -393,7 +398,7 @@ export class DatabaseOptimizer {
 
 				case "partial_index":
 					// Create partial index for most common entity type
-					const typeAnalysis = await this.db.query(`
+					const typeAnalysis = await this.#db.query(`
             SELECT type, COUNT(*) as count
             FROM ${tableName}
             WHERE data->>'${jsonbPath}' IS NOT NULL
@@ -442,7 +447,7 @@ export class DatabaseOptimizer {
 			}
 
 			// Insert suggestion
-			const result = await this.db.query(
+			const result = await this.#db.query(
 				`
         INSERT INTO index_suggestions 
         (table_name, jsonb_path, suggestion_type, estimated_benefit, query_frequency, 
@@ -468,7 +473,7 @@ export class DatabaseOptimizer {
 				]
 			);
 
-			this.metrics.suggestionsGenerated++;
+			this.#metrics?.increment("suggestionsGenerated");
 
 			console.log(
 				`💡 Created ${suggestionType} suggestion for ${tableName}.${jsonbPath}`
@@ -491,7 +496,7 @@ export class DatabaseOptimizer {
 	async applyOptimization(suggestionId, approvedBy = "system") {
 		try {
 			// Get suggestion details
-			const result = await this.db.query(
+			const result = await this.#db.query(
 				`
         SELECT * FROM index_suggestions WHERE id = $1
       `,
@@ -519,11 +524,11 @@ export class DatabaseOptimizer {
 
 			// Execute the optimization SQL
 			const startTime = Date.now();
-			await this.db.query(suggestion.suggested_sql);
+			await this.#db.query(suggestion.suggested_sql);
 			const executionTime = Date.now() - startTime;
 
 			// Update suggestion status
-			await this.db.query(
+			await this.#db.query(
 				`
         UPDATE index_suggestions 
         SET status = 'applied', applied_at = now()
@@ -533,7 +538,7 @@ export class DatabaseOptimizer {
 			);
 
 			// Record in optimizations table
-			await this.db.query(
+			await this.#db.query(
 				`
         INSERT INTO database_optimizations 
         (optimization_type, table_name, target_field, sql_definition, rollback_sql, 
@@ -557,15 +562,13 @@ export class DatabaseOptimizer {
 				]
 			);
 
-			this.metrics.optimizationsApplied++;
+			this.#metrics?.increment("optimizationsApplied");
 
 			console.log(
 				`✅ Applied ${suggestion.suggestion_type} optimization in ${executionTime}ms`
-			);
-
-			// Emit event if state manager available
-			if (this.stateManager?.eventFlowEngine) {
-				this.stateManager.eventFlowEngine.emit("optimization_applied", {
+			); // V8.0 Parity: Use the private field #stateManager for eventing.
+			if (this.#stateManager) {
+				this.#stateManager.emit("optimization_applied", {
 					id: suggestionId,
 					type: suggestion.suggestion_type,
 					table: suggestion.table_name,
@@ -583,7 +586,7 @@ export class DatabaseOptimizer {
 			);
 
 			// Update suggestion status to failed
-			await this.db
+			await this.#db
 				.query(
 					`
         UPDATE index_suggestions 
@@ -606,7 +609,7 @@ export class DatabaseOptimizer {
 	 */
 	async rollbackOptimization(optimizationId) {
 		try {
-			const result = await this.db.query(
+			const result = await this.#db.query(
 				`
         SELECT * FROM database_optimizations WHERE id = $1
       `,
@@ -632,10 +635,10 @@ export class DatabaseOptimizer {
 			console.log(`🔙 Rolling back ${optimization.optimization_type}...`);
 
 			// Execute rollback SQL
-			await this.db.query(optimization.rollback_sql);
+			await this.#db.query(optimization.rollback_sql);
 
 			// Update status
-			await this.db.query(
+			await this.#db.query(
 				`
         UPDATE database_optimizations 
         SET status = 'rolled_back'
@@ -660,19 +663,19 @@ export class DatabaseOptimizer {
 	 * Automatically generates optimization suggestions by querying a database function designed to find optimizable query patterns.
 	 * @private
 	 */
-	async generateOptimizationSuggestions() {
+	async #generateOptimizationSuggestions() {
 		try {
 			console.log("🔍 Generating optimization suggestions...");
 
 			// Call the database function to get suggestions
-			const result = await this.db.query(
+			const result = await this.#db.query(
 				`
         SELECT * FROM suggest_jsonb_indexes()
         WHERE query_count > $1 AND avg_time > $2
         ORDER BY avg_time DESC, query_count DESC
         LIMIT 10
       `,
-				[this.thresholds.hotQueryCount, this.thresholds.slowQueryMs]
+				[this.#thresholds.hotQueryCount, this.#thresholds.slowQueryMs]
 			);
 
 			for (const suggestion of result.rows) {
@@ -708,12 +711,12 @@ export class DatabaseOptimizer {
 	 * Refreshes any materialized views created by this optimizer to ensure their data is up-to-date.
 	 * @private
 	 */
-	async refreshMaterializedViews() {
+	async #refreshMaterializedViews() {
 		try {
 			console.log("🔄 Refreshing materialized views...");
 
 			const startTime = Date.now();
-			await this.db.query("SELECT refresh_performance_views()");
+			await this.#db.query("SELECT refresh_performance_views()");
 			const executionTime = Date.now() - startTime;
 
 			console.log(
@@ -740,7 +743,7 @@ export class DatabaseOptimizer {
 	 */
 	async getPendingSuggestions() {
 		try {
-			const result = await this.db.query(`
+			const result = await this.#db.query(`
         SELECT 
           id,
           table_name,
@@ -768,7 +771,7 @@ export class DatabaseOptimizer {
 	 */
 	async getAppliedOptimizations() {
 		try {
-			const result = await this.db.query(`
+			const result = await this.#db.query(`
         SELECT 
           o.*,
           COALESCE(
@@ -808,11 +811,12 @@ export class DatabaseOptimizer {
 	async getPerformanceMetrics() {
 		try {
 			const [slowQueries, tableStats, indexStats] = await Promise.all([
-				this.db.query("SELECT * FROM slow_query_analysis LIMIT 10"),
-				this.db.query(
+				// V8.0 Parity: Use private field #db
+				this.#db.query("SELECT * FROM slow_query_analysis LIMIT 10"),
+				this.#db.query(
 					"SELECT * FROM database_performance_overview LIMIT 10"
-				),
-				this.db.query(`
+				), // V8.0 Parity: Use private field #db
+				this.#db.query(`
           SELECT 
             schemaname, tablename, indexname, idx_scan, idx_tup_read,
             pg_size_pretty(pg_relation_size(indexrelid)) as index_size
@@ -827,7 +831,7 @@ export class DatabaseOptimizer {
 				slowQueries: slowQueries.rows,
 				tableStats: tableStats.rows,
 				indexStats: indexStats.rows,
-				systemMetrics: this.metrics,
+				systemMetrics: this.#metrics,
 			};
 		} catch (error) {
 			console.error("Failed to get performance metrics:", error);
@@ -841,7 +845,7 @@ export class DatabaseOptimizer {
 	 */
 	async getOptimizationOpportunities() {
 		try {
-			const result = await this.db.query(
+			const result = await this.#db.query(
 				"SELECT * FROM optimization_opportunities LIMIT 20"
 			);
 			return result.rows;
@@ -857,11 +861,11 @@ export class DatabaseOptimizer {
 	 */
 	updateConfig(config) {
 		if (config.thresholds) {
-			this.thresholds = { ...this.thresholds, ...config.thresholds };
+			this.#thresholds = { ...this.#thresholds, ...config.thresholds };
 		}
 
 		if (config.intervals) {
-			this.intervals = { ...this.intervals, ...config.intervals };
+			this.#intervals = { ...this.#intervals, ...config.intervals };
 		}
 
 		if (typeof config.monitoring === "boolean") {
@@ -881,8 +885,8 @@ export class DatabaseOptimizer {
 	 */
 	getMetrics() {
 		return {
-			...this.metrics,
-			thresholds: this.thresholds,
+			...(this.#metrics?.getAllAsObject() || {}),
+			thresholds: this.#thresholds,
 			monitoring: this.monitoring,
 			autoSuggestions: this.autoSuggestions,
 		};
@@ -892,11 +896,14 @@ export class DatabaseOptimizer {
 	 * Shutdown the optimizer
 	 */
 	async shutdown() {
-		console.log("🛑 Shutting down DatabaseOptimizer...");
-		this.monitoring = false;
-		this.autoSuggestions = false;
-		// Clear any running intervals would go here
-		console.log("✅ DatabaseOptimizer shutdown complete");
+		console.log("[DatabaseOptimizer] Shutting down...");
+		clearInterval(this.#queryAnalysisInterval);
+		clearInterval(this.#viewRefreshInterval);
+		clearInterval(this.#autoSuggestionsInterval);
+		this.#queryAnalysisInterval = null;
+		this.#viewRefreshInterval = null;
+		this.#autoSuggestionsInterval = null;
+		console.log("[DatabaseOptimizer] Shutdown complete.");
 	}
 }
 

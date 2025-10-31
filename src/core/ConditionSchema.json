@@ -1,0 +1,103 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"title": "Nodus Condition Definition",
+	"description": "A schema for declarative condition objects used in event flows and UI visibility.",
+	"type": "object",
+	"properties": {
+		"type": {
+			"description": "The type of the condition to evaluate.",
+			"type": "string"
+		}
+	},
+	"required": ["type"],
+	"if": { "properties": { "type": { "const": "property_equals" } } },
+	"then": {
+		"properties": {
+			"property": { "type": "string" },
+			"value": {}
+		},
+		"required": ["property", "value"]
+	},
+	"if": { "properties": { "type": { "const": "numeric_comparison" } } },
+	"then": {
+		"properties": {
+			"property": { "type": "string" },
+			"operator": {
+				"type": "string",
+				"enum": [">", "<", ">=", "<=", "==", "!="]
+			},
+			"value": { "type": "number" }
+		},
+		"required": ["property", "operator", "value"]
+	},
+	"if": { "properties": { "type": { "const": "in_array" } } },
+	"then": {
+		"properties": {
+			"property": { "type": "string" },
+			"array": { "type": "array" }
+		},
+		"required": ["property", "array"]
+	},
+	"if": { "properties": { "type": { "const": "regex_match" } } },
+	"then": {
+		"properties": {
+			"property": { "type": "string" },
+			"pattern": { "type": "string" },
+			"flags": { "type": "string" }
+		},
+		"required": ["property", "pattern"]
+	},
+	"if": { "properties": { "type": { "const": "time_range" } } },
+	"then": {
+		"properties": {
+			"after": { "type": "number" },
+			"before": { "type": "number" }
+		}
+	},
+	"if": { "properties": { "type": { "const": "time_of_day" } } },
+	"then": {
+		"properties": {
+			"after": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+			"before": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" }
+		}
+	},
+	"if": { "properties": { "type": { "const": "user_has_permission" } } },
+	"then": {
+		"properties": {
+			"permissions": { "type": "array", "items": { "type": "string" } },
+			"requireAll": { "type": "boolean" }
+		},
+		"required": ["permissions"]
+	},
+	"if": { "properties": { "type": { "const": "user_has_role" } } },
+	"then": {
+		"properties": {
+			"roles": { "type": "array", "items": { "type": "string" } }
+		},
+		"required": ["roles"]
+	},
+	"if": { "properties": { "type": { "const": "entity_type" } } },
+	"then": {
+		"properties": {
+			"types": { "type": "array", "items": { "type": "string" } }
+		},
+		"required": ["types"]
+	},
+	"if": { "properties": { "type": { "const": "is_rate_limited" } } },
+	"then": {
+		"properties": {
+			"key": { "type": "string" },
+			"limit": { "type": "number" },
+			"window": { "type": "number" }
+		},
+		"required": ["limit"]
+	},
+	"if": { "properties": { "type": { "const": "evaluate_logical" } } },
+	"then": {
+		"properties": {
+			"operator": { "type": "string", "enum": ["AND", "OR", "NOT"] },
+			"conditions": { "type": "array" }
+		},
+		"required": ["operator", "conditions"]
+	}
+}

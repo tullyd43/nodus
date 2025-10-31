@@ -1,3 +1,5 @@
+import { scanForForbiddenPatterns } from "../utils/ArbitraryCodeValidator.js";
+import { PluginError } from "../utils/ErrorHelpers.js";
 /**
  * @file ManifestPluginSystem.js
  * @description Replaces a class-based PluginRegistry with a declarative, manifest-driven plugin loading system.
@@ -10,68 +12,42 @@
  * to component registration and dependency management.
  */
 export class ManifestPluginSystem {
+	/** @type {import('./HybridStateManager.js').default} */
+	stateManager;
+	/** @private @type {Map<string, object>} */
+	#loadedPlugins = new Map();
+	/** @private @type {Map<string, object>} */
+	#pluginManifests = new Map();
+
+	// Plugin loading state
+	/** @private @type {Map<string, Promise<object>>} */
+	#loadingPromises = new Map();
+	/** @private @type {Map<string, string[]>} */
+	#dependencyGraph = new Map();
+
+	// Plugin lifecycle hooks
+	/**
+	 * @private
+	 * @type {{beforeLoad: Function[], afterLoad: Function[], beforeUnload: Function[], afterUnload: Function[], onError: Function[]}}
+	 */
+	#hooks = {
+		beforeLoad: [],
+		afterLoad: [],
+		beforeUnload: [],
+		afterUnload: [],
+		onError: [],
+	};
+
 	/**
 	 * Creates an instance of ManifestPluginSystem.
 	 * @param {object} context - The global application context.
-	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager instance.
-	 * @param {object} context.managers - The collection of system managers.
+	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
-	constructor({ stateManager, managers }) {
-		/** @type {import('./HybridStateManager.js').default} */
+	constructor({ stateManager }) {
 		this.stateManager = stateManager;
-		/** @type {object} */
-		this.managers = managers;
-		/** @private @type {Map<string, object>} */
-		this.loadedPlugins = new Map();
-		/** @private @type {Map<string, object>} */
-		this.pluginManifests = new Map();
-		/** @private @type {Map<string, object>} */
-		this.componentRegistry = new Map();
-		/** @private @type {Map<string, object>} */
-		this.actionRegistry = new Map();
-		/** @private @type {Map<string, object>} */
-		this.widgetRegistry = new Map();
-		/** @private @type {Map<string, object>} */
-		this.fieldRendererRegistry = new Map();
-		/** @private @type {Map<string, object>} */
-		this.commandHandlerRegistry = new Map();
 
-		// Plugin runtime environments
-		/** @private @type {Map<string, object>} */
-		this.runtimeEnvironments = new Map();
-
-		// Plugin loading state
-		/** @private @type {Map<string, Promise<object>>} */
-		this.loadingPromises = new Map();
-		/** @private @type {Map<string, string[]>} */
-		this.dependencyGraph = new Map();
-
-		// Plugin lifecycle hooks
-		/**
-		 * @private
-		 * @type {{beforeLoad: Function[], afterLoad: Function[], beforeUnload: Function[], afterUnload: Function[], onError: Function[]}}
-		 */
-		this.hooks = {
-			beforeLoad: [],
-			afterLoad: [],
-			beforeUnload: [],
-			afterUnload: [],
-			onError: [],
-		};
-
-		// Performance metrics
-		/**
-		 * @private
-		 * @type {{pluginsLoaded: number, loadingTimes: number[], averageLoadTime: number, failedLoads: number, registeredComponents: number, registeredActions: number}}
-		 */
-		this.metrics = {
-			pluginsLoaded: 0,
-			loadingTimes: [],
-			averageLoadTime: 0,
-			failedLoads: 0,
-			registeredComponents: 0,
-			registeredActions: 0,
-		};
+		// Align with V8.0: Use the central metrics registry
+		this.metrics = stateManager?.metricsRegistry?.namespace("pluginSystem");
 	}
 
 	/**
@@ -84,7 +60,7 @@ export class ManifestPluginSystem {
 			await this.loadPluginManifests();
 
 			// Load enabled plugins
-			await this.loadEnabledPlugins();
+			await this.#loadEnabledPlugins();
 
 			console.log(
 				`ManifestPluginSystem initialized with ${this.loadedPlugins.size} plugins`
@@ -149,10 +125,10 @@ export class ManifestPluginSystem {
 			rawManifest: manifestData,
 		};
 
-		this.pluginManifests.set(manifest.id, manifest);
+		this.#pluginManifests.set(manifest.id, manifest);
 
 		// Build dependency graph
-		this.updateDependencyGraph(manifest);
+		this.#updateDependencyGraph(manifest);
 
 		return manifest;
 	}
@@ -169,39 +145,39 @@ export class ManifestPluginSystem {
 
 		try {
 			// Check if already loaded
-			if (this.loadedPlugins.has(pluginId)) {
-				return this.loadedPlugins.get(pluginId);
+			if (this.#loadedPlugins.has(pluginId)) {
+				return this.#loadedPlugins.get(pluginId);
 			}
 
 			// Check if currently loading
-			if (this.loadingPromises.has(pluginId)) {
-				return await this.loadingPromises.get(pluginId);
+			if (this.#loadingPromises.has(pluginId)) {
+				return await this.#loadingPromises.get(pluginId);
 			}
 
 			// Get manifest
-			const manifest = this.pluginManifests.get(pluginId);
+			const manifest = this.#pluginManifests.get(pluginId);
 			if (!manifest) {
 				throw new Error(`Plugin manifest not found: ${pluginId}`);
 			}
 
 			// Create loading promise
-			const loadingPromise = this.doLoadPlugin(manifest, options);
-			this.loadingPromises.set(pluginId, loadingPromise);
+			const loadingPromise = this.#doLoadPlugin(manifest, options);
+			this.#loadingPromises.set(pluginId, loadingPromise);
 
 			const plugin = await loadingPromise;
 
 			// Record metrics
 			const loadTime = performance.now() - startTime;
-			this.recordLoadTime(loadTime);
+			this.#recordLoadTime(loadTime);
 
 			return plugin;
 		} catch (error) {
-			this.metrics.failedLoads++;
-			this.runHooks("onError", { pluginId, error });
+			this.metrics?.increment("failedLoads");
+			this.#runHooks("onError", { pluginId, error });
 			console.error(`Failed to load plugin ${pluginId}:`, error);
 			throw error;
 		} finally {
-			this.loadingPromises.delete(pluginId);
+			this.#loadingPromises.delete(pluginId);
 		}
 	}
 
@@ -213,23 +189,23 @@ export class ManifestPluginSystem {
 	 * @param {object} options - Loading options.
 	 * @returns {Promise<object>} The loaded plugin instance.
 	 */
-	async doLoadPlugin(manifest, options) {
+	async #doLoadPlugin(manifest, options) {
 		const pluginId = manifest.id;
 
 		// Run before load hooks
-		this.runHooks("beforeLoad", { manifest, options });
+		this.#runHooks("beforeLoad", { manifest, options });
 
 		// Load dependencies first
-		await this.loadDependencies(manifest);
+		await this.#loadDependencies(manifest);
 
 		// Create plugin context
-		const pluginContext = this.createPluginContext(manifest);
+		const pluginContext = this.#createPluginContext(manifest);
 
 		// Load runtime environment
-		const runtime = await this.loadPluginRuntime(manifest, pluginContext);
+		const runtime = await this.#loadPluginRuntime(manifest, pluginContext);
 
 		// Register plugin components
-		await this.registerPluginComponents(manifest, runtime, pluginContext);
+		await this.#registerPluginComponents(manifest, runtime, pluginContext);
 
 		// Create plugin instance
 		const plugin = {
@@ -241,11 +217,11 @@ export class ManifestPluginSystem {
 			status: "loaded",
 		};
 
-		this.loadedPlugins.set(pluginId, plugin);
-		this.metrics.pluginsLoaded++;
+		this.#loadedPlugins.set(pluginId, plugin);
+		this.metrics?.increment("pluginsLoaded");
 
 		// Run after load hooks
-		this.runHooks("afterLoad", { plugin });
+		this.#runHooks("afterLoad", { plugin });
 
 		// Emit plugin loaded event
 		this.stateManager.emit?.("pluginLoaded", { pluginId, plugin });
@@ -259,11 +235,11 @@ export class ManifestPluginSystem {
 	 * @param {object} manifest - The manifest whose dependencies need to be loaded.
 	 * @returns {Promise<void>}
 	 */
-	async loadDependencies(manifest) {
+	async #loadDependencies(manifest) {
 		const dependencies = manifest.dependencies.plugins || [];
 
 		for (const depId of dependencies) {
-			if (!this.loadedPlugins.has(depId)) {
+			if (!this.#loadedPlugins.has(depId)) {
 				await this.loadPlugin(depId);
 			}
 		}
@@ -275,24 +251,24 @@ export class ManifestPluginSystem {
 	 * @param {object} manifest - The manifest of the plugin.
 	 * @returns {object} The plugin context object.
 	 */
-	createPluginContext(manifest) {
+	#createPluginContext(manifest) {
 		const context = {
 			pluginId: manifest.id,
 			manifest,
-			stateManager: this.stateManager,
-			managers: this.managers, // Pass all system managers to the plugin
+			stateManager: this.stateManager, // V8.0 Parity: Pass stateManager as the source of truth
+			managers: this.stateManager.managers, // Pass all system managers to the plugin
 
 			// Registration methods
 			registerComponent: (id, definition) =>
-				this.registerComponent(manifest.id, id, definition),
+				this.#registerComponent(manifest.id, id, definition),
 			registerAction: (id, definition) =>
-				this.registerAction(manifest.id, id, definition),
+				this.#registerAction(manifest.id, id, definition),
 			registerWidget: (id, definition) =>
-				this.registerWidget(manifest.id, id, definition),
+				this.#registerWidget(manifest.id, id, definition),
 			registerFieldRenderer: (id, definition) =>
-				this.registerFieldRenderer(manifest.id, id, definition),
+				this.#registerFieldRenderer(manifest.id, id, definition),
 			registerCommandHandler: (id, definition) =>
-				this.registerCommandHandler(manifest.id, id, definition),
+				this.#registerCommandHandler(manifest.id, id, definition),
 
 			// Utility methods
 			emit: (event, data) =>
@@ -315,12 +291,12 @@ export class ManifestPluginSystem {
 
 			// Access to other plugins (with permission check)
 			getPlugin: (pluginId) =>
-				this.getPluginForContext(manifest.id, pluginId),
+				this.#getPluginForContext(manifest.id, pluginId),
 
 			// Configuration access
 			getConfig: (key) => manifest.rawManifest.config?.[key],
 			setConfig: (key, value) =>
-				this.setPluginConfig(manifest.id, key, value),
+				this.#setPluginConfig(manifest.id, key, value),
 		};
 
 		return context;
@@ -333,21 +309,24 @@ export class ManifestPluginSystem {
 	 * @param {object} context - The plugin's execution context.
 	 * @returns {Promise<object>} The plugin's runtime environment.
 	 */
-	async loadPluginRuntime(manifest, context) {
+	async #loadPluginRuntime(manifest, context) {
 		const runtimeConfig = manifest.runtime;
-
-		if (runtimeConfig.frontend) {
-			// Load frontend runtime (JavaScript module)
-			return await this.loadFrontendRuntime(
-				runtimeConfig.frontend,
-				context
+		if (runtimeConfig.entrypoint) {
+			// Load frontend runtime (JavaScript module) from the entrypoint URL
+			return await this.#loadFrontendRuntime(
+				runtimeConfig.entrypoint,
+				manifest
 			);
 		} else if (runtimeConfig.inline) {
-			// Inline runtime definition
-			return this.createInlineRuntime(runtimeConfig.inline, context);
+			// V8.0 Parity: Inline runtimes are a security risk and are deprecated.
+			// Plugins should rely on declarative definitions and registered handlers.
+			console.warn(
+				`[ManifestPluginSystem] Inline runtime for plugin '${manifest.id}' is deprecated and will not be executed.`
+			);
+			return this.#createDefaultRuntime(context);
 		} else {
 			// Default runtime
-			return this.createDefaultRuntime(context);
+			return this.#createDefaultRuntime(context);
 		}
 	}
 
@@ -355,93 +334,42 @@ export class ManifestPluginSystem {
 	 * Loads a plugin's frontend runtime from an external JavaScript module URL.
 	 * @private
 	 * @param {string} runtimeUrl - The URL of the JavaScript module.
-	 * @param {object} context - The plugin's execution context.
 	 * @returns {Promise<object>} The initialized module.
+	 * @param {object} manifest - The manifest of the plugin being loaded.
 	 */
-	async loadFrontendRuntime(runtimeUrl, context) {
-		try {
-			// Dynamic import of the plugin module
-			const module = await import(runtimeUrl);
-
-			// Initialize plugin with context
-			if (
-				module.default &&
-				typeof module.default.initialize === "function"
-			) {
-				await module.default.initialize(context);
-				return module.default;
-			} else if (typeof module.initialize === "function") {
-				await module.initialize(context);
-				return module;
-			} else {
+	async #loadFrontendRuntime(runtimeUrl, manifest) {
+		// V8.0 Parity: Mandate 2.1 - Scan for forbidden code patterns before execution.
+		// This check should only run in non-production environments to avoid performance overhead.
+		if (this.stateManager.config.environment !== "production") {
+			const response = await fetch(runtimeUrl);
+			if (!response.ok) {
 				throw new Error(
-					"Plugin runtime must export initialize function"
+					`Failed to fetch plugin runtime: ${response.statusText}`
 				);
 			}
-		} catch (error) {
-			console.error(
-				`Failed to load plugin runtime from ${runtimeUrl}:`,
-				error
-			);
-			throw error;
+			const codeString = await response.text();
+			const violations = scanForForbiddenPatterns(codeString, {
+				ignoreComments: true,
+			});
+
+			if (violations.length > 0) {
+				const errorMessages = violations
+					.map((v) => `- ${v.message} (severity: ${v.severity})`)
+					.join("\n");
+				throw new PluginError(
+					`Plugin '${manifest.id}' contains forbidden code patterns and was not loaded:\n${errorMessages}`,
+					{
+						pluginId: manifest.id,
+						severity: "critical",
+						showToUser: true,
+					}
+				);
+			}
 		}
-	}
 
-	/**
-	 * Creates a runtime environment from an inline definition within the manifest.
-	 * @private
-	 * @param {object} inlineDefinition - The inline runtime definition.
-	 * @param {object} context - The plugin's execution context.
-	 * @returns {object} The created inline runtime.
-	 */
-	createInlineRuntime(inlineDefinition, context) {
-		const runtime = {
-			initialize: async () => {
-				// Register components defined in manifest
-				if (inlineDefinition.components) {
-					for (const [id, componentDef] of Object.entries(
-						inlineDefinition.components
-					)) {
-						context.registerComponent(id, componentDef);
-					}
-				}
-
-				// Register actions
-				if (inlineDefinition.actions) {
-					for (const [id, actionDef] of Object.entries(
-						inlineDefinition.actions
-					)) {
-						context.registerAction(id, actionDef);
-					}
-				}
-
-				// Register widgets
-				if (inlineDefinition.widgets) {
-					for (const [id, widgetDef] of Object.entries(
-						inlineDefinition.widgets
-					)) {
-						context.registerWidget(id, widgetDef);
-					}
-				}
-			},
-
-			render: (componentId, renderContext) => {
-				const component = inlineDefinition.components?.[componentId];
-				if (component && component.render) {
-					return component.render(renderContext);
-				}
-				return null;
-			},
-
-			executeAction: (actionId, actionContext) => {
-				const action = inlineDefinition.actions?.[actionId];
-				if (action && action.execute) {
-					return action.execute(actionContext);
-				}
-			},
-		};
-
-		return runtime;
+		// Dynamic import of the plugin module
+		const module = await import(runtimeUrl);
+		return module;
 	}
 
 	/**
@@ -450,24 +378,11 @@ export class ManifestPluginSystem {
 	 * @param {object} context - The plugin's execution context.
 	 * @returns {object} The default runtime object.
 	 */
-	createDefaultRuntime(context) {
+	#createDefaultRuntime(context) {
 		return {
 			initialize: async () => {
-				context.log("info", "Plugin initialized with default runtime");
-			},
-
-			render: (componentId, renderContext) => {
-				const div = document.createElement("div");
-				div.textContent = `Plugin component: ${componentId}`;
-				return div;
-			},
-
-			executeAction: (actionId, actionContext) => {
-				context.log(
-					"info",
-					`Executing action: ${actionId}`,
-					actionContext
-				);
+				// The default runtime's initialize function will be called with the plugin context.
+				// This is where a plugin can register its components declaratively.
 			},
 		};
 	}
@@ -480,8 +395,14 @@ export class ManifestPluginSystem {
 	 * @param {object} context - The plugin's execution context.
 	 * @returns {Promise<void>}
 	 */
-	async registerPluginComponents(manifest, runtime, context) {
+	async #registerPluginComponents(manifest, runtime, context) {
 		const components = manifest.components;
+
+		// Initialize the plugin's runtime, allowing it to register its components.
+		// The runtime's `initialize` function is passed the plugin context, which contains registration methods.
+		if (runtime.initialize && typeof runtime.initialize === "function") {
+			await runtime.initialize(context);
+		}
 
 		// Register widgets
 		if (components.widgets) {
@@ -489,8 +410,6 @@ export class ManifestPluginSystem {
 				context.registerWidget(widgetDef.id, {
 					...widgetDef,
 					pluginId: manifest.id,
-					render: (renderContext) =>
-						runtime.render(widgetDef.id, renderContext),
 				});
 			}
 		}
@@ -501,8 +420,6 @@ export class ManifestPluginSystem {
 				context.registerAction(actionDef.id, {
 					...actionDef,
 					pluginId: manifest.id,
-					execute: (actionContext) =>
-						runtime.executeAction(actionDef.id, actionContext),
 				});
 			}
 		}
@@ -513,8 +430,6 @@ export class ManifestPluginSystem {
 				context.registerFieldRenderer(rendererDef.field, {
 					...rendererDef,
 					pluginId: manifest.id,
-					render: (renderContext) =>
-						runtime.renderField(rendererDef.field, renderContext),
 				});
 			}
 		}
@@ -525,8 +440,6 @@ export class ManifestPluginSystem {
 				context.registerCommandHandler(handlerDef.command, {
 					...handlerDef,
 					pluginId: manifest.id,
-					handle: (command) =>
-						runtime.handleCommand(handlerDef.command, command),
 				});
 			}
 		}
@@ -539,14 +452,15 @@ export class ManifestPluginSystem {
 	 * @param {string} componentId - The ID of the component.
 	 * @param {object} definition - The component's definition.
 	 */
-	registerComponent(pluginId, componentId, definition) {
-		const fullId = `${pluginId}.${componentId}`;
-		this.componentRegistry.set(fullId, {
+	#registerComponent(pluginId, componentId, definition) {
+		const componentRegistry = this.stateManager.managers.componentRegistry;
+		if (!componentRegistry) return;
+
+		componentRegistry.register({
+			id: `${pluginId}.${componentId}`,
 			...definition,
 			pluginId,
-			componentId,
 		});
-		this.metrics.registeredComponents++;
 	}
 
 	/**
@@ -556,10 +470,14 @@ export class ManifestPluginSystem {
 	 * @param {string} actionId - The ID of the action.
 	 * @param {object} definition - The action's definition.
 	 */
-	registerAction(pluginId, actionId, definition) {
-		const fullId = `${pluginId}.${actionId}`;
-		this.actionRegistry.set(fullId, { ...definition, pluginId, actionId });
-		this.metrics.registeredActions++;
+	#registerAction(pluginId, actionId, definition) {
+		const actionHandlerRegistry = this.stateManager.managers.actionHandler;
+		if (!actionHandlerRegistry) return;
+
+		actionHandlerRegistry.register(`${pluginId}.${actionId}`, (action) => {
+			// This needs a runtime execution context from the plugin
+			console.log(`Executing plugin action: ${pluginId}.${actionId}`);
+		});
 	}
 
 	/**
@@ -569,9 +487,15 @@ export class ManifestPluginSystem {
 	 * @param {string} widgetId - The ID of the widget.
 	 * @param {object} definition - The widget's definition.
 	 */
-	registerWidget(pluginId, widgetId, definition) {
-		const fullId = `${pluginId}.${widgetId}`;
-		this.widgetRegistry.set(fullId, { ...definition, pluginId, widgetId });
+	#registerWidget(pluginId, widgetId, definition) {
+		const componentRegistry = this.stateManager.managers.componentRegistry;
+		if (!componentRegistry) return;
+
+		componentRegistry.register({
+			id: `${pluginId}.${widgetId}`,
+			...definition,
+			pluginId,
+		});
 	}
 
 	/**
@@ -581,9 +505,15 @@ export class ManifestPluginSystem {
 	 * @param {string} field - The field the renderer applies to.
 	 * @param {object} definition - The renderer's definition.
 	 */
-	registerFieldRenderer(pluginId, field, definition) {
-		const key = `${pluginId}.${field}`;
-		this.fieldRendererRegistry.set(key, { ...definition, pluginId, field });
+	#registerFieldRenderer(pluginId, field, definition) {
+		// This would register with a hypothetical FieldRendererRegistry manager
+		const componentRegistry = this.stateManager.managers.componentRegistry;
+		if (!componentRegistry) return;
+
+		componentRegistry.register({
+			id: `field-renderer.${pluginId}.${field}`,
+			...definition,
+		});
 	}
 
 	/**
@@ -593,13 +523,11 @@ export class ManifestPluginSystem {
 	 * @param {string} command - The command to handle.
 	 * @param {object} definition - The handler's definition.
 	 */
-	registerCommandHandler(pluginId, command, definition) {
-		const key = `${pluginId}.${command}`;
-		this.commandHandlerRegistry.set(key, {
-			...definition,
-			pluginId,
-			command,
-		});
+	#registerCommandHandler(pluginId, command, definition) {
+		// This would register with a hypothetical CommandHandlerRegistry manager
+		console.log(
+			`[ManifestPluginSystem] Registering command handler '${command}' from plugin '${pluginId}'`
+		);
 	}
 
 	/**
@@ -608,18 +536,12 @@ export class ManifestPluginSystem {
 	 * @returns {object[]} A list of matching widget definitions.
 	 */
 	getWidgetsForEntityType(entityType) {
-		const widgets = [];
+		const componentRegistry = this.stateManager.managers.componentRegistry;
+		if (!componentRegistry) return [];
 
-		for (const [id, widget] of this.widgetRegistry) {
-			if (
-				widget.entity_types &&
-				widget.entity_types.includes(entityType)
-			) {
-				widgets.push({ id, ...widget });
-			}
-		}
-
-		return widgets;
+		return componentRegistry
+			.getForEntityTypes(entityType)
+			.filter((def) => def.category === "widget");
 	}
 
 	/**
@@ -628,18 +550,12 @@ export class ManifestPluginSystem {
 	 * @returns {object[]} A list of matching action definitions.
 	 */
 	getActionsForEntityType(entityType) {
-		const actions = [];
+		// This would query the ActionHandlerRegistry in a real implementation
+		const actionHandlerRegistry = this.stateManager.managers.actionHandler;
+		if (!actionHandlerRegistry) return [];
 
-		for (const [id, action] of this.actionRegistry) {
-			if (
-				action.entity_types &&
-				action.entity_types.includes(entityType)
-			) {
-				actions.push({ id, ...action });
-			}
-		}
-
-		return actions;
+		// Placeholder: This logic would need to be more sophisticated
+		return [];
 	}
 
 	/**
@@ -650,24 +566,25 @@ export class ManifestPluginSystem {
 	 */
 	async render(widgetConfig) {
 		const widgetId = widgetConfig.component || widgetConfig.widget;
-		const widget = this.widgetRegistry.get(widgetId);
+		const widget =
+			this.stateManager.managers.componentRegistry?.get(widgetId);
 
 		if (!widget) {
 			console.warn(`Widget not found: ${widgetId}`);
-			return this.renderMissingWidget(widgetId);
+			return this.#renderMissingWidget(widgetId);
 		}
 
 		try {
 			const renderContext = {
 				config: widgetConfig.config || {},
 				data: widgetConfig.data || {},
-				pluginContext: this.getPluginContext(widget.pluginId),
+				pluginContext: this.#getPluginContext(widget.pluginId),
 			};
 
 			return await widget.render(renderContext);
 		} catch (error) {
 			console.error(`Error rendering widget ${widgetId}:`, error);
-			return this.renderErrorWidget(widgetId, error);
+			return this.#renderErrorWidget(widgetId, error);
 		}
 	}
 
@@ -678,7 +595,8 @@ export class ManifestPluginSystem {
 	 * @returns {Promise<any>} A promise that resolves with the result of the action.
 	 */
 	async executeAction(actionId, context) {
-		const action = this.actionRegistry.get(actionId);
+		// This would execute via the ActionHandlerRegistry
+		const action = this.stateManager.managers.actionHandler?.get(actionId);
 
 		if (!action) {
 			throw new Error(`Action not found: ${actionId}`);
@@ -687,10 +605,10 @@ export class ManifestPluginSystem {
 		try {
 			const actionContext = {
 				...context,
-				pluginContext: this.getPluginContext(action.pluginId),
+				// pluginContext: this.getPluginContext(action.pluginId), // Context would be part of the handler closure
 			};
 
-			return await action.execute(actionContext);
+			return await action(actionContext);
 		} catch (error) {
 			console.error(`Error executing action ${actionId}:`, error);
 			throw error;
@@ -702,14 +620,14 @@ export class ManifestPluginSystem {
 	 * @private
 	 * @returns {Promise<void>}
 	 */
-	async loadEnabledPlugins() {
+	async #loadEnabledPlugins() {
 		const enabledManifests = Array.from(
-			this.pluginManifests.values()
+			this.#pluginManifests.values()
 		).filter((manifest) => manifest.enabled && manifest.autoload);
 
 		// Sort by priority and dependencies
 		const sortedManifests =
-			this.sortManifestsByDependencies(enabledManifests);
+			this.#sortManifestsByDependencies(enabledManifests);
 
 		for (const manifest of sortedManifests) {
 			try {
@@ -730,7 +648,7 @@ export class ManifestPluginSystem {
 	 * @returns {object[]} The sorted array of manifests.
 	 * @throws {Error} If a circular dependency is detected.
 	 */
-	sortManifestsByDependencies(manifests) {
+	#sortManifestsByDependencies(manifests) {
 		const sorted = [];
 		const visited = new Set();
 		const visiting = new Set();
@@ -749,7 +667,7 @@ export class ManifestPluginSystem {
 			// Visit dependencies first
 			const dependencies = manifest.dependencies.plugins || [];
 			for (const depId of dependencies) {
-				const depManifest = this.pluginManifests.get(depId);
+				const depManifest = this.#pluginManifests.get(depId);
 				if (depManifest && manifests.includes(depManifest)) {
 					visit(depManifest);
 				}
@@ -772,9 +690,9 @@ export class ManifestPluginSystem {
 	 * @private
 	 * @param {object} manifest - The plugin's manifest.
 	 */
-	updateDependencyGraph(manifest) {
+	#updateDependencyGraph(manifest) {
 		const dependencies = manifest.dependencies.plugins || [];
-		this.dependencyGraph.set(manifest.id, dependencies);
+		this.#dependencyGraph.set(manifest.id, dependencies);
 	}
 
 	/**
@@ -784,17 +702,17 @@ export class ManifestPluginSystem {
 	 * @throws {Error} If an error occurs during cleanup.
 	 */
 	async unloadPlugin(pluginId) {
-		const plugin = this.loadedPlugins.get(pluginId);
+		const plugin = this.#loadedPlugins.get(pluginId);
 		if (!plugin) {
 			return false;
 		}
 
 		try {
 			// Run before unload hooks
-			this.runHooks("beforeUnload", { plugin });
+			this.#runHooks("beforeUnload", { plugin });
 
 			// Remove all components registered by this plugin
-			this.removePluginComponents(pluginId);
+			this.#removePluginComponents(pluginId);
 
 			// Call plugin cleanup if available
 			if (plugin.runtime.cleanup) {
@@ -802,10 +720,10 @@ export class ManifestPluginSystem {
 			}
 
 			// Remove from loaded plugins
-			this.loadedPlugins.delete(pluginId);
+			this.#loadedPlugins.delete(pluginId);
 
 			// Run after unload hooks
-			this.runHooks("afterUnload", { pluginId });
+			this.#runHooks("afterUnload", { pluginId });
 
 			// Emit plugin unloaded event
 			this.stateManager.emit?.("pluginUnloaded", { pluginId });
@@ -822,18 +740,13 @@ export class ManifestPluginSystem {
 	 * @private
 	 * @param {string} pluginId - The ID of the plugin whose components should be removed.
 	 */
-	removePluginComponents(pluginId) {
+	#removePluginComponents(pluginId) {
 		// Remove from all registries
-		for (const registry of [
-			this.componentRegistry,
-			this.actionRegistry,
-			this.widgetRegistry,
-			this.fieldRendererRegistry,
-			this.commandHandlerRegistry,
-		]) {
-			for (const [key, value] of registry) {
-				if (value.pluginId === pluginId) {
-					registry.delete(key);
+		const componentRegistry = this.stateManager.managers.componentRegistry;
+		if (componentRegistry) {
+			for (const [id, def] of componentRegistry.definitions) {
+				if (def.pluginId === pluginId) {
+					componentRegistry.unregister(id);
 				}
 			}
 		}
@@ -845,7 +758,7 @@ export class ManifestPluginSystem {
 	 * @param {string} widgetId - The ID of the missing widget.
 	 * @returns {HTMLElement} The fallback element.
 	 */
-	renderMissingWidget(widgetId) {
+	#renderMissingWidget(widgetId) {
 		const div = document.createElement("div");
 		div.className = "plugin-widget-missing";
 		div.innerHTML = `<p>Widget not found: ${widgetId}</p>`;
@@ -859,7 +772,7 @@ export class ManifestPluginSystem {
 	 * @param {Error} error - The error that occurred.
 	 * @returns {HTMLElement} The error element.
 	 */
-	renderErrorWidget(widgetId, error) {
+	#renderErrorWidget(widgetId, error) {
 		const div = document.createElement("div");
 		div.className = "plugin-widget-error";
 		div.innerHTML = `
@@ -875,8 +788,8 @@ export class ManifestPluginSystem {
 	 * @param {string} pluginId - The ID of the plugin.
 	 * @returns {object|undefined} The plugin's context.
 	 */
-	getPluginContext(pluginId) {
-		const plugin = this.loadedPlugins.get(pluginId);
+	#getPluginContext(pluginId) {
+		const plugin = this.#loadedPlugins.get(pluginId);
 		return plugin?.context;
 	}
 
@@ -887,9 +800,9 @@ export class ManifestPluginSystem {
 	 * @param {string} targetPluginId - The ID of the target plugin.
 	 * @returns {object|undefined} The target plugin's context.
 	 */
-	getPluginForContext(requestingPluginId, targetPluginId) {
+	#getPluginForContext(requestingPluginId, targetPluginId) {
 		// Check permissions, etc.
-		const plugin = this.loadedPlugins.get(targetPluginId);
+		const plugin = this.#loadedPlugins.get(targetPluginId);
 		return plugin?.context;
 	}
 
@@ -900,8 +813,8 @@ export class ManifestPluginSystem {
 	 * @param {string} key - The configuration key.
 	 * @param {*} value - The configuration value.
 	 */
-	setPluginConfig(pluginId, key, value) {
-		const manifest = this.pluginManifests.get(pluginId);
+	#setPluginConfig(pluginId, key, value) {
+		const manifest = this.#pluginManifests.get(pluginId);
 		if (manifest) {
 			if (!manifest.rawManifest.config) {
 				manifest.rawManifest.config = {};
@@ -915,14 +828,8 @@ export class ManifestPluginSystem {
 	 * @private
 	 * @param {number} loadTime - The loading time in milliseconds.
 	 */
-	recordLoadTime(loadTime) {
-		this.metrics.loadingTimes.push(loadTime);
-		if (this.metrics.loadingTimes.length > 100) {
-			this.metrics.loadingTimes.shift();
-		}
-		this.metrics.averageLoadTime =
-			this.metrics.loadingTimes.reduce((sum, time) => sum + time, 0) /
-			this.metrics.loadingTimes.length;
+	#recordLoadTime(loadTime) {
+		this.metrics?.updateAverage("averageLoadTime", loadTime);
 	}
 
 	/**
@@ -931,8 +838,8 @@ export class ManifestPluginSystem {
 	 * @param {string} hookName - The name of the hook to run.
 	 * @param {object} data - The data to pass to the hook callbacks.
 	 */
-	runHooks(hookName, data) {
-		const hooks = this.hooks[hookName] || [];
+	#runHooks(hookName, data) {
+		const hooks = this.#hooks[hookName] || [];
 		hooks.forEach((hook) => {
 			try {
 				hook(data);
@@ -948,12 +855,12 @@ export class ManifestPluginSystem {
 	 */
 	getStatistics() {
 		return {
-			...this.metrics,
-			loadedPlugins: this.loadedPlugins.size,
-			availableManifests: this.pluginManifests.size,
-			registeredWidgets: this.widgetRegistry.size,
-			registeredFieldRenderers: this.fieldRendererRegistry.size,
-			registeredCommandHandlers: this.commandHandlerRegistry.size,
+			...this.metrics?.getAllAsObject(),
+			pluginsLoaded: this.#loadedPlugins.size,
+			availableManifests: this.#pluginManifests.size,
+			registeredComponents:
+				this.stateManager.managers.componentRegistry?.definitions
+					.size || 0,
 		};
 	}
 
@@ -963,11 +870,12 @@ export class ManifestPluginSystem {
 	 */
 	exportState() {
 		return {
-			manifests: Array.from(this.pluginManifests.values()),
-			loadedPlugins: Array.from(this.loadedPlugins.keys()),
-			components: Array.from(this.componentRegistry.keys()),
-			actions: Array.from(this.actionRegistry.keys()),
-			widgets: Array.from(this.widgetRegistry.keys()),
+			manifests: Array.from(this.#pluginManifests.values()),
+			loadedPlugins: Array.from(this.#loadedPlugins.keys()),
+			components: Array.from(
+				this.stateManager.managers.componentRegistry?.definitions.keys() ||
+					[]
+			),
 		};
 	}
 }

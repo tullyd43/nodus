@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-private-class-members */
 // modules/compartment-security.js
 // Compartment security module for need-to-know access control
 
@@ -13,50 +12,43 @@
  * @module CompartmentSecurity
  */
 export default class CompartmentSecurity {
-	/**
-	 * @private
-	 * @type {Map<string, object>}
-	 */
+	/** @private @type {Map<string, object>} */
 	#compartmentRules = new Map();
-	/**
-	 * @private
-	 * @type {Map<any, any>}
-	 */
-	#accessMatrix = new Map();
-	/**
-	 * @private
-	 * @type {Map<string, Set<string>>}
-	 */
+	/** @private @type {Map<string, Set<string>>} */
 	#inheritanceGraph = new Map();
-	/**
-	 * @private
-	 * @type {Array<object>}
-	 */
-	#auditLog = [];
-	/**
-	 * @private
-	 * @type {object|null}
-	 */
-	#context = null;
+	/** @private @type {object} */
+	#options;
+
+	/** @private @type {import('../../security/SecurityManager.js').default|null} */
+	#securityManager = null;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+
+	/** @public @type {string} */
+	name = "CompartmentSecurity";
 
 	/**
 	 * Creates an instance of CompartmentSecurity.
-	 * @param {object} [options={}] - Configuration options for the module.
-	 * @param {boolean} [options.enableInheritance=true] - Whether to allow access to child compartments if a parent is granted.
-	 * @param {boolean} [options.strictMode=false] - If true, enforces stricter validation rules.
-	 * @param {boolean} [options.auditAll=false] - If true, logs all access checks, not just failures.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for the module.
 	 */
-	constructor(options = {}) {
-		this.options = {
+	constructor({ stateManager, options = {} }) {
+		// V8.0 Parity: Derive dependencies from the stateManager.
+		this.#securityManager = stateManager?.managers?.securityManager;
+		this.#forensicLogger = stateManager?.managers?.forensicLogger;
+		this.#metrics = stateManager?.metricsRegistry?.namespace(
+			"compartmentSecurity"
+		);
+
+		this.#options = {
 			enableInheritance: options.enableInheritance !== false,
 			strictMode: options.strictMode || false,
 			auditAll: options.auditAll || false,
 			...options,
 		};
-
-		console.log(
-			"[CompartmentSecurity] Loaded for compartment access control"
-		);
 	}
 
 	/**
@@ -66,61 +58,34 @@ export default class CompartmentSecurity {
 	async init() {
 		// Initialize standard compartment rules
 		await this.#initializeStandardCompartments();
-
-		console.log("[CompartmentSecurity] Compartment security initialized");
-		return this;
-	}
-
-	/**
-	 * Sets the security context for the current user.
-	 * This context is used for all subsequent access checks.
-	 * @param {string} userId - The unique identifier for the user.
-	 * @param {string[]} userCompartments - An array of compartments the user has direct access to.
-	 * @param {string} clearanceLevel - The user's overall security clearance level.
-	 * @returns {Promise<this>} The instance with the context set.
-	 */
-	async setContext(userId, userCompartments, clearanceLevel) {
-		this.#context = {
-			userId,
-			compartments: new Set(userCompartments),
-			clearanceLevel,
-			derivedCompartments:
-				await this.#deriveAccessibleCompartments(userCompartments),
-			timestamp: Date.now(),
-		};
-
-		this.#audit("compartment_context_set", {
-			userId,
-			compartmentCount: userCompartments.length,
-			derivedCount: this.#context.derivedCompartments.size,
-		});
-
 		return this;
 	}
 
 	/**
 	 * Checks if the current user context allows access to a set of required compartments for a given classification.
-	 * @param {object} context - The security context of the operation (not currently used, relies on internal #context).
-	 * @param {string} classification - The classification level of the data being accessed.
 	 * @param {string[]} requiredCompartments - An array of compartments required for access.
 	 * @returns {Promise<boolean>} True if access is permitted, false otherwise.
 	 */
-	async checkAccess(context, classification, requiredCompartments) {
-		if (!this.#context) {
+	async checkAccess(requiredCompartments) {
+		this.#metrics?.increment("accessChecks");
+		if (!this.#securityManager?.hasValidContext()) {
 			this.#audit("access_denied_no_compartment_context", {
 				requiredCompartments,
 			});
+			this.#metrics?.increment("accessDenied");
 			return false;
 		}
 
+		const userContext = this.#securityManager.getSubject();
+
 		// Check each required compartment
 		for (const compartment of requiredCompartments) {
-			if (!(await this.#hasCompartmentAccess(compartment))) {
+			if (!(await this.#hasCompartmentAccess(compartment, userContext))) {
 				this.#audit("compartment_access_denied", {
 					compartment,
-					userId: this.#context.userId,
-					userCompartments: Array.from(this.#context.compartments),
+					userId: userContext.userId,
 				});
+				this.#metrics?.increment("accessDenied");
 				return false;
 			}
 		}
@@ -129,8 +94,9 @@ export default class CompartmentSecurity {
 		if (!this.#validateCompartmentCombination(requiredCompartments)) {
 			this.#audit("compartment_combination_denied", {
 				combination: requiredCompartments,
-				userId: this.#context.userId,
+				userId: userContext.userId,
 			});
+			this.#metrics?.increment("accessDenied");
 			return false;
 		}
 
@@ -142,12 +108,13 @@ export default class CompartmentSecurity {
 	 * @returns {Set<string>} A set of all accessible compartment names.
 	 */
 	getAccessibleCompartments() {
-		if (!this.#context) return new Set();
+		if (!this.#securityManager?.hasValidContext()) return new Set();
 
-		return new Set([
-			...this.#context.compartments,
-			...this.#context.derivedCompartments,
-		]);
+		const userContext = this.#securityManager.getSubject();
+		const directCompartments = Array.from(userContext.compartments || []);
+		const derived = this.#deriveAccessibleCompartments(directCompartments);
+
+		return new Set([...directCompartments, ...derived]);
 	}
 
 	/**
@@ -156,7 +123,10 @@ export default class CompartmentSecurity {
 	 * @returns {Promise<boolean>} True if access is permitted, false otherwise.
 	 */
 	async canAccessCompartment(compartment) {
-		return await this.#hasCompartmentAccess(compartment);
+		if (!this.#securityManager?.hasValidContext()) return false;
+		const userContext = this.#securityManager.getSubject();
+
+		return await this.#hasCompartmentAccess(compartment, userContext);
 	}
 
 	/**
@@ -192,26 +162,6 @@ export default class CompartmentSecurity {
 		this.#audit("access_rule_added", { compartment, rule });
 	}
 
-	/**
-	 * Retrieves a copy of the internal audit log for compartment-related events.
-	 * @returns {Array<object>} An array of audit log event objects.
-	 */
-	getCompartmentAuditLog() {
-		return this.#auditLog.slice();
-	}
-
-	/**
-	 * Clears the current user's security context, effectively logging them out from a compartment perspective.
-	 * @returns {Promise<void>}
-	 */
-	async clear() {
-		this.#audit("compartment_context_cleared", {
-			userId: this.#context?.userId,
-		});
-
-		this.#context = null;
-	}
-
 	// Private methods
 	/**
 	 * The core logic for checking access to a single compartment.
@@ -219,18 +169,22 @@ export default class CompartmentSecurity {
 	 * @param {string} compartment - The compartment name.
 	 * @returns {Promise<boolean>} True if access is granted.
 	 */
-	async #hasCompartmentAccess(compartment) {
-		if (!this.#context) return false;
+	async #hasCompartmentAccess(compartment, userContext) {
+		if (!userContext) return false;
+
+		const userCompartments = Array.from(userContext.compartments || []);
 
 		// Direct access
-		if (this.#context.compartments.has(compartment)) {
+		if (userCompartments.includes(compartment)) {
 			return true;
 		}
 
 		// Derived access through inheritance
 		if (
-			this.options.enableInheritance &&
-			this.#context.derivedCompartments.has(compartment)
+			this.#options.enableInheritance &&
+			this.#deriveAccessibleCompartments(userCompartments).has(
+				compartment
+			)
 		) {
 			return true;
 		}
@@ -238,7 +192,11 @@ export default class CompartmentSecurity {
 		// Check compartment-specific rules
 		const rules = this.#compartmentRules.get(compartment);
 		if (rules) {
-			return await this.#evaluateCompartmentRules(compartment, rules);
+			return await this.#evaluateCompartmentRules(
+				compartment,
+				rules,
+				userContext
+			);
 		}
 
 		return false;
@@ -251,10 +209,10 @@ export default class CompartmentSecurity {
 	 * @param {string[]} userCompartments - The set of compartments the user has direct access to.
 	 * @returns {Promise<Set<string>>} A set of derived compartments.
 	 */
-	async #deriveAccessibleCompartments(userCompartments) {
+	#deriveAccessibleCompartments(userCompartments) {
 		const derived = new Set();
 
-		if (!this.options.enableInheritance) {
+		if (!this.#options.enableInheritance) {
 			return derived;
 		}
 
@@ -330,7 +288,7 @@ export default class CompartmentSecurity {
 	 * @param {object} rules - The rule object for the compartment.
 	 * @returns {Promise<boolean>} True if all rules pass.
 	 */
-	async #evaluateCompartmentRules(compartment, rules) {
+	async #evaluateCompartmentRules(compartment, rules, userContext) {
 		// Evaluate time-based access
 		if (rules.timeRestrictions) {
 			const now = new Date();
@@ -357,9 +315,7 @@ export default class CompartmentSecurity {
 				"cosmic_top_secret",
 			];
 
-			const userLevel = clearanceLevels.indexOf(
-				this.#context.clearanceLevel
-			);
+			const userLevel = clearanceLevels.indexOf(userContext.level);
 			const requiredLevel = clearanceLevels.indexOf(
 				rules.minimumClearance
 			);
@@ -372,7 +328,12 @@ export default class CompartmentSecurity {
 		// Evaluate special conditions
 		if (rules.specialConditions) {
 			for (const condition of rules.specialConditions) {
-				if (!(await this.#evaluateSpecialCondition(condition))) {
+				if (
+					!(await this.#evaluateSpecialCondition(
+						condition,
+						userContext
+					))
+				) {
 					return false;
 				}
 			}
@@ -387,7 +348,7 @@ export default class CompartmentSecurity {
 	 * @param {object} condition - The condition object to evaluate.
 	 * @returns {Promise<boolean>} True if the condition is met.
 	 */
-	async #evaluateSpecialCondition(condition) {
+	async #evaluateSpecialCondition(condition, userContext) {
 		switch (condition.type) {
 			case "dual_person_integrity":
 				// Requires two-person authorization
@@ -398,7 +359,7 @@ export default class CompartmentSecurity {
 			case "facility_requirement":
 				// Requires access from specific facility
 				return condition.allowedFacilities?.includes(
-					this.#context.facility
+					userContext.facility
 				);
 
 			case "time_window":
@@ -460,32 +421,25 @@ export default class CompartmentSecurity {
 	 * @param {object} data - The data associated with the event.
 	 */
 	#audit(eventType, data) {
-		const auditEvent = {
-			type: eventType,
-			data,
-			timestamp: Date.now(),
-			userId: this.#context?.userId,
-			compartmentModule: true,
-		};
+		if (this.#options.auditAll === false && !eventType.includes("denied")) {
+			return;
+		}
 
-		this.#auditLog.push(auditEvent);
+		if (this.#forensicLogger) {
+			this.#forensicLogger.logAuditEvent(
+				`COMPARTMENT_${eventType.toUpperCase()}`,
+				data
+			);
+		} else {
+			console.warn(
+				`[Compartment Security] Audit event (no logger): ${eventType}`,
+				data
+			);
+		}
 
 		// Log compartment violations
 		if (eventType.includes("denied")) {
 			console.warn(`[Compartment Security] ${eventType}:`, data);
 		}
-
-		// Keep audit log manageable
-		if (this.#auditLog.length > 2000) {
-			this.#auditLog = this.#auditLog.slice(-1000);
-		}
-	}
-
-	/**
-	 * Gets the name of the module.
-	 * @returns {string} The module name.
-	 */
-	get name() {
-		return "CompartmentSecurity";
 	}
 }

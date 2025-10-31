@@ -206,9 +206,11 @@ export const ErrorHelpers = {
 	 * @param {object} eventFlow - The EventFlowEngine instance.
 	 * @param {Error|string|object} error - The raw error to emit.
 	 * @param {object} [context={}] - Additional context for the error event.
+	 * @param {import('../core/HybridStateManager.js').default} [context.stateManager] - The state manager instance.
 	 */
-	emitToFlow(eventFlow, error, context = {}) {
-		if (!eventFlow?.emit) {
+	emitToFlow(error, context = {}) {
+		const stateManager = context.stateManager;
+		if (!stateManager?.emit) {
 			console.warn(
 				"[ErrorHelpers] EventFlow not available, cannot emit error"
 			);
@@ -216,8 +218,7 @@ export const ErrorHelpers = {
 		}
 
 		try {
-			// The error object is already formatted by handleError, just emit it.
-			eventFlow.emit("error", error);
+			stateManager.emit("error", error);
 		} catch (emitError) {
 			console.error(
 				"[ErrorHelpers] Failed to emit error to EventFlow:",
@@ -231,16 +232,15 @@ export const ErrorHelpers = {
 	 * A wrapper for async functions that catches any thrown errors and processes them
 	 * through the standard `handleError` pipeline.
 	 * @param {function(): Promise<any>} fn - The async function to execute.
-	 * @param {object} eventFlow - The EventFlowEngine instance to report errors to.
 	 * @param {object} [context={}] - Context for the error if one occurs.
+	 * @param {import('../core/HybridStateManager.js').default} [context.stateManager] - The state manager instance.
 	 * @returns {Promise<any|null>} The result of the function, or `null` if an error was caught.
 	 */
-	async captureAsync(fn, eventFlow, context = {}) {
-		// eventFlow is part of context now
+	async tryAsync(fn, context = {}) {
 		try {
 			return await fn();
 		} catch (error) {
-			this.handleError(error, eventFlow, context);
+			this.handleError(error, context);
 			return null;
 		}
 	},
@@ -249,16 +249,15 @@ export const ErrorHelpers = {
 	 * A wrapper for synchronous functions that catches any thrown errors and processes them
 	 * through the standard `handleError` pipeline.
 	 * @param {function(): any} fn - The synchronous function to execute.
-	 * @param {object} eventFlow - The EventFlowEngine instance to report errors to.
 	 * @param {object} [context={}] - Context for the error if one occurs.
+	 * @param {import('../core/HybridStateManager.js').default} [context.stateManager] - The state manager instance.
 	 * @returns {any|null} The result of the function, or `null` if an error was caught.
 	 */
-	captureSync(fn, eventFlow, context = {}) {
-		// eventFlow is part of context now
+	try(fn, context = {}) {
 		try {
 			return fn();
 		} catch (error) {
-			this.handleError(error, eventFlow, context);
+			this.handleError(error, context);
 			return null;
 		}
 	},
@@ -267,11 +266,11 @@ export const ErrorHelpers = {
 	 * The main error handling pipeline. It formats the error, logs it to the console,
 	 * emits it to the event flow, and attempts recovery.
 	 * @param {Error|string|object} error - The raw error to handle.
-	 * @param {object} eventFlow - The EventFlowEngine instance.
 	 * @param {object} [context={}] - Additional context for the error.
+	 * @param {import('../core/HybridStateManager.js').default} [context.stateManager] - The state manager instance.
 	 * @returns {object} The formatted error object.
 	 */
-	handleError(error, eventFlow, context = {}) {
+	handleError(error, context = {}) {
 		// Ensure managers from context are available for integrations
 		const formattedError = this.formatError(error, context);
 		const { category, severity, component } = formattedError;
@@ -279,9 +278,11 @@ export const ErrorHelpers = {
 		// 1. Always log to console for immediate debugging
 		this.logToConsole(formattedError);
 
-		// 2. Metrics Integration: Record error stats
-		const metrics =
-			context.metricsRegistry || context.managers?.metricsRegistry;
+		// 2. Metrics Integration: Record error stats.
+		// V8.0 Parity: Derive dependencies directly from stateManager.
+		const stateManager = context.stateManager;
+		const metrics = stateManager?.metricsRegistry;
+
 		if (metrics) {
 			metrics.increment("errors.total");
 			if (category) metrics.increment(`errors.by_category.${category}`);
@@ -291,31 +292,32 @@ export const ErrorHelpers = {
 		}
 
 		// 3. Auditing, Security & Embedding Integration (using full context)
-		const managers = context.managers;
-		if (managers) {
+		if (stateManager) {
 			// For high-severity errors, create a formal audit trail
-			if (severity === "high" && managers.forensicLogger) {
+			if (severity === "high" && stateManager.managers?.forensicLogger) {
 				const securityContext =
-					managers.securityManager?.getSubject() || {};
-				managers.forensicLogger.logAuditEvent(
+					stateManager.managers.securityManager?.getSubject() || {};
+				stateManager.managers.forensicLogger.logAuditEvent(
 					"SYSTEM_ERROR_CRITICAL",
 					this.sanitizeError(formattedError),
 					securityContext
 				);
 			}
 			// For storage errors, capture cache metrics for context
-			if (category === "storage_error" && managers.cacheManager) {
+			if (
+				category === "storage_error" &&
+				stateManager.managers?.cacheManager
+			) {
 				formattedError.context.cacheMetrics =
-					managers.cacheManager.getMetrics();
+					stateManager.managers.cacheManager.getMetrics();
 			}
 			// For high-severity errors, generate embeddings for AI analysis
-			if (severity === "high" && managers.embedding) {
+			if (severity === "high" && stateManager.managers?.embedding) {
 				// We pass the full error context to get a rich embedding
 				const embeddingText = `Error: ${formattedError.message}. Category: ${category}. Component: ${component}. Stack: ${formattedError.stack}`;
-				managers.embedding
+				stateManager.managers.embedding
 					.generateEmbedding(embeddingText, {
-						// Use the correct manager name 'embedding'
-						// Corrected manager name
+						// Use the correct manager name 'embedding' as per HybridStateManager
 						errorId: formattedError.id,
 						type: "error_context",
 					})
@@ -326,9 +328,7 @@ export const ErrorHelpers = {
 		}
 
 		// 4. Emit to EventFlow for UI notifications and other listeners
-		if (eventFlow) {
-			this.emitToFlow(eventFlow, formattedError, context);
-		}
+		this.emitToFlow(formattedError, context);
 
 		// 5. Attempt recovery if possible
 		if (formattedError.recoverable) {
@@ -451,34 +451,31 @@ export const ErrorHelpers = {
 	/**
 	 * Creates a simple error boundary object for a component.
 	 * This provides `try` and `tryAsync` methods that wrap functions with error handling.
-	 * @param {object} eventFlow - The EventFlowEngine instance.
 	 * @param {object} [context={}] - The full context, including managers and component name.
+	 * @param {import('../core/HybridStateManager.js').default} [context.stateManager] - The state manager instance.
 	 * @returns {{try: function(function(): any): any, tryAsync: function(function(): Promise<any>): Promise<any>}} An error boundary object.
 	 */
 	createErrorBoundary(context = {}, component = "unknown") {
 		return {
-			try: (fn) =>
-				this.captureSync(fn, context.eventFlow, {
+			try: (fn) => this.try(fn, { component, ...context }),
+			tryAsync: (fn) => {
+				return this.tryAsync(fn, {
 					component,
 					...context,
-				}),
-			tryAsync: (fn) =>
-				this.captureAsync(fn, context.eventFlow, {
-					component,
-					...context,
-				}),
+				});
+			},
 		};
 	},
 
 	/**
 	 * Attaches global error listeners to `window` for uncaught exceptions and
 	 * unhandled promise rejections, piping them through the standard error handling pipeline.
-	 * @param {object} eventFlow - The EventFlowEngine instance to use for reporting.
+	 * @param {object} [context={}] - The context object, containing the stateManager.
 	 */
 	setupGlobalHandlers(context = {}) {
 		// Handle uncaught errors
 		window.addEventListener("error", (event) => {
-			this.handleError(event.error || event.message, context.eventFlow, {
+			this.handleError(event.error || event.message, {
 				component: "global",
 				filename: event.filename,
 				lineno: event.lineno,
@@ -489,7 +486,7 @@ export const ErrorHelpers = {
 
 		// Handle unhandled promise rejections
 		window.addEventListener("unhandledrejection", (event) => {
-			this.handleError(event.reason, context.eventFlow, {
+			this.handleError(event.reason, {
 				component: "global",
 				type: "unhandled_promise_rejection",
 			});
@@ -570,6 +567,40 @@ export const ErrorHelpers = {
 		}
 
 		return sanitized;
+	},
+
+	/**
+	 * A robust wrapper for executing functions with error handling, a default return value, and a finally block.
+	 * @param {Function} fn - The function to execute. Can be sync or async.
+	 * @param {Function|any} [onErrorOrValue=null] - A function to call on error, or a default value to return.
+	 * @param {object} [context={}] - Context for the error if one occurs.
+	 * @param {Function} [onFinally=null] - A function to call in the finally block.
+	 * @returns {Promise<any>} The result of the function, or the result of onErrorOrValue.
+	 */
+	async tryOr(fn, onErrorOrValue = null, context = {}, onFinally = null) {
+		try {
+			return await Promise.resolve(fn());
+		} catch (error) {
+			this.handleError(error, context);
+			if (typeof onErrorOrValue === "function") {
+				return onErrorOrValue(error);
+			}
+			return onErrorOrValue;
+		} finally {
+			if (typeof onFinally === "function") {
+				try {
+					onFinally();
+				} catch (finallyError) {
+					this.handleError(finallyError, {
+						...context,
+						component: context.component
+							? `${context.component}.finally`
+							: "finally_block",
+						originalError: context.error,
+					});
+				}
+			}
+		}
 	},
 };
 

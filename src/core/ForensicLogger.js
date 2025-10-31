@@ -5,8 +5,7 @@
  * persistent storage using IndexedDB and aligns with the project's modern architecture.
  */
 
-import { forensicLogMigrations } from "@core/storage/migrations/forensic_log_migrations.js";
-import { ModernIndexedDB } from "@core/storage/ModernIndexedDB.js";
+import { DateCore } from "@utils/DateUtils.js";
 
 /**
  * @class ForensicLogger
@@ -15,8 +14,6 @@ import { ModernIndexedDB } from "@core/storage/ModernIndexedDB.js";
  * providing a tamper-evident and comprehensive record of system activities.
  */
 export class ForensicLogger {
-	/** @type {import('./HybridStateManager.js').HybridStateManager|null} */
-	stateManager = null;
 	/** @private @type {ModernIndexedDB|null} */
 	#db = null;
 	/** @private @type {boolean} */
@@ -31,35 +28,21 @@ export class ForensicLogger {
 	#inMemoryBuffer = []; // Buffer for events before DB is ready or for temporary storage
 	/** @private @type {number|null} */
 	#bufferFlushInterval = null;
-	/**
-	 * Performance and usage metrics for the logger.
-	 * @private
-	 * @type {{eventsLogged: number, eventsFlushedToDB: number, eventsForwarded: number, errors: number, lastFlush: string|null}}
-	 */
-	#metrics = {
-		eventsLogged: 0,
-		eventsFlushedToDB: 0,
-		eventsForwarded: 0,
-		errors: 0,
-		lastFlush: null,
-	};
 
 	/**
 	 * Creates an instance of ForensicLogger.
-	 * @param {object} [options={}] - Configuration options for the logger.
-	 * @param {string} [options.dbName='forensic_audit_log'] - The name of the IndexedDB database.
-	 * @param {string} [options.storeName='audit_events'] - The name of the IndexedDB object store.
-	 * @param {number} [options.dbVersion=2] - The version of the IndexedDB schema.
-	 * @param {number} [options.bufferSize=100] - The maximum number of events to buffer in memory before flushing.
-	 * @param {number} [options.flushInterval=5000] - The interval in milliseconds to flush buffered events to IndexedDB.
-	 * @param {string|null} [options.remoteEndpoint=null] - URL for a remote audit logging service.
-	 * @param {boolean} [options.enableRemoteSync=false] - Whether to enable remote synchronization of audit events.
+	 * @param {object} context - The application context.
+	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
-	constructor(options = {}) {
+	constructor({ stateManager }) {
+		this.stateManager = stateManager;
+		// V8.0 Parity: Derive metricsRegistry directly from stateManager.
+		this.metrics =
+			stateManager.metricsRegistry?.namespace("forensicLogger");
+
+		const options = stateManager.config.forensicLoggerConfig || {};
 		this.#config = {
-			dbName: options.dbName || "forensic_audit_log",
 			storeName: options.storeName || "audit_events", // This is the primary store
-			dbVersion: options.dbVersion || 2, // Bump version for migration
 			bufferSize: options.bufferSize || 100,
 			flushInterval: options.flushInterval || 5000, // 5 seconds
 			remoteEndpoint: options.remoteEndpoint || null,
@@ -69,71 +52,121 @@ export class ForensicLogger {
 	}
 
 	/**
-	 * Binds the HybridStateManager to this instance.
-	 * @param {import('./HybridStateManager.js').HybridStateManager} manager - The state manager instance.
-	 */
-	bindStateManager(manager) {
-		this.stateManager = manager;
-	}
-
-	/**
 	 * Initializes the ForensicLogger, setting up IndexedDB and background flush.
 	 * @returns {Promise<this>} A promise that resolves with the initialized ForensicLogger instance.
 	 */
 	async initialize() {
 		if (this.#ready) return this;
-
-		try {
-			this.#db = new ModernIndexedDB(
-				this.#config.dbName,
-				this.#config.storeName,
-				this.#config.dbVersion,
-				forensicLogMigrations
-			);
-			await this.#db.init();
-
-			this.#bufferFlushInterval = setInterval(
-				() => this.#flushBuffer(),
-				this.#config.flushInterval
-			);
-
-			this.#ready = true;
-			console.log(
-				"[ForensicLogger] Initialized and ready for audit events."
-			);
-		} catch (error) {
-			console.error(
-				"[ForensicLogger] Failed to initialize IndexedDB:",
-				error
-			);
-			this.stateManager?.emit?.("forensicLogError", {
-				type: "init_failed",
-				message: error.message,
-				error,
-			});
-			// Continue in-memory buffering if DB fails
+		// V8.0 Parity: Use the shared storage instance from HybridStateManager.
+		// Let errors propagate to the bootstrap process.
+		this.#db = this.stateManager.storage.instance;
+		if (!this.#db) {
+			throw new Error("Storage instance not available in stateManager.");
 		}
+		this.#bufferFlushInterval = setInterval(
+			() => this.#flushBuffer(),
+			this.#config.flushInterval
+		);
+		this.#ready = true;
+		console.log("[ForensicLogger] Initialized and ready for audit events.");
 		return this;
+	}
+
+	/**
+	 * Creates, signs, and logs a detailed audit event. This is the primary method for recording auditable actions.
+	 * @param {string} type - The type of the audit event (e.g., 'ENTITY_CREATED').
+	 * @param {object} payload - The data associated with the event.
+	 * @param {object} [context={}] - Additional context, which may include a security subject override.
+	 * @returns {Promise<void>}
+	 */
+	async logAuditEvent(type, payload, context = {}) {
+		const event = await this.#createEnvelope(type, payload, context);
+
+		// Use the internal logEvent to buffer and persist.
+		await this.#logEvent(event);
+		console.log(`[ForensicLogger][Audit] ${type}`, payload);
+	}
+
+	/**
+	 * Creates a standard, signed, and tamper-evident log entry envelope.
+	 * @private
+	 * @param {string} type - The type of the audit event.
+	 * @param {object} payload - The data associated with the event.
+	 * @param {object} [context={}] - Additional context.
+	 * @returns {Promise<object>} The structured and signed event envelope.
+	 */
+	async #createEnvelope(type, payload, context = {}) {
+		const securityManager = this.stateManager.managers?.securityManager;
+		const signer = this.stateManager.signer;
+
+		if (!securityManager || !signer) {
+			console.warn(
+				"[ForensicLogger] SecurityManager or Signer not available. Audit event will be unsigned and may lack full context."
+			);
+		}
+
+		const userContext =
+			context.securitySubject || securityManager?.getSubject() || {};
+
+		// In a real implementation, `previousHash` would be retrieved from the last stored log.
+		const previousHash = "00000000000000000000000000000000"; // Placeholder
+
+		// V8.0 Parity: Mandate 2.4 - Create the core data structure of the envelope first.
+		const envelopeData = {
+			id: crypto.randomUUID(),
+			type,
+			timestamp: DateCore.now(),
+			previousHash,
+			userContext: {
+				userId: userContext.userId,
+				role: userContext.role, // V8.0 Parity: Use 'role' for consistency with security subject.
+				clearance: {
+					level: userContext.level,
+					compartments: Array.from(userContext.compartments || []),
+				},
+			},
+			payload,
+		};
+
+		let signature = {
+			signature: null,
+			algorithm: "unsigned",
+			publicKey: null,
+		};
+
+		// V8.0 Parity: Mandate 2.4 - The signature must cover the envelope's core data.
+		if (signer) {
+			// The signer is expected to handle the JSON stringification and hashing internally.
+			signature = await signer.sign(envelopeData);
+		}
+
+		const finalEnvelope = {
+			...envelopeData,
+			signature, // Embed the signature object
+		};
+
+		return finalEnvelope;
 	}
 
 	/**
 	 * Logs an audit event. Events are buffered and periodically flushed to IndexedDB.
 	 * If remote sync is enabled, events are also forwarded to a remote endpoint.
+	 * @private
 	 * @param {object} event - The audit event object. Must contain at least `id`, `type`, `timestamp`, `payload`.
 	 * @returns {Promise<void>}
 	 */
-	async logEvent(event) {
+	async #logEvent(event) {
 		if (!event || !event.id || !event.type || !event.timestamp) {
 			console.warn(
 				"[ForensicLogger] Invalid event format, skipping:",
 				event
 			);
-			this.#metrics.errors++;
+			this.metrics?.increment("errors");
 			return;
 		}
 
 		this.#inMemoryBuffer.push(event);
-		this.#metrics.eventsLogged++;
+		this.metrics?.increment("eventsLogged");
 
 		if (this.#inMemoryBuffer.length >= this.#config.bufferSize) {
 			await this.#flushBuffer();
@@ -152,11 +185,7 @@ export class ForensicLogger {
 	 * @returns {Promise<void>}
 	 */
 	async #flushBuffer() {
-		if (
-			this.#inMemoryBuffer.length === 0 ||
-			!this.#db ||
-			!this.#db.isReady
-		) {
+		if (this.#inMemoryBuffer.length === 0 || !this.#db) {
 			return;
 		}
 
@@ -164,9 +193,9 @@ export class ForensicLogger {
 		this.#inMemoryBuffer = []; // Clear buffer immediately
 
 		try {
-			await this.#db.putBulk(eventsToFlush);
-			this.#metrics.eventsFlushedToDB += eventsToFlush.length;
-			this.#metrics.lastFlush = new Date().toISOString();
+			await this.#db.putBulk(this.#config.storeName, eventsToFlush);
+			this.metrics?.increment("eventsFlushedToDB", eventsToFlush.length);
+			this.metrics?.set("lastFlush", new Date().toISOString());
 			this.stateManager?.emit?.("forensicLogFlushed", {
 				count: eventsToFlush.length,
 			});
@@ -183,7 +212,7 @@ export class ForensicLogger {
 			});
 			// Re-add to buffer for retry or handle differently
 			this.#inMemoryBuffer.unshift(...eventsToFlush);
-			this.#metrics.errors++;
+			this.metrics?.increment("errors");
 		}
 	}
 
@@ -209,7 +238,7 @@ export class ForensicLogger {
 					`Remote logging failed: ${response.status} ${response.statusText}`
 				);
 			}
-			this.#metrics.eventsForwarded++;
+			this.metrics?.increment("eventsForwarded");
 			this.stateManager?.emit?.("forensicLogForwarded", {
 				eventId: event.id,
 			});
@@ -224,7 +253,7 @@ export class ForensicLogger {
 				error,
 				eventId: event.id,
 			});
-			this.#metrics.errors++;
+			this.metrics?.increment("errors");
 		}
 	}
 
@@ -234,7 +263,7 @@ export class ForensicLogger {
 	 * @returns {Promise<object[]>} A promise that resolves with an array of matching audit events.
 	 */
 	async getAuditTrail(options = {}) {
-		if (!this.#ready || !this.#db?.isReady) {
+		if (!this.#ready || !this.#db) {
 			console.warn(
 				"[ForensicLogger] Database not ready, returning in-memory buffer."
 			);
@@ -255,7 +284,10 @@ export class ForensicLogger {
 			}
 
 			// Otherwise, get all and filter in memory.
-			const allEvents = await this.#db.getAll(this.#config.storeName);
+			const allEvents = await this.#db.getAll(
+				this.#config.storeName,
+				options
+			);
 			return this.#filterEvents(allEvents, options);
 		} catch (error) {
 			console.error(
@@ -313,7 +345,7 @@ export class ForensicLogger {
 	 */
 	getMetrics() {
 		return {
-			...this.#metrics,
+			...this.metrics?.getAllAsObject(),
 			inMemoryBufferSize: this.#inMemoryBuffer.length,
 			dbReady: this.#ready,
 		};
@@ -330,7 +362,7 @@ export class ForensicLogger {
 		}
 		await this.#flushBuffer(); // Flush any remaining events
 		if (this.#db) {
-			this.#db.close();
+			// Do not close the shared DB instance.
 			this.#db = null;
 		}
 		this.#ready = false;

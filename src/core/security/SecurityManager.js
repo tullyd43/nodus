@@ -9,23 +9,26 @@ import { MACEngine } from "./MACEngine.js";
  * It serves as the single source of truth for the current subject's security profile.
  */
 export class SecurityManager {
-	/** @type {import('../HybridStateManager.js').HybridStateManager|null} */
-	stateManager = null;
+	/** @private @type {import('../HybridStateManager.js').HybridStateManager|null} */
+	#stateManager;
 	/** @private @type {object|null} The current user's security context. */
 	#context = null;
 	/** @private @type {MACEngine|null} The Mandatory Access Control engine. */
 	#mac = null;
 	/** @private @type {boolean} */
-	#ready = false;
-	/** @private @type {number|null} */
-	#ttlCheckInterval = null;
+	#isReady = false;
+	/** @private @type {ReturnType<typeof setInterval>|null} */
+	#ttlCheckInterval = null; // V8.0 Parity: Use a more specific type for the interval ID.
 
 	/**
 	 * Creates an instance of SecurityManager.
-	 * @param {object} [options={}] Configuration options.
-	 * @param {number} [options.ttlCheckIntervalMs=60000] - How often to check for expired contexts (ms).
+	 * @param {object} context - The application context.
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
-	constructor(options = {}) {
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
+		const options = stateManager?.config?.securityManagerConfig || {};
+
 		this.config = {
 			ttlCheckIntervalMs: 60000, // 1 minute
 			...options,
@@ -33,26 +36,15 @@ export class SecurityManager {
 	}
 
 	/**
-	 * Binds the HybridStateManager to this instance.
-	 * @param {import('../HybridStateManager.js').HybridStateManager} manager - The state manager instance.
-	 */
-	bindStateManager(manager) {
-		this.stateManager = manager;
-	}
-
-	/**
 	 * Initializes the SecurityManager and its MAC engine.
 	 * @returns {Promise<this>} The initialized instance.
 	 */
 	async initialize() {
-		if (this.#ready) return this;
+		if (this.#isReady) return this;
 
-		// The MACEngine is instantiated here, using methods that will pull from
-		// this manager's internal #context once it's set.
-		this.#mac = new MACEngine({
-			getUserClearance: () => this.getSubject(),
-			getObjectLabel: (entity, context) => this.getLabel(entity, context),
-		});
+		// V8.0 Parity: Instantiate the MACEngine by passing the stateManager.
+		// The MACEngine will then derive its own dependencies (like this SecurityManager) from it.
+		this.#mac = new MACEngine({ stateManager: this.#stateManager });
 
 		// Start periodic check for context expiration
 		if (this.#ttlCheckInterval) clearInterval(this.#ttlCheckInterval);
@@ -61,7 +53,7 @@ export class SecurityManager {
 			this.config.ttlCheckIntervalMs
 		);
 
-		this.#ready = true;
+		this.#isReady = true;
 		console.log("[SecurityManager] Initialized and ready.");
 		return this;
 	}
@@ -95,7 +87,7 @@ export class SecurityManager {
 		console.log(
 			`[SecurityManager] User context set for ${userId} at level ${clearanceLevel}.`
 		);
-		this.stateManager?.emit?.("securityContextSet", { ...this.#context });
+		this.#stateManager?.emit?.("securityContextSet", { ...this.#context });
 	}
 
 	/**
@@ -105,7 +97,7 @@ export class SecurityManager {
 		if (!this.#context) return; // No-op if already cleared
 		this.#context = null;
 		console.log("[SecurityManager] User context cleared.");
-		this.stateManager?.emit?.("securityContextCleared");
+		this.#stateManager?.emit?.("securityContextCleared");
 	}
 
 	/**
@@ -185,7 +177,7 @@ export class SecurityManager {
 	 * @returns {boolean}
 	 */
 	get isReady() {
-		return this.#ready;
+		return this.#isReady;
 	}
 
 	/**
@@ -197,6 +189,18 @@ export class SecurityManager {
 	}
 
 	/**
+	 * Retrieves an authentication token for the current user.
+	 * In a real system, this would be a JWT or similar secure token.
+	 * @returns {string|null} The authentication token or null if not authenticated.
+	 */
+	getAuthToken() {
+		if (!this.hasValidContext()) return null;
+		// Placeholder: In a real implementation, this would be a secure token (e.g., JWT)
+		// obtained during the authentication process.
+		return `placeholder-token-for-user-${this.userId}`;
+	}
+
+	/**
 	 * Cleans up resources, like the TTL check interval.
 	 */
 	cleanup() {
@@ -204,7 +208,7 @@ export class SecurityManager {
 			clearInterval(this.#ttlCheckInterval);
 			this.#ttlCheckInterval = null;
 		}
-		this.#ready = false;
+		this.#isReady = false;
 	}
 }
 

@@ -1,5 +1,6 @@
 // modules/key-rotation.js
 // Key rotation module for forward secrecy and compliance
+import { AppError } from "../../../utils/ErrorHelpers.js";
 
 /**
  * @description
@@ -11,73 +12,68 @@
  * @module KeyRotation
  */
 export default class KeyRotation {
-	/**
-	 * @private
-	 * @type {import('./aes-crypto.js').default}
-	 */
-	#cryptoInstance;
-	/**
-	 * @private
-	 * @type {object|null}
-	 */
-	#rotationSchedule;
-	/**
-	 * @private
-	 * @type {Map<number, object>}
-	 */
+	/** @private @type {import('./aes-crypto.js').default|null} */
+	#cryptoProvider = null;
+	/** @private @type {object|null} */
+	#rotationSchedule = null;
+	/** @private @type {Map<number, object>} */
 	#keyHistory = new Map();
-	/**
-	 * @private
-	 * @type {Function[]}
-	 */
+	/** @private @type {Function[]} */
 	#rotationCallbacks = [];
-	/**
-	 * @private
-	 * @type {{rotationCount: number, lastRotation: number|null, averageRotationTime: number, rotationTimes: number[]}}
-	 */
-	#metrics = {
-		rotationCount: 0,
-		lastRotation: null,
-		averageRotationTime: 0,
-		rotationTimes: [],
-	};
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager = null;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {object} */
+	#options;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
 
 	/**
 	 * Creates an instance of KeyRotation.
-	 * @param {import('./aes-crypto.js').default} cryptoInstance - The crypto module instance whose keys will be rotated.
-	 * @param {object} [options={}] - Configuration options for key rotation.
-	 * @param {number} [options.rotationInterval=14400000] - The interval for automatic rotation in milliseconds (default: 4 hours).
-	 * @param {boolean} [options.autoRotate=true] - Whether to enable automatic key rotation.
+	 * @param {object} context - The application context.
+	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {object} [context.options={}] - Configuration options for key rotation.
 	 */
-	constructor(cryptoInstance, options = {}) {
-		this.#cryptoInstance = cryptoInstance;
+	constructor({ stateManager, options = {} }) {
+		this.#stateManager = stateManager;
+		// V8.0 Parity: Derive dependencies from the stateManager.
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("keyRotation");
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
 
-		this.options = {
+		this.#options = {
 			rotationInterval: options.rotationInterval || 4 * 3600000, // 4 hours
 			keyHistoryLimit: options.keyHistoryLimit || 10,
 			autoRotate: options.autoRotate !== false,
 			rotationJitter: options.rotationJitter || 0.1, // 10% jitter
 			...options,
 		};
-
-		console.log("[KeyRotation] Loaded for crypto key management");
 	}
 
 	/**
 	 * Initializes the key rotation module and schedules the first rotation if auto-rotate is enabled.
-	 * @param {import('./aes-crypto.js').default} [cryptoInstance] - An optional crypto instance to bind to.
 	 * @returns {Promise<this>} The initialized instance.
 	 */
-	async init(cryptoInstance) {
-		if (cryptoInstance) {
-			this.#cryptoInstance = cryptoInstance;
+	async init() {
+		// V8.0 Parity: The crypto provider is set by the parent crypto module after construction.
+		if (!this.#cryptoProvider) {
+			const errorMessage =
+				"KeyRotation cannot be initialized without a crypto provider. It must be set via setCryptoProvider().";
+			this.#audit("init_failed", { error: errorMessage });
+			throw new AppError(errorMessage, {
+				category: "configuration_error",
+			});
 		}
 
-		if (this.options.autoRotate) {
+		if (this.#options.autoRotate) {
 			this.#scheduleNextRotation();
 		}
 
-		console.log("[KeyRotation] Key rotation initialized");
+		this.#audit("init", { autoRotate: this.#options.autoRotate });
 		return this;
 	}
 
@@ -89,16 +85,20 @@ export default class KeyRotation {
 	async rotateKeys() {
 		const startTime = performance.now();
 
+		if (!this.#cryptoProvider) {
+			throw new AppError("Crypto provider is not set.", {
+				category: "system_error",
+			});
+		}
+
 		try {
-			console.log("[KeyRotation] Starting key rotation...");
+			this.#audit("rotation_start", {});
 
 			// Store current key version for history
-			const oldVersion = this.#cryptoInstance.getVersion();
+			const oldVersion = this.#cryptoProvider.getVersion();
 
 			// Trigger rotation in crypto instance
-			await this.#cryptoInstance.rotateKeys();
-
-			const newVersion = this.#cryptoInstance.getVersion();
+			const { newVersion } = await this.#cryptoProvider.rotateKeys();
 
 			// Record in history
 			this.#keyHistory.set(oldVersion, {
@@ -117,18 +117,23 @@ export default class KeyRotation {
 			// Notify callbacks
 			await this.#notifyRotationCallbacks(oldVersion, newVersion);
 
-			console.log(
-				`[KeyRotation] Key rotation complete: v${oldVersion} → v${newVersion} (${rotationTime.toFixed(2)}ms)`
-			);
+			this.#audit("rotation_complete", {
+				oldVersion,
+				newVersion,
+				duration: rotationTime,
+			});
 
 			// Schedule next rotation
-			if (this.options.autoRotate) {
+			if (this.#options.autoRotate) {
 				this.#scheduleNextRotation();
 			}
 
 			return { oldVersion, newVersion, rotationTime };
 		} catch (error) {
-			console.error("[KeyRotation] Key rotation failed:", error);
+			this.#audit("rotation_failed", { error: error.message });
+			this.#errorHelpers?.handleError(
+				new AppError("Key rotation failed", { cause: error })
+			);
 			throw error;
 		}
 	}
@@ -140,7 +145,7 @@ export default class KeyRotation {
 	 * @returns {Promise<object>} The result of the rotation.
 	 */
 	async emergencyRotation(reason = "security_incident") {
-		console.warn(`[KeyRotation] Emergency rotation triggered: ${reason}`);
+		this.#audit("emergency_rotation_start", { reason });
 
 		// Cancel scheduled rotation
 		this.#cancelScheduledRotation();
@@ -174,7 +179,9 @@ export default class KeyRotation {
 	async onKeysDestroyed() {
 		this.#cancelScheduledRotation();
 		this.#keyHistory.clear();
-		console.log("[KeyRotation] Keys destroyed, rotation stopped");
+		this.#audit("keys_destroyed", {
+			reason: "Crypto provider keys destroyed.",
+		});
 	}
 
 	/**
@@ -183,10 +190,10 @@ export default class KeyRotation {
 	 */
 	getRotationMetrics() {
 		return {
-			...this.#metrics,
+			...this.#metrics?.getAllAsObject(),
 			nextRotationAt: this.#rotationSchedule?.scheduledTime || null,
 			keyHistoryCount: this.#keyHistory.size,
-			isAutoRotating: this.options.autoRotate,
+			isAutoRotating: this.#options.autoRotate,
 		};
 	}
 
@@ -208,10 +215,11 @@ export default class KeyRotation {
 	 * @returns {boolean} True if a rotation is due.
 	 */
 	isRotationDue() {
-		if (!this.#metrics.lastRotation) return true;
+		if (!this.#metrics?.get("lastRotation")) return true;
 
-		const timeSinceLastRotation = Date.now() - this.#metrics.lastRotation;
-		return timeSinceLastRotation >= this.options.rotationInterval;
+		const timeSinceLastRotation =
+			Date.now() - this.#metrics.get("lastRotation").value;
+		return timeSinceLastRotation >= this.#options.rotationInterval;
 	}
 
 	/**
@@ -219,18 +227,13 @@ export default class KeyRotation {
 	 * @param {number} interval - The new rotation interval in milliseconds.
 	 */
 	updateRotationInterval(interval) {
-		const oldInterval = this.options.rotationInterval;
-		this.options.rotationInterval = interval;
+		this.#options.rotationInterval = interval;
 
 		// Reschedule if auto-rotating
-		if (this.options.autoRotate) {
+		if (this.#options.autoRotate) {
 			this.#cancelScheduledRotation();
 			this.#scheduleNextRotation();
 		}
-
-		console.log(
-			`[KeyRotation] Rotation interval updated: ${oldInterval}ms → ${interval}ms`
-		);
 	}
 
 	/**
@@ -238,17 +241,13 @@ export default class KeyRotation {
 	 * @param {boolean} enabled - True to enable, false to disable.
 	 */
 	setAutoRotation(enabled) {
-		this.options.autoRotate = enabled;
+		this.#options.autoRotate = enabled;
 
 		if (enabled) {
 			this.#scheduleNextRotation();
 		} else {
 			this.#cancelScheduledRotation();
 		}
-
-		console.log(
-			`[KeyRotation] Auto rotation ${enabled ? "enabled" : "disabled"}`
-		);
 	}
 
 	/**
@@ -256,9 +255,20 @@ export default class KeyRotation {
 	 */
 	destroy() {
 		this.#cancelScheduledRotation();
+		this.#audit("destroy", {});
 		this.#keyHistory.clear();
 		this.#rotationCallbacks = [];
-		console.log("[KeyRotation] Key rotation destroyed");
+	}
+
+	/**
+	 * Sets the primary crypto provider instance that this module will manage.
+	 * This is called by the parent crypto module (e.g., AESCrypto) during its initialization.
+	 * @param {object} cryptoProvider - The crypto provider instance.
+	 */
+	setCryptoProvider(cryptoProvider) {
+		if (cryptoProvider && typeof cryptoProvider.rotateKeys === "function") {
+			this.#cryptoProvider = cryptoProvider;
+		}
 	}
 
 	// Private methods
@@ -267,17 +277,14 @@ export default class KeyRotation {
 
 		// Add jitter to prevent synchronized rotations
 		const jitter =
-			this.options.rotationInterval * this.options.rotationJitter;
+			this.#options.rotationInterval * this.#options.rotationJitter;
 		const jitterAmount = (Math.random() - 0.5) * 2 * jitter;
-		const rotationTime = this.options.rotationInterval + jitterAmount;
+		const rotationTime = this.#options.rotationInterval + jitterAmount;
 
 		this.#rotationSchedule = {
 			timeout: setTimeout(() => {
-				this.rotateKeys().catch((error) => {
-					console.error(
-						"[KeyRotation] Scheduled rotation failed:",
-						error
-					);
+				this.rotateKeys().catch(() => {
+					// Error is already handled and logged by rotateKeys()
 					// Retry in 5 minutes
 					setTimeout(
 						() => this.#scheduleNextRotation(),
@@ -287,10 +294,6 @@ export default class KeyRotation {
 			}, rotationTime),
 			scheduledTime: Date.now() + rotationTime,
 		};
-
-		console.log(
-			`[KeyRotation] Next rotation scheduled in ${Math.round(rotationTime / 1000 / 60)} minutes`
-		);
 	}
 
 	/**
@@ -309,7 +312,7 @@ export default class KeyRotation {
 	 * @private
 	 */
 	#cleanupKeyHistory() {
-		if (this.#keyHistory.size <= this.options.keyHistoryLimit) return;
+		if (this.#keyHistory.size <= this.#options.keyHistoryLimit) return;
 
 		// Remove oldest entries
 		const entries = Array.from(this.#keyHistory.entries());
@@ -317,7 +320,7 @@ export default class KeyRotation {
 
 		const toRemove = entries.slice(
 			0,
-			entries.length - this.options.keyHistoryLimit
+			entries.length - this.#options.keyHistoryLimit
 		);
 		for (const [version] of toRemove) {
 			this.#keyHistory.delete(version);
@@ -330,20 +333,9 @@ export default class KeyRotation {
 	 * @param {number} rotationTime - The time taken for the rotation in milliseconds.
 	 */
 	#updateRotationMetrics(rotationTime) {
-		this.#metrics.rotationCount++;
-		this.#metrics.lastRotation = Date.now();
-		this.#metrics.rotationTimes.push(rotationTime);
-
-		// Keep only recent rotation times
-		if (this.#metrics.rotationTimes.length > 50) {
-			this.#metrics.rotationTimes =
-				this.#metrics.rotationTimes.slice(-25);
-		}
-
-		// Calculate average
-		this.#metrics.averageRotationTime =
-			this.#metrics.rotationTimes.reduce((a, b) => a + b, 0) /
-			this.#metrics.rotationTimes.length;
+		this.#metrics?.increment("rotationCount");
+		this.#metrics?.set("lastRotation", Date.now());
+		this.#metrics?.updateAverage("averageRotationTime", rotationTime);
 	}
 
 	/**
@@ -357,10 +349,29 @@ export default class KeyRotation {
 			try {
 				await callback(oldVersion, newVersion);
 			} catch (error) {
-				console.error("[KeyRotation] Callback error:", error);
+				this.#errorHelpers?.handleError(
+					new AppError("Key rotation callback failed", {
+						cause: error,
+					})
+				);
 			}
 		});
 
 		await Promise.allSettled(promises);
+	}
+
+	/**
+	 * Logs an audit event if the forensic logger is available.
+	 * @private
+	 * @param {string} eventType - The type of the event (e.g., 'rotation_start').
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		if (this.#forensicLogger) {
+			this.#forensicLogger.logAuditEvent(
+				`KEY_ROTATION_${eventType.toUpperCase()}`,
+				data
+			);
+		}
 	}
 }

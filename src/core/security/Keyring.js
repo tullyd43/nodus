@@ -9,16 +9,75 @@
  */
 export class InMemoryKeyring {
 	/**
-	 * Creates an instance of InMemoryKeyring.
-	 * Initializes an internal map to store cryptographic keys, indexed by their domain.
+	 * A map to store cryptographic key objects, indexed by their domain string.
+	 * @type {Map<string, object>}
+	 * @private
+	 */
+	#map = new Map();
+
+	/**
+	 * @private
+	 * @class A private nested class to represent a development key and its operations.
+	 */
+	static #DevKey = class {
+		/** @private @type {CryptoKey} */
+		#key;
+		/** @public @type {string} */
+		alg = "AES-GCM-256";
+		/** @public @type {string} */
+		kid;
+
+		/**
+		 * @param {CryptoKey} key - The raw AES-GCM key.
+		 * @param {string} kid - The key identifier.
+		 */
+		constructor(key, kid) {
+			this.#key = key;
+			this.kid = kid;
+		}
+
+		/**
+		 * Encrypts plaintext using AES-GCM.
+		 * @param {Uint8Array} plaintext - The data to encrypt.
+		 * @param {Uint8Array} [aad] - Additional authenticated data.
+		 * @returns {Promise<object>} An encrypted envelope.
+		 */
+		async encrypt(plaintext, aad) {
+			const iv = crypto.getRandomValues(new Uint8Array(12));
+			const ciphertext = await crypto.subtle.encrypt(
+				{ name: "AES-GCM", iv, additionalData: aad },
+				this.#key,
+				plaintext
+			);
+			return {
+				alg: this.alg,
+				kid: this.kid,
+				iv,
+				ciphertext: new Uint8Array(ciphertext),
+			};
+		}
+
+		/**
+		 * Decrypts an envelope using AES-GCM.
+		 * @param {object} envelope - The encrypted envelope object.
+		 * @param {Uint8Array} [aad] - Additional authenticated data.
+		 * @returns {Promise<Uint8Array>} The original plaintext.
+		 */
+		async decrypt(envelope, aad) {
+			const plaintext = await crypto.subtle.decrypt(
+				{ name: "AES-GCM", iv: envelope.iv, additionalData: aad },
+				this.#key,
+				envelope.ciphertext
+			);
+			return new Uint8Array(plaintext);
+		}
+	};
+
+	/**
+	 * The constructor is intentionally empty as no setup is needed.
 	 */
 	constructor() {
-		/**
-		 * A map to store cryptographic key objects, indexed by their domain string.
-		 * @type {Map<string, object>}
-		 * @private
-		 */
-		this.map = new Map();
+		// No-op
 	}
 
 	/**
@@ -39,7 +98,7 @@ export class InMemoryKeyring {
 	 *   - `decrypt`: {Function} An asynchronous function to decrypt an envelope.
 	 */
 	async getKey(domain) {
-		if (!this.map.has(domain)) {
+		if (!this.#map.has(domain)) {
 			const kid = `dev:${domain}`;
 			// Generate a real AES-GCM key for development use.
 			const key = await crypto.subtle.generateKey(
@@ -48,50 +107,11 @@ export class InMemoryKeyring {
 				["encrypt", "decrypt"]
 			);
 
-			this.map.set(domain, {
-				alg: "AES-256-GCM",
-				kid,
-				/**
-				 * Encrypts plaintext using AES-GCM.
-				 * @param {Uint8Array} plaintext - The data to encrypt.
-				 * @param {Uint8Array} aad - Additional authenticated data.
-				 * @returns {Promise<object>} An encrypted envelope.
-				 */
-				async encrypt(plaintext, aad) {
-					const iv = crypto.getRandomValues(new Uint8Array(12));
-					const ciphertext = await crypto.subtle.encrypt(
-						{ name: "AES-GCM", iv, additionalData: aad },
-						key,
-						plaintext
-					);
-					return {
-						alg: this.alg,
-						kid: this.kid,
-						iv,
-						ciphertext: new Uint8Array(ciphertext),
-					};
-				},
-				/**
-				 * Decrypts an envelope using AES-GCM.
-				 * @param {object} envelope - The encrypted envelope object.
-				 * @param {Uint8Array} aad - Additional authenticated data.
-				 * @returns {Promise<Uint8Array>} The original plaintext.
-				 */
-				async decrypt(envelope, aad) {
-					const plaintext = await crypto.subtle.decrypt(
-						{
-							name: "AES-GCM",
-							iv: envelope.iv,
-							additionalData: aad,
-						},
-						key,
-						envelope.ciphertext
-					);
-					return new Uint8Array(plaintext);
-				},
-			});
+			// V8.0 Parity: Encapsulate key operations in a dedicated private class.
+			const devKey = new InMemoryKeyring.#DevKey(key, kid);
+			this.#map.set(domain, devKey);
 		}
-		return this.map.get(domain);
+		return this.#map.get(domain);
 	}
 
 	/**
@@ -103,20 +123,20 @@ export class InMemoryKeyring {
 	 */
 	async derive(purpose, domain) {
 		const keyId = `${purpose}::${domain}`;
-		if (this.map.has(keyId)) {
-			return this.map.get(keyId);
+		if (this.#map.has(keyId)) {
+			return this.#map.get(keyId);
 		}
 
 		if (purpose === "signing") {
 			const keyPair = await crypto.subtle.generateKey(
 				{
 					name: "ECDSA",
-					namedCurve: "P-256",
+					namedCurve: "P-384", // V8.0 Parity: Use a stronger curve for signing.
 				},
 				true, // extractable
 				["sign", "verify"]
 			);
-			this.map.set(keyId, keyPair);
+			this.#map.set(keyId, keyPair);
 			return keyPair;
 		}
 

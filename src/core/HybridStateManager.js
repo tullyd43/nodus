@@ -7,9 +7,8 @@
  */
 
 import { EventFlowEngine } from "@core/EventFlowEngine.js";
-import { InformationFlowTracker } from "@core/security/InformationFlowTracker.js";
 import { BoundedStack } from "@utils/BoundedStack.js";
-import { DateCore } from "@utils/DateUtils.js";
+import { ServiceRegistry } from "./ServiceRegistry.js";
 
 import { MetricsRegistry } from "../utils/MetricsRegistry.js";
 import { NonRepudiation } from "./security/NonRepudiation.js";
@@ -27,7 +26,19 @@ export class HybridStateManager {
 	 * The instance for creating non-repudiable signatures for audit events.
 	 * @private @type {NonRepudiation|null}
 	 */
-	#signer = null;
+	#signer;
+	/**
+	 * Public accessor for the NonRepudiation signer.
+	 * @returns {NonRepudiation|null} The signer instance.
+	 */
+	get signer() {
+		return this.#signer;
+	}
+	/**
+	 * An array of functions to call to unsubscribe from events.
+	 * @private @type {Function[]}
+	 */
+	#unsubscribeFunctions;
 
 	/**
 	 * @param {object} [config={}] - The configuration object for the state manager.
@@ -115,7 +126,18 @@ export class HybridStateManager {
 		this.listeners = new Map();
 		/**
 		 * A collection of specialized managers for different subsystems.
-		 * @type {object}
+		 * @type {{
+		 *   offline: object|null, sync: object|null, policies: import('./SystemPolicies_Cached.js').default|null,
+		 *   plugin: import('./ManifestPluginSystem.js').default|null, embeddingManager: import('../state/EmbeddingManager.js').default|null,
+		 *   extension: import('./ExtensionManager.js').default|null, validationLayer: import('./storage/ValidationLayer.js').default|null,
+		 *   securityManager: import('./security/SecurityManager.js').default|null, forensicLogger: import('./ForensicLogger.js').default|null,
+		 *   idManager: import('../managers/IdManager.js').IdManager|null, cacheManager: import('../managers/CacheManager.js').CacheManager|null,
+		 *   databaseOptimizer: import('./DatabaseOptimizer.js').default|null, adaptiveRenderer: import('./AdaptiveRenderer.js').default|null,
+		 *   buildingBlockRenderer: import('./BuildingBlockRenderer.js').default|null, queryService: import('../state/QueryService.js').default|null,
+		 *   eventFlowEngine: import('./EventFlowEngine.js').default|null, componentRegistry: import('./ComponentDefinition.js').ComponentDefinitionRegistry|null,
+		 *   conditionRegistry: import('./ConditionRegistry.js').ConditionRegistry|null, actionHandler: import('./ActionHandlerRegistry.js').default|null,
+		 *   errorHelpers: import('../utils/ErrorHelpers.js').ErrorHelpers|null, cds: import('./security/cds.js').CrossDomainSolution|null
+		 * }}
 		 * @property {object|null} sync - Manages data synchronization.
 		 * @property {object|null} plugin - Manages plugins.
 		 * @property {import('../state/EmbeddingManager.js').default|null} embedding - Manages AI embeddings.
@@ -125,45 +147,58 @@ export class HybridStateManager {
 		 * @property {import('./ForensicLogger.js').default|null} forensicLogger - Manages audit logging.
 		 * @property {import('../managers/IdManager.js').IdManager|null} idManager - Manages ID generation.
 		 * @property {import('../managers/CacheManager.js').CacheManager|null} cacheManager - Manages all caches.
+		 * @property {ServiceRegistry|null} serviceRegistry - Manages service instantiation.
 		 */
 		this.managers = {
 			offline: null,
 			sync: null,
+			policies: null, // NEW: System Policies manager
 			plugin: null,
-			embedding: null,
+			embeddingManager: null,
 			extension: null,
-			validation: null, // NEW: Validation manager
+			validationLayer: null, // NEW: Validation manager
 			securityManager: null, // NEW: Security Manager
 			forensicLogger: null, // NEW: Forensic Logger manager
 			idManager: null, // NEW: ID Manager
 			cacheManager: null, // NEW: Cache Manager
+			databaseOptimizer: null,
+			adaptiveRenderer: null,
+			buildingBlockRenderer: null,
+			queryService: null,
+			eventFlowEngine: null,
+			componentRegistry: null, // NEW: Component Definition Registry
+			conditionRegistry: null, // NEW: Condition Registry
+			actionHandler: null, // NEW: Action Handler Registry
+			errorHelpers: null, // NEW: Error Helpers
 		};
+		this.managers.cds = null; // NEW: Cross-Domain Solution
 
 		// Initialize metrics registry
 		/** @type {MetricsRegistry} */
-		this.metricsRegistry = new MetricsRegistry();
+		this.metricsRegistry = new MetricsRegistry(); // This is one of the few direct instantiations allowed, as it's foundational.
 
-		// NEW: Non-repudiation signer.
-		// This will be initialized by SystemBootstrap after the crypto engine is ready.
-		/** @type {NonRepudiation|null} */
+		// V8.0 Parity: Mandate 1.3 - Instantiate the ServiceRegistry
+		/**
+		 * Manages the lifecycle of all core services.
+		 * @type {ServiceRegistry}
+		 */
+		this.serviceRegistry = new ServiceRegistry(this);
+
+		// Initialize private fields
 		this.#signer = null;
+		this.#unsubscribeFunctions = [];
 
 		/**
 		 * A flag indicating if the state manager has been initialized.
 		 * @type {boolean}
 		 */
 		this.initialized = false;
-		/**
-		 * An array of functions to call to unsubscribe from events.
-		 * @type {Function[]}
-		 * @private
-		 */
-		this.unsubscribeFunctions = [];
 	}
 
 	/**
 	 * Initializes the HybridStateManager and its core subsystems, including storage and event processing.
 	 * This is the main entry point after instantiation.
+	 * @deprecated Use SystemBootstrap to start the application.
 	 * @param {object} authContext - The authentication context of the current user.
 	 * @param {string} authContext.userId - The user's unique identifier.
 	 * @param {string} authContext.clearanceLevel - The user's security clearance level.
@@ -182,14 +217,11 @@ export class HybridStateManager {
 	 * This is called by SystemBootstrap after storage is ready.
 	 * @internal
 	 */
-	bootstrapSubsystems() {
+	async bootstrapSubsystems() {
 		// Initialize the event system
-		window.eventFlowEngine =
-			window.eventFlowEngine ?? new EventFlowEngine(this);
-		this.subscribeToCoreEvents();
-
-		// Initialize security subsystems
-		new InformationFlowTracker((evt) => this.emit("securityEvent", evt));
+		// V8.0 Parity: EventFlowEngine is now loaded by the ServiceRegistry.
+		await this.serviceRegistry.get("eventFlowEngine");
+		this.#subscribeToCoreEvents();
 
 		// Initialize the Non-Repudiation signer with the crypto instance from storage
 		// This ensures it uses the correct KeyringAdapter (dev or prod)
@@ -203,13 +235,21 @@ export class HybridStateManager {
 			this.clientState.cache =
 				this.managers.cacheManager.getCache("clientState");
 		}
+
+		// V8.0 Parity: Mandate 4.3 - Apply performance measurement decorator to critical methods.
+		if (this.metricsRegistry) {
+			this.saveEntity = this.metricsRegistry
+				.namespace("state")
+				.measure("saveEntity")(this.saveEntity.bind(this));
+		}
 	}
 
 	/**
 	 * Initializes the internal event system and subscribes to core events.
 	 * @private
+	 * @returns {void}
 	 */
-	subscribeToCoreEvents() {
+	#subscribeToCoreEvents() {
 		// --- Core Event Subscriptions ---
 		this.on("validationError", (data) => this.handleValidationError(data));
 		this.on("syncCompleted", (data) => this.handleSyncCompleted(data));
@@ -223,7 +263,8 @@ export class HybridStateManager {
 	/**
 	 * Handles validation error events.
 	 * @private
-	 * @param {object} data - The error data payload.
+	 * @param {object} data - The error data payload from the validation event.
+	 * @returns {void}
 	 */
 	handleValidationError(data) {
 		this.clientState.errors.push(data);
@@ -235,7 +276,8 @@ export class HybridStateManager {
 	/**
 	 * Handles successful sync completion events.
 	 * @private
-	 * @param {object} data - The sync completion data.
+	 * @param {object} data - The data from the sync completion event.
+	 * @returns {void}
 	 */
 	handleSyncCompleted(data) {
 		this.metricsRegistry.increment("sync_completed");
@@ -246,7 +288,8 @@ export class HybridStateManager {
 	/**
 	 * Handles sync error events.
 	 * @private
-	 * @param {object} data - The sync error data.
+	 * @param {object} data - The data from the sync error event.
+	 * @returns {void}
 	 */
 	handleSyncError(data) {
 		this.metricsRegistry.increment("sync_errors");
@@ -258,7 +301,8 @@ export class HybridStateManager {
 	/**
 	 * Handles access denied events.
 	 * @private
-	 * @param {object} data - The access denied data.
+	 * @param {object} data - The data from the access denied event.
+	 * @returns {void}
 	 */
 	handleAccessDenied(data) {
 		this.metricsRegistry.increment("access_denied");
@@ -269,74 +313,21 @@ export class HybridStateManager {
 	 * Records an audit event, persisting it locally in offline/demo mode.
 	 * @param {string} type - The type of the audit event.
 	 * @param {object} payload - The data associated with the event.
+	 * @param {object} [context={}] - Additional context for the event.
 	 * @returns {Promise<void>}
 	 */
-	async recordAuditEvent(type, payload) {
-		if (!this.managers.forensicLogger || !this.managers.securityManager) {
-			// If the logger isn't ready, we can queue this or log a warning.
-			// For now, we'll log a warning to avoid losing events silently.
-			console.warn(
-				"[HybridStateManager] ForensicLogger or SecurityManager not initialized. Audit event not recorded:",
-				{ type, payload }
-			);
-			return;
-		}
-
+	async recordAuditEvent(type, payload, context = {}) {
 		try {
-			const userContext = this.managers.securityManager.getSubject();
-			if (!userContext) {
+			// V8.0 Parity: Delegate audit event creation and logging to the ForensicLogger.
+			const forensicLogger = this.managers.forensicLogger;
+			if (!forensicLogger) {
 				console.warn(
-					"[HybridStateManager] Could not get user context for audit event."
+					"[HybridStateManager] ForensicLogger not available for audit event."
 				);
 				return;
 			}
-
-			// The label provides context for what is being acted upon.
-			const label = {
-				entityId:
-					payload?.entity?.id ?? payload?.id ?? payload?.resource,
-				entityType: payload?.entity?.type ?? payload?.type,
-			};
-
-			// Create a non-repudiable signature for the action.
-			// This binds the user's identity to the action and its context.
-			let signature = {
-				signature: null,
-				algorithm: "unsigned",
-				timestamp: DateCore.now(),
-			};
-
-			if (this.#signer && userContext.certificate) {
-				// Use PKI signing if a certificate is present in the user's context
-				signature = await this.#signer.signWithCertificate({
-					action: { type, label },
-					userCert: userContext.certificate,
-				});
-			} else if (this.#signer) {
-				// Fallback to standard system-level signing
-				signature = await this.#signer.signAction({
-					userId: userContext.userId,
-					action: type,
-					label,
-				});
-			}
-
-			const event = {
-				id: crypto.randomUUID(),
-				type,
-				timestamp: DateCore.now(),
-				userId: userContext.userId,
-				// Capture the user's security context at the time of the event.
-				clearance: {
-					level: userContext.level,
-					compartments: Array.from(userContext.compartments),
-				},
-				payload,
-				// The signature proves the event was logged by this user at this time.
-				...signature,
-			};
-			await this.managers.forensicLogger.logEvent(event);
-			console.log(`[HybridStateManager][Audit] ${type}`, payload);
+			// The logger will handle getting the user context and signing.
+			await forensicLogger.logAuditEvent(type, payload, context);
 		} catch (error) {
 			console.error(
 				"[HybridStateManager] Failed to log audit event:",
@@ -347,17 +338,19 @@ export class HybridStateManager {
 
 	/**
 	 * Initializes the dynamic storage system by creating and configuring the `StorageLoader`.
-	 * @private
+	 * @internal This method is called by SystemBootstrap.
 	 * @param {object} authContext - The user's authentication context.
+	 * @param {HybridStateManager} stateManager - The instance of the state manager itself.
 	 * @returns {Promise<object>} The initialized storage object.
 	 */
-	async initializeStorageSystem(authContext) {
+	async initializeStorageSystem(authContext, stateManager) {
 		if (this.storage.ready) {
 			return this.storage;
 		}
 
 		// Ensure SecurityManager is loaded and set the context
-		const securityManager = await this.loadManager("securityManager");
+		const securityManager =
+			await this.serviceRegistry.get("securityManager");
 		if (authContext?.userId && authContext?.clearanceLevel) {
 			securityManager.setUserContext(
 				authContext.userId,
@@ -370,6 +363,7 @@ export class HybridStateManager {
 		this.storage.loader = new StorageLoader({
 			baseURL: "/src/core/storage/modules/", // ensure absolute path works in dev
 			demoMode: Boolean(this.config.demoMode), // <— top-level
+			stateManager, // Pass stateManager to loader
 			mac: securityManager.mac, // <— pass MAC engine from the SecurityManager
 		});
 
@@ -382,6 +376,7 @@ export class HybridStateManager {
 				demoMode: Boolean(this.config.demoMode),
 				enableSync: this.config?.sync?.enableSync === true,
 				realtimeSync: this.config?.sync?.realtime === true,
+				stateManager, // Pass stateManager to createStorage
 			}
 		);
 
@@ -407,7 +402,7 @@ export class HybridStateManager {
 	/**
 	 * Loads the database schema definition. In a real application, this would fetch from the database.
 	 * Here, it's simulated with a hardcoded structure.
-	 * @private
+	 * @internal This method is called by SystemBootstrap.
 	 */
 	async loadDatabaseSchema() {
 		try {
@@ -824,7 +819,10 @@ export class HybridStateManager {
 				this.clientState.entities.set(entity.id, entity)
 			);
 
-			this.metrics.storage.loadTime = performance.now() - startTime;
+			this.metricsRegistry?.updateAverage(
+				"storage.loadTime",
+				performance.now() - startTime
+			);
 			this.emit("entitiesLoaded", { result });
 
 			return result;
@@ -927,7 +925,10 @@ export class HybridStateManager {
 
 			const result = await this.storage.instance.sync(options);
 
-			this.metrics.storage.syncTime = performance.now() - startTime;
+			this.metricsRegistry?.updateAverage(
+				"storage.syncTime",
+				performance.now() - startTime
+			);
 			this.emit("entitiesSynced", { result });
 
 			return result;
@@ -1023,7 +1024,7 @@ export class HybridStateManager {
 	 */
 	getStorageMetrics() {
 		return {
-			...this.metrics.storage,
+			...this.metricsRegistry?.getNamespace("storage"),
 			storageReady: this.storage.ready,
 			loadedModules: this.storage.instance?.modules || [],
 			schemaLoaded: this.schema.loaded,
@@ -1052,7 +1053,7 @@ export class HybridStateManager {
 				}
 			}
 		};
-		this.unsubscribeFunctions.push(unsubscribe);
+		this.#unsubscribeFunctions.push(unsubscribe);
 		return unsubscribe;
 	}
 
@@ -1077,17 +1078,8 @@ export class HybridStateManager {
 			});
 		}
 
-		// Optional bridge to global engine if available
-		if (this.config.bridgeToGlobalEngine && window?.eventFlowEngine?.emit) {
-			try {
-				window.eventFlowEngine.emit(eventName, payload);
-			} catch (err) {
-				console.warn(
-					`[HybridStateManager] Bridge emit failed for ${eventName}:`,
-					err
-				);
-			}
-		}
+		// V8.0 Parity: The stateManager is the central event bus. It emits events to its own registered listeners.
+		// The EventFlowEngine is one of these listeners, but other parts of the system can listen directly as well.
 	}
 
 	/**
@@ -1099,14 +1091,14 @@ export class HybridStateManager {
 		console.log("[HybridStateManager] Starting cleanup...");
 
 		// 1. Unsubscribe all internal event listeners
-		this.unsubscribeFunctions.forEach((unsubscribe) => {
+		this.#unsubscribeFunctions.forEach((unsubscribe) => {
 			try {
 				unsubscribe?.();
 			} catch (error) {
 				console.warn("[HybridStateManager] Unsubscribe failed:", error);
 			}
 		});
-		this.unsubscribeFunctions.length = 0;
+		this.#unsubscribeFunctions.length = 0;
 
 		// 2. Clean up all managers that have a cleanup method
 		for (const managerName in this.managers) {
@@ -1131,125 +1123,9 @@ export class HybridStateManager {
 	// (executeAction, mapActionToCommand, executeCommand, etc.)
 
 	/**
-	 * Dynamically loads and initializes a manager module by name.
-	 * @param {string} managerName - The name of the manager to load (e.g., 'validation', 'securityManager').
-	 * @returns {Promise<object>} A promise that resolves with the initialized manager instance.
-	 * @throws {Error} If the manager is unknown or fails to load.
+	 * All other existing methods remain the same...
+	 * (executeAction, getEntity, getEntitiesByType, recordOperation, etc.)
 	 */
-	async loadManager(managerName) {
-		if (this.managers[managerName]) {
-			return this.managers[managerName];
-		}
-
-		try {
-			let manager;
-			// Create a unified context object to pass to all manager constructors.
-			const context = {
-				stateManager: this,
-				managers: this.managers,
-				eventFlow: window.eventFlowEngine,
-				metricsRegistry: this.metricsRegistry,
-			};
-
-			switch (managerName) {
-				case "offline": {
-					break;
-				}
-				case "embedding": {
-					const { EmbeddingManager } = await import(
-						"/src/state/EmbeddingManager.js"
-					);
-					manager = new EmbeddingManager(context);
-					break;
-				}
-				case "extension": {
-					const { ExtensionManager } = await import(
-						"./ExtensionManager.js"
-					);
-					manager = new ExtensionManager(this);
-					break;
-				}
-				case "queryService": {
-					const { QueryService } = await import(
-						"../state/QueryService.js"
-					);
-					// Inject all necessary managers for full integration
-					manager = new QueryService(context);
-					break;
-				}
-				case "plugin": {
-					const { ManifestPluginSystem } = await import(
-						"./ManifestPluginSystem.js"
-					);
-					// Pass the full context to the plugin system
-					manager = new ManifestPluginSystem(context);
-					break;
-				}
-				case "validation":
-					// Directly use the validation module from the storage instance.
-					// ModularOfflineStorage will have already instantiated and initialized it.
-					if (!this.storage.instance?.validation) {
-						throw new Error(
-							"Validation module not available in storage instance."
-						);
-					}
-					manager = this.storage.instance.validation;
-					break;
-				case "forensicLogger":
-					// Dynamically import and instantiate ForensicLogger
-					const { ForensicLogger } = await import(
-						"@core/ForensicLogger.js"
-					);
-					manager = new ForensicLogger(
-						this.config.forensicLoggerConfig
-					);
-					break;
-				case "securityManager":
-					// Dynamically import and instantiate SecurityManager
-					const { SecurityManager } = await import(
-						"./security/SecurityManager.js"
-					);
-					// Pass the crypto instance to the security manager for signed operations
-					const crypto = this.storage.instance?._crypto;
-					manager = new SecurityManager({ crypto });
-					manager.bindStateManager(this);
-					break;
-				case "idManager": {
-					const { IdManager } = await import(
-						"../managers/IdManager.js"
-					);
-					manager = new IdManager(context);
-					break;
-				}
-				case "cacheManager": {
-					const { CacheManager } = await import(
-						"../managers/CacheManager.js"
-					);
-					manager = new CacheManager(context);
-					break;
-				}
-				case "metricsReporter": {
-					const { MetricsReporter } = await import(
-						"../utils/MetricsReporter.js"
-					);
-					manager = new MetricsReporter(context);
-					break;
-				}
-				default:
-					throw new Error(`Unknown manager: ${managerName}`);
-			}
-
-			this.managers[managerName] = manager;
-			await manager.initialize?.();
-			return manager;
-		} catch (error) {
-			console.error(`Failed to load manager ${managerName}:`, error);
-			throw error;
-		}
-	}
-
-	// All other existing methods remain the same...
-	// (executeAction, getEntity, getEntitiesByType, recordOperation, etc.)
 }
 
 export default HybridStateManager;
