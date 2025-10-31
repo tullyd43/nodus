@@ -6,9 +6,6 @@
  * and user-friendly interface for policy management.
  */
 
-import { OptimizationAccessControl } from "../../core/OptimizationAccessControl.js";
-import { SystemPolicies } from "../../core/SystemPolicies.js";
-
 /**
  * @function PolicyControlBlock
  * @description A composable BuildingBlock that renders a control panel for managing system policies.
@@ -20,6 +17,13 @@ import { SystemPolicies } from "../../core/SystemPolicies.js";
  * @returns {HTMLElement} The rendered HTML element for the policy control panel.
  */
 export function PolicyControlBlock({ context, config = {} }) {
+	// V8 Parity Mandate 1.1 & 1.2: Derive all dependencies from the stateManager via context.
+	const stateManager = context.stateManager;
+	const securityManager = stateManager.managers.securityManager;
+	const accessControl = stateManager.managers.optimizationAccessControl;
+	const policiesManager = stateManager.managers.policies;
+	const forensicLogger = stateManager.managers.forensicLogger;
+
 	const container = document.createElement("div");
 	container.className = "policy-control-block";
 
@@ -39,12 +43,10 @@ export function PolicyControlBlock({ context, config = {} }) {
   `;
 
 	// Get current user session and permissions
-	const session = OptimizationAccessControl.currentSession || {};
+	const session = securityManager.getSession() || {};
 	const userRole = session.role || context.userRole || "guest";
-	const allowedDomains =
-		OptimizationAccessControl.getAllowedDomainsForRole(userRole);
-	const canEditGlobal =
-		OptimizationAccessControl.checkSessionPermission("manage_policies");
+	const allowedDomains = accessControl.getAllowedDomainsForRole(userRole);
+	const canEditGlobal = accessControl.checkPermission("manage_policies");
 
 	// Create header
 	const header = createHeader();
@@ -55,7 +57,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 	container.appendChild(permissionStatus);
 
 	// Create policy sections
-	const policies = context.policies || {};
+	const policies = policiesManager.getAll() || {};
 	const policyContainer = createPolicyContainer(policies);
 	container.appendChild(policyContainer);
 
@@ -83,11 +85,11 @@ export function PolicyControlBlock({ context, config = {} }) {
 		const title = document.createElement("h3");
 		title.textContent = config.title || "System Policy Control";
 		title.style.cssText = `
-      margin: 0;
-      color: ${theme["--text"]};
-      font-size: 1.1rem;
-      font-weight: 600;
-    `;
+			margin: 0;
+			color: ${theme["--text"]};
+			font-size: 1.1rem;
+			font-weight: 600;
+		`;
 
 		const roleIndicator = document.createElement("span");
 		roleIndicator.textContent = userRole.toUpperCase();
@@ -133,18 +135,32 @@ export function PolicyControlBlock({ context, config = {} }) {
 		const domainList =
 			allowedDomains.length > 0 ? allowedDomains.join(", ") : "None";
 
+		// V8 Parity Mandate 2.1: Avoid .innerHTML. Build DOM programmatically.
 		const accessInfo = document.createElement("div");
-		accessInfo.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-        <strong>Access Level:</strong> 
-        <span style="color: ${accessColor}; font-weight: bold;">${accessLevel}</span>
-      </div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <strong>Allowed Domains:</strong> 
-        <span style="color: ${theme["--text-muted"]};">${domainList}</span>
-      </div>
-    `;
 		accessInfo.style.color = theme["--text-muted"];
+		accessInfo.style.display = "flex";
+		accessInfo.style.justifyContent = "space-between";
+		accessInfo.style.alignItems = "center";
+		accessInfo.style.marginBottom = "0.25rem";
+		const accessLabel = document.createElement("strong");
+		accessLabel.textContent = "Access Level:";
+		const accessValue = document.createElement("span");
+		accessValue.style.color = accessColor;
+		accessValue.style.fontWeight = "bold";
+		accessValue.textContent = accessLevel;
+		accessInfo.append(accessLabel, accessValue);
+
+		const domainInfo = document.createElement("div");
+		domainInfo.style.cssText = `display: flex; justify-content: space-between; align-items: center;`;
+		const domainLabel = document.createElement("strong");
+		domainLabel.textContent = "Allowed Domains:";
+		const domainValue = document.createElement("span");
+		domainValue.style.color = theme["--text-muted"];
+		domainValue.textContent = domainList;
+		domainInfo.append(domainLabel, domainValue);
+
+		statusDiv.appendChild(accessInfo);
+		statusDiv.appendChild(domainInfo);
 
 		// Add help text for restricted access
 		if (!canEditGlobal || allowedDomains.length < 5) {
@@ -167,10 +183,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 			}
 
 			helpText.textContent = helpMessage;
-			statusDiv.appendChild(accessInfo);
 			statusDiv.appendChild(helpText);
-		} else {
-			statusDiv.appendChild(accessInfo);
 		}
 
 		return statusDiv;
@@ -286,11 +299,16 @@ export function PolicyControlBlock({ context, config = {} }) {
     `;
 
 		const headerTitle = document.createElement("div");
-		headerTitle.innerHTML = `${sectionInfo.icon} <strong>${sectionInfo.name}</strong>`;
 		headerTitle.style.cssText = `
       font-size: 0.9rem;
       color: ${theme["--text"]};
     `;
+		// V8 Parity Mandate 2.1: Build DOM programmatically.
+		const iconSpan = document.createElement("span");
+		iconSpan.textContent = `${sectionInfo.icon} `;
+		const titleStrong = document.createElement("strong");
+		titleStrong.textContent = sectionInfo.name;
+		headerTitle.append(iconSpan, titleStrong);
 
 		const accessBadge = document.createElement("span");
 		accessBadge.textContent = canEditSection ? "Edit" : "Read Only";
@@ -514,7 +532,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 		}
 
 		// Add dependency info if policy has dependencies
-		const dependencies = SystemPolicies.getPolicyDependencies(section, key);
+		const dependencies = policiesManager.getDependencies(section, key);
 		if (dependencies.length > 0) {
 			const depIcon = document.createElement("span");
 			depIcon.textContent = "🔗";
@@ -703,8 +721,8 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @returns {HTMLElement} The button DOM element.
 	 */
 	function createButton(text, icon, onClick, tooltipText) {
-		const button = document.createElement("button");
-		button.innerHTML = `${icon} ${text}`;
+		const button = document.createElement("button"); // V8 Mandate 2.1: Avoid .innerHTML
+		button.textContent = `${icon} ${text}`;
 		button.style.cssText = `
       padding: 0.5rem 1rem;
       background: ${theme["--primary"]};
@@ -747,13 +765,13 @@ export function PolicyControlBlock({ context, config = {} }) {
 		try {
 			// Check dependencies before enabling
 			if (enabled) {
-				const dependencies = SystemPolicies.getPolicyDependencies(
+				const dependencies = policiesManager.getDependencies(
 					section,
 					key
 				);
 				for (const dep of dependencies) {
 					const [depDomain, depKey] = dep.split(".");
-					const depValue = context.getPolicy(depDomain, depKey);
+					const depValue = policiesManager.get(depDomain, depKey);
 					if (!depValue) {
 						throw new Error(
 							`Cannot enable ${key}: dependency ${dep} is not enabled`
@@ -762,14 +780,8 @@ export function PolicyControlBlock({ context, config = {} }) {
 				}
 			}
 
-			// Update local context
-			if (!context.policies[section]) {
-				context.policies[section] = {};
-			}
-			context.policies[section][key] = enabled;
-
 			// Update system policies
-			await SystemPolicies.update(section, key, enabled);
+			await policiesManager.update(section, key, enabled);
 
 			// Emit event
 			if (context.eventFlow) {
@@ -782,12 +794,11 @@ export function PolicyControlBlock({ context, config = {} }) {
 				});
 			}
 
-			// Audit log
-			OptimizationAccessControl.auditUserAction(
-				userRole,
-				`policy_update:${section}.${key}`,
-				{ enabled, domain: section }
-			);
+			// V8 Parity Mandate 2.4: Use ForensicLogger for unified audit events.
+			forensicLogger?.logAuditEvent("POLICY_UPDATE", {
+				policy: `${section}.${key}`,
+				newValue: enabled,
+			});
 
 			console.log(`Policy updated: ${section}.${key} = ${enabled}`);
 		} catch (error) {
@@ -913,7 +924,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 		const export_data = {
 			timestamp: new Date().toISOString(),
 			exportedBy: userRole,
-			policies: context.policies,
+			policies: policiesManager.getAll(),
 			metadata: {
 				version: "1.0",
 				domains: allowedDomains,

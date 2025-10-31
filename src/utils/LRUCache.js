@@ -8,7 +8,7 @@ import { DateCore } from "./DateUtils.js"; // DateCore is now the lean, integrat
  * Designed for unified entity storage with robust metrics and optional auditing.
  *
  * @template T The type of values stored in the cache.
- *
+ * @privateFields {#maxSize, #cache, #options, #ttlMap, #cleanupInterval, #stateManager, #metricsRegistry, #errorHelpers, #securityManager, #forensicLogger, #AppError, #PolicyError, #StorageError}
  */
 export class LRUCache {
 	// V8.0 Parity: Use private fields for true encapsulation.
@@ -17,35 +17,43 @@ export class LRUCache {
 	#options;
 	#ttlMap = new Map();
 	#cleanupInterval = null;
-	#stateManager;
+
 	// V8.0 Parity: Mandate 1.2 - All dependencies are derived from the stateManager context.
+	#stateManager;
+	#metricsRegistry;
+	#errorHelpers;
+	#securityManager;
+	#forensicLogger;
 	#AppError;
 	#PolicyError;
 	#StorageError;
 
 	/**
 	 * Creates an instance of LRUCache.
-	 * @param {number} [maxSize=1000] - The maximum number of items the cache can hold.
 	 * @param {object} context - The application context, containing stateManager and other options.
 	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager instance.
-	 * @param {import('./ErrorHelpers.js').ErrorHelpers} context.errorHelpers - The centralized error helper instance.
+	 * @param {number} [maxSize=1000] - The maximum number of items the cache can hold.
 	 */
-	constructor(maxSize = 1000, { stateManager, ...options } = {}) {
+	constructor({ stateManager, ...options }, maxSize = 1000) {
 		this.#stateManager = stateManager;
 
 		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
-		const ErrorHelpers = this.#stateManager?.managers?.errorHelpers;
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
+		this.#metricsRegistry = this.#stateManager?.metricsRegistry;
+		this.#securityManager = this.#stateManager?.managers?.securityManager;
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
+
 		// Fallback to standard Error if helpers are not available during early instantiation.
-		this.#AppError = ErrorHelpers?.AppError || Error;
-		this.#PolicyError = ErrorHelpers?.PolicyError || Error;
-		this.#StorageError = ErrorHelpers?.StorageError || Error;
+		this.#AppError = this.#errorHelpers?.AppError || Error;
+		this.#PolicyError = this.#errorHelpers?.PolicyError || Error;
+		this.#StorageError = this.#errorHelpers?.StorageError || Error;
 
 		// Enhanced options
 		// V8.0 Parity: Derive dependencies from stateManager in context
 		this.#options = {
 			enableMetrics: options.enableMetrics !== false, // Default enabled
 			auditOperations: false,
-			memoryLimit: null,
+			memoryLimit: null, // in bytes
 			keyPrefix: "",
 			...options,
 		};
@@ -90,13 +98,14 @@ export class LRUCache {
 	 * @private
 	 * @returns {import('./MetricsRegistry.js').MetricsRegistry|null}
 	 */
-	#getMetricsNamespace() {
-		const metricsRegistry = this.#stateManager?.metricsRegistry;
-		if (!metricsRegistry) return null;
+	#getMetrics() {
+		if (!this.#metricsRegistry) return null;
 
 		return this.#options.keyPrefix
-			? metricsRegistry.namespace(`cache.${this.#options.keyPrefix}`)
-			: metricsRegistry;
+			? this.#metricsRegistry.namespace(
+					`cache.${this.#options.keyPrefix}`
+				)
+			: this.#metricsRegistry;
 	}
 
 	/**
@@ -109,8 +118,8 @@ export class LRUCache {
 	 * @returns {T|undefined} The cached value, or `undefined` if not found or expired.
 	 */
 	get(key, securityContext = {}) {
-		return this.#stateManager?.managers?.errorHelpers?.trace(
-			"LRUCache.get",
+		return this.#errorHelpers?.trace(
+			"cache.get",
 			() => {
 				const prefixedKey = this.#getPrefixedKey(key);
 
@@ -131,12 +140,9 @@ export class LRUCache {
 				this.#cache.set(prefixedKey, item);
 
 				// Security Integration: Check if user can read this item
-				if (
-					this.#stateManager?.managers?.securityManager &&
-					item.securityLabel
-				) {
+				if (this.#securityManager && item.securityLabel) {
 					const canRead =
-						this.#stateManager.managers.securityManager.canRead(
+						this.#securityManager.canRead(
 							securityContext,
 							item.securityLabel
 						) ?? false;
@@ -155,7 +161,7 @@ export class LRUCache {
 				item.accessed = DateCore.timestamp(); // timestamp() returns a number, which is fine
 				item.hits++;
 
-				this.#getMetricsNamespace()?.increment("hits"); // This is a 'hit'
+				this.#getMetrics()?.increment("hits"); // This is a 'hit'
 				this.#stateManager?.emit("cache_hit", {
 					timestamp: DateCore.now(),
 					source: `cache:${this.#options.keyPrefix || "generic"}`,
@@ -175,7 +181,7 @@ export class LRUCache {
 	 * @param {string} [reason] - The reason for the miss (e.g., 'expired').
 	 */
 	#handleCacheMiss(key, reason) {
-		this.#getMetricsNamespace()?.increment("misses");
+		this.#getMetrics()?.increment("misses");
 		this.#stateManager?.emit("cache_miss", {
 			timestamp: DateCore.now(),
 			source: `cache:${this.#options.keyPrefix || "generic"}`,
@@ -197,20 +203,17 @@ export class LRUCache {
 	 * @param {object} [options.securityLabel=null] - Security label to attach to the item.
 	 */
 	set(key, value, options = {}) {
-		this.#stateManager?.managers?.errorHelpers?.trace(
-			"LRUCache.set",
+		this.#errorHelpers?.trace(
+			"cache.set",
 			() => {
 				const { ttlOverride, securityContext, securityLabel } = options;
 				const prefixedKey = this.#getPrefixedKey(key);
 				const itemSize = this.#estimateItemSize(prefixedKey, value);
 
 				// Security Integration: Check if user can write this item
-				if (
-					this.#stateManager?.managers?.securityManager &&
-					securityLabel
-				) {
+				if (this.#securityManager && securityLabel) {
 					const canWrite =
-						this.#stateManager.managers.securityManager.canWrite(
+						this.#securityManager.canWrite(
 							securityContext,
 							securityLabel
 						) ?? false;
@@ -227,7 +230,7 @@ export class LRUCache {
 				}
 
 				// Check memory limit before adding
-				const metrics = this.#getMetricsNamespace();
+				const metrics = this.#getMetrics();
 				const currentMemory = metrics?.get("memory_bytes")?.value || 0;
 				if (
 					this.#options.memoryLimit &&
@@ -300,7 +303,7 @@ export class LRUCache {
 		for (const [key, item] of this.#cache.entries()) {
 			if (item.entityType === entityType && !this.isExpired(key)) {
 				entities.set(this.#getUnprefixedKey(key), item.value);
-			}
+			} // V8.0 Parity: Use private fields for true encapsulation.
 		}
 
 		return entities;
@@ -323,7 +326,7 @@ export class LRUCache {
 				!this.isExpired(key) &&
 				predicate(item.value, this.#getUnprefixedKey(key))
 			) {
-				entities.set(this.getUnprefixedKey(key), item.value);
+				entities.set(this.#getUnprefixedKey(key), item.value);
 			}
 		}
 
@@ -360,23 +363,20 @@ export class LRUCache {
 	 * @returns {boolean} `true` if the key exists and is valid, `false` otherwise.
 	 */
 	has(key) {
-		return this.#stateManager?.managers?.errorHelpers?.trace(
-			"LRUCache.has",
-			() => {
-				const prefixedKey = this.#getPrefixedKey(key);
+		return this.#errorHelpers?.trace("cache.has", () => {
+			const prefixedKey = this.#getPrefixedKey(key);
 
-				if (!this.#cache.has(prefixedKey)) {
-					return false;
-				}
-
-				if (this.#options.ttl && this.isExpired(prefixedKey)) {
-					this.#expireItem(prefixedKey);
-					return false;
-				}
-
-				return true;
+			if (!this.#cache.has(prefixedKey)) {
+				return false;
 			}
-		);
+
+			if (this.#options.ttl && this.isExpired(prefixedKey)) {
+				this.#expireItem(prefixedKey);
+				return false;
+			}
+
+			return true;
+		});
 	}
 
 	/**
@@ -389,33 +389,27 @@ export class LRUCache {
 	 * @fires LRUCache#audit_cache_delete (if auditing is enabled)
 	 */
 	delete(key) {
-		return this.#stateManager?.managers?.errorHelpers?.trace(
-			"LRUCache.delete",
-			() => {
-				const prefixedKey = this.#getPrefixedKey(key);
-				const item = this.#cache.get(prefixedKey);
-				if (!item) {
-					return false;
-				}
-
-				this.#cache.delete(prefixedKey);
-				this.#ttlMap.delete(prefixedKey);
-				this.#getMetricsNamespace()?.increment(
-					"memory_bytes",
-					-item.size
-				);
-				this.#getMetricsNamespace()?.increment("deletes");
-
-				if (this.#options.auditOperations) {
-					this.#auditOperation("cache_delete", {
-						key: prefixedKey,
-						entityType: item.entityType,
-					});
-				}
-
-				return true;
+		return this.#errorHelpers?.trace("cache.delete", () => {
+			const prefixedKey = this.#getPrefixedKey(key);
+			const item = this.#cache.get(prefixedKey);
+			if (!item) {
+				return false;
 			}
-		);
+
+			this.#cache.delete(prefixedKey);
+			this.#ttlMap.delete(prefixedKey);
+			this.#getMetrics()?.increment("memory_bytes", -item.size);
+			this.#getMetrics()?.increment("deletes");
+
+			if (this.#options.auditOperations) {
+				this.#auditOperation("cache_delete", {
+					key: prefixedKey,
+					entityType: item.entityType,
+				});
+			}
+
+			return true;
+		});
 	}
 
 	/**
@@ -431,7 +425,7 @@ export class LRUCache {
 
 		this.#cache.clear();
 		this.#ttlMap.clear();
-		const metrics = this.#getMetricsNamespace();
+		const metrics = this.#getMetrics();
 		const currentMemory = metrics?.get("memory_bytes")?.value || 0;
 		if (currentMemory > 0) {
 			metrics?.increment("memory_bytes", -currentMemory);
@@ -614,7 +608,7 @@ export class LRUCache {
 	 * @param {number} newItemSize - The size of the item about to be added.
 	 */
 	#enforceMemoryLimit(newItemSize) {
-		const metrics = this.#getMetricsNamespace();
+		const metrics = this.#getMetrics();
 		const targetMemory = this.#options.memoryLimit - newItemSize;
 
 		while (
@@ -661,8 +655,8 @@ export class LRUCache {
 
 		this.#cache.delete(key);
 		this.#ttlMap.delete(key);
-		this.#getMetricsNamespace()?.increment("memory_bytes", -item.size);
-		this.#getMetricsNamespace()?.increment("expirations");
+		this.#getMetrics()?.increment("memory_bytes", -item.size);
+		this.#getMetrics()?.increment("expirations");
 
 		this.#stateManager?.emit("cache_expiration", {
 			timestamp: DateCore.now(),
@@ -692,24 +686,21 @@ export class LRUCache {
 
 		this.#cache.delete(oldestKey);
 		this.#ttlMap.delete(oldestKey);
-		this.#getMetricsNamespace()?.increment(
-			"memory_bytes",
-			-oldestItem.size
-		);
-		this.#getMetricsNamespace()?.increment("evictions");
+		this.#getMetrics()?.increment("memory_bytes", -oldestItem.size);
+		this.#getMetrics()?.increment("evictions");
 
 		this.#stateManager?.emit("cache_eviction", {
 			timestamp: DateCore.now(),
 			source: `cache:${this.#options.keyPrefix || "generic"}`,
 			key: this.#getUnprefixedKey(oldestKey),
 			entityType: oldestItem.entityType,
-			reason: reason,
+			reason,
 		});
 
 		if (this.#options.auditOperations) {
 			this.#auditOperation("cache_evict", {
 				key: oldestKey,
-				reason: reason,
+				reason,
 				entityType: oldestItem.entityType,
 			});
 		}
@@ -774,19 +765,22 @@ export class LRUCache {
 		 * @property {number} avgGetTime - The average time for a 'get' operation.
 		 * @property {number} avgSetTime - The average time for a 'set' operation.
 		 */
-		const metrics = this.#getMetricsNamespace();
+		const metrics = this.#getMetrics();
 		const allMetrics = metrics?.getAllAsObject() || {};
+
 		const hits = allMetrics["hits"]?.value || 0;
 		const misses = allMetrics["misses"]?.value || 0;
 		const totalAccesses = hits + misses;
 		const hitRate = totalAccesses > 0 ? (hits / totalAccesses) * 100 : 0;
 
 		const memoryUsage = allMetrics["memory_bytes"]?.value || 0;
+		const getTimer = allMetrics["cache.get"];
+		const setTimer = allMetrics["cache.set"];
 
 		return {
 			hitRate: Math.round(hitRate * 100) / 100,
-			avgGetTime: allMetrics["get"]?.avg || 0,
-			avgSetTime: allMetrics["set"]?.avg || 0,
+			avgGetTime: getTimer?.avg || 0,
+			avgSetTime: setTimer?.avg || 0,
 			memoryUsage,
 			memoryUtilization: this.#options.memoryLimit
 				? Math.round((memoryUsage / this.#options.memoryLimit) * 100)
@@ -804,36 +798,30 @@ export class LRUCache {
 		 * Resets all collected metrics to their initial state, except for current memory usage and total entity count.
 		 * @returns {void}
 		 */
-		this.#getMetricsNamespace()?.reset();
+		this.#getMetrics()?.reset();
 	}
 
 	/**
-	 * Placeholder for audit integration.
-	 * If `options.auditOperations` is enabled, this method would typically
-	 * emit an event or log to an external auditing system.
-	 * Currently, it logs to the console if metrics are enabled.
+	 * Logs a cache operation to the ForensicLogger, creating a standardized,
+	 * auditable event as per Mandate 2.4.
 	 * @private
 	 * @param {string} operation - The type of cache operation (e.g., 'cache_set', 'cache_delete').
 	 * @param {object} metadata - Additional context about the operation.
 	 * @returns {void}
 	 */
 	#auditOperation(operation, metadata) {
-		if (!this.#options.auditOperations) return;
+		if (!this.#options.auditOperations || !this.#forensicLogger) return;
 
-		const auditEvent = {
-			timestamp: DateCore.now(),
-			source: `cache:${this.#options.keyPrefix || "generic"}`,
-			operation,
-			metadata,
+		// Convert operation name to a standardized event type format.
+		const eventType = `CACHE_${operation.replace("cache_", "").toUpperCase()}`;
+
+		const payload = {
+			cacheName: this.#options.keyPrefix || "generic",
+			...metadata,
 		};
 
-		// Emit to event flow if available
-		if (this.#stateManager) {
-			this.#stateManager.emit("cache_audit", auditEvent);
-		} else if (this.#options.enableMetrics) {
-			// Fallback to console logging if no event flow but auditing is on
-			console.log(`Cache audit:`, auditEvent);
-		}
+		// Use the forensic logger to create a compliant audit event.
+		this.#forensicLogger.logAuditEvent(eventType, payload);
 	}
 
 	/**

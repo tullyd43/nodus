@@ -1,5 +1,5 @@
-import { defineConfig } from "vite";
 import { visualizer } from "rollup-plugin-visualizer";
+import { defineConfig } from "vite";
 
 // Vitest config is integrated here
 export default defineConfig({

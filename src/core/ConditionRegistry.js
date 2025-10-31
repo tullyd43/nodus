@@ -5,7 +5,7 @@
  */
 
 import ConditionSchema from "./ConditionSchema.json";
-import { DateConditions } from "../utils/DateUtils.js";
+import { DateUtils } from "../utils/DateUtils.js";
 /**
  * @class ConditionRegistry
  * @privateFields {#stateManager, #conditions, #conditionCache, #metrics, #errorHelpers, #rateLimitStore, #schemaValidator}
@@ -65,7 +65,8 @@ export class ConditionRegistry {
 		}
 
 		// V8.0 Parity: Mandate 2.2 - Create a simple schema validator.
-		this.#schemaValidator = this.#createSimpleSchemaValidator(ConditionSchema);
+		this.#schemaValidator =
+			this.#createSimpleSchemaValidator(ConditionSchema);
 
 		this.#registerBuiltinConditions();
 		console.log(
@@ -157,9 +158,12 @@ export class ConditionRegistry {
 			async () => {
 				// Generate cache key if condition is cacheable
 				const { valid, errors } = this.validate(conditionDef);
-				if (!valid) { // V8.0 Parity: Mandate 2.2 - Stricter validation enforcement.
+				if (!valid) {
+					// V8.0 Parity: Mandate 2.2 - Stricter validation enforcement.
 					// Throw a specific, detailed error if validation fails.
-					throw new Error(`Invalid condition definition: ${errors.join("; ")}`);
+					throw new Error(
+						`Invalid condition definition: ${errors.join("; ")}`
+					);
 				}
 
 				const cacheKey = this.#generateCacheKey(
@@ -177,7 +181,9 @@ export class ConditionRegistry {
 				// Get the registered condition evaluator.
 				const condition = this.#conditions.get(conditionDef.type);
 				if (!condition) {
-					throw new Error(`Unknown condition type: ${conditionDef.type}`);
+					throw new Error(
+						`Unknown condition type: ${conditionDef.type}`
+					);
 				}
 
 				// Prepare arguments for the evaluator function.
@@ -267,7 +273,11 @@ export class ConditionRegistry {
 					value: { required: true },
 				},
 				examples: [
-					{ type: "property_equals", property: "data.user.role", value: "admin" },
+					{
+						type: "property_equals",
+						property: "data.user.role",
+						value: "admin",
+					},
 					{
 						type: "property_equals",
 						property: "data.entity.status",
@@ -324,7 +334,7 @@ export class ConditionRegistry {
 					},
 					value: { type: "number", required: true },
 				},
-			},
+			}
 		);
 
 		// Array membership
@@ -346,7 +356,13 @@ export class ConditionRegistry {
 					property: { type: "string", required: true },
 					array: { type: "array", required: true },
 				},
-				examples: [{ type: "in_array", property: "data.entity.type", array: ["task", "note"] }],
+				examples: [
+					{
+						type: "in_array",
+						property: "data.entity.type",
+						array: ["task", "note"],
+					},
+				],
 			}
 		);
 
@@ -377,7 +393,10 @@ export class ConditionRegistry {
 					const regex = new RegExp(pattern, flags);
 					return regex.test(actualValue);
 				} catch (e) {
-					console.error(`[ConditionRegistry] Invalid regex pattern: ${pattern}`, e);
+					console.error(
+						`[ConditionRegistry] Invalid regex pattern: ${pattern}`,
+						e
+					);
 					return false;
 				}
 			},
@@ -388,7 +407,13 @@ export class ConditionRegistry {
 					pattern: { type: "string", required: true },
 					flags: { type: "string" },
 				},
-				examples: [{ type: "regex_match", property: "data.entity.name", pattern: "^TASK-" }],
+				examples: [
+					{
+						type: "regex_match",
+						property: "data.entity.name",
+						pattern: "^TASK-",
+					},
+				],
 			}
 		);
 
@@ -412,7 +437,7 @@ export class ConditionRegistry {
 					after: { type: "number" },
 					before: { type: "number" },
 				},
-			},
+			}
 		);
 
 		// Time of day
@@ -423,12 +448,16 @@ export class ConditionRegistry {
 				const timeInMinutes = now.getHours() * 60 + now.getMinutes();
 
 				if (conditionDef.after) {
-					const afterInMinutes = DateConditions.parseTimeString(conditionDef.after);
+					const afterInMinutes = DateUtils.parseTimeString(
+						conditionDef.after
+					);
 					if (timeInMinutes < afterInMinutes) return false;
 				}
 
 				if (conditionDef.before) {
-					const beforeInMinutes = DateConditions.parseTimeString(conditionDef.before);
+					const beforeInMinutes = DateUtils.parseTimeString(
+						conditionDef.before
+					);
 					if (timeInMinutes > beforeInMinutes) return false;
 				}
 
@@ -444,7 +473,7 @@ export class ConditionRegistry {
 					{ type: "time_of_day", after: "09:00", before: "17:00" }, // Business hours
 					{ type: "time_of_day", after: "22:00" }, // After 10 PM
 				],
-			},
+			}
 		);
 
 		// V8.0 Parity: Mandate 4.2 - Pre-parsed time condition for hot paths.
@@ -477,7 +506,7 @@ export class ConditionRegistry {
 					afterMinutes: { type: "number" },
 					beforeMinutes: { type: "number" },
 				},
-			},
+			}
 		);
 
 		// User permission check
@@ -512,7 +541,7 @@ export class ConditionRegistry {
 						requireAll: true,
 					},
 				],
-			},
+			}
 		);
 
 		// User role check
@@ -530,7 +559,9 @@ export class ConditionRegistry {
 				schema: {
 					roles: { type: "array", required: true },
 				},
-				examples: [{ type: "user_has_role", roles: ["admin", "editor"] }]
+				examples: [
+					{ type: "user_has_role", roles: ["admin", "editor"] },
+				],
 			}
 		);
 
@@ -550,7 +581,7 @@ export class ConditionRegistry {
 				schema: {
 					types: { type: "array", required: true },
 				},
-				examples: [{ type: "entity_type", types: ["user", "group"] }]
+				examples: [{ type: "entity_type", types: ["user", "group"] }],
 			}
 		);
 
@@ -595,7 +626,7 @@ export class ConditionRegistry {
 						window: 60000,
 					},
 				],
-			},
+			}
 		);
 
 		// Complex condition (AND/OR logic)
@@ -679,7 +710,8 @@ export class ConditionRegistry {
 	 * @param {string} path - The dot-notation path (e.g., 'data.user.id').
 	 * @returns {*} The value at the specified path, or undefined if not found.
 	 */
-	#getNestedProperty(obj, path) { // Already private, but good to confirm.
+	#getNestedProperty(obj, path) {
+		// Already private, but good to confirm.
 		return path
 			.split(".")
 			.reduce(
@@ -698,7 +730,8 @@ export class ConditionRegistry {
 	 * @returns {Function} A function that takes data and returns `{valid: boolean, errors: string[]}`.
 	 * @see {@link d:\Development Files\repositories\nodus\src\core\ConditionSchema.json}
 	 */
-	#createSimpleSchemaValidator(schema) { // Already private, but good to confirm.
+	#createSimpleSchemaValidator(schema) {
+		// Already private, but good to confirm.
 		// This is a simplified, non-recursive validator that handles the `allOf` > `if/then` structure of ConditionSchema.json
 		return (conditionDef) => {
 			const errors = [];

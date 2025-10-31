@@ -1,67 +1,99 @@
 /**
  * @file GridToastManager.js
- * @description Implements a lightweight, accessible toast notification system for providing user feedback,
- * particularly for grid layout persistence and policy changes. It integrates with the `EventFlowEngine`
- * to react to system events.
+ * @description A managed service that implements a lightweight, accessible toast notification system. It provides user feedback for grid layout persistence, policy changes, and other system events, adhering to all V8 Parity Mandates.
  */
 
 import { DateCore } from "../utils/DateUtils.js";
 
 /**
  * @class GridToastManager
- * @classdesc Manages the display of transient, non-intrusive toast notifications.
- * It handles creation, styling, automatic dismissal, and accessibility features for toasts.
+ * @classdesc Manages the display of transient, non-intrusive toast notifications. It handles creation, styling, automatic dismissal, and accessibility features for toasts. This is a managed service, instantiated by the ServiceRegistry.
+ * @privateFields {#stateManager, #eventFlowEngine, #policyManager, #errorHelpers, #metrics, #toasts, #container, #maxToasts, #defaultDuration, #unsubscribeFunctions}
  */
 export class GridToastManager {
+	/** @private @type {import('../core/EventFlowEngine.js').EventFlowEngine|null} */
+	#eventFlowEngine;
+	/** @private @type {import('../core/SystemPolicies.js').SystemPolicies|null} */
+	#policyManager;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics;
+
+	/** @private @type {Map<string, {element: HTMLElement, type: string}>} */
+	#toasts = new Map();
+	/** @private @type {HTMLElement|null} */
+	#container = null;
+	/** @private @type {number} */
+	#maxToasts = 3;
+	/** @private @type {number} */
+	#defaultDuration = 2500;
+	/** @private @type {Function[]} */
+	#unsubscribeFunctions = [];
+
+	/** @private */
+	#onError(error) {
+		if (error.showToUser) {
+			const typeMap = {
+				high: "error",
+				medium: "warning",
+				low: "info",
+			};
+			this.showToast(
+				error.userFriendlyMessage,
+				typeMap[error.severity] || "error"
+			);
+		}
+	}
+
+	/** @private */
+	#onPerformanceModeChanged(data) {
+		if (data.reason === "policy_override") {
+			const message = data.enabled
+				? "🚀 Performance mode enabled"
+				: "✨ Full features enabled";
+			this.info(message, 3000);
+		}
+	}
+
+	/** @private */
+	#onPerformanceAlert(alert) {
+		this.warning(alert.message, 4000);
+	}
+
 	/**
 	 * Creates an instance of GridToastManager.
+	 * @param {object} context - The context object from the ServiceRegistry.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The application's state manager.
 	 */
-	constructor() {
-		/**
-		 * A map of active toasts, keyed by their unique ID.
-		 * @type {Map<string, {element: HTMLElement, type: string}>}
-		 * @private
-		 */
-		this.toasts = new Map();
-		/**
-		 * The DOM element that serves as the container for all toasts.
-		 * @type {HTMLElement|null}
-		 * @private
-		 */
-		this.container = null;
-		/**
-		 * The maximum number of toasts to display simultaneously.
-		 * @type {number}
-		 * @private
-		 */
-		this.maxToasts = 3;
-		/**
-		 * The default duration for toasts to display in milliseconds.
-		 * @type {number}
-		 * @private
-		 */
-		this.defaultDuration = 2500;
+	constructor({ stateManager }) {
+		// V8.0 Parity: Mandate 1.1 & 1.2 - Derive all dependencies from the stateManager.
+		this.#eventFlowEngine = stateManager.eventFlowEngine;
+		this.#policyManager = stateManager.managers.policies;
+		this.#errorHelpers = stateManager.managers.errorHelpers;
+		this.#metrics =
+			stateManager.metricsRegistry?.namespace("grid.toastManager");
 
-		this.setupContainer();
-		this.setupEventListeners();
+		this.#setupContainer();
+		this.#setupEventListeners();
 	}
 
 	/**
 	 * Sets up the main container element for toasts in the DOM.
 	 * @private
 	 */
-	setupContainer() {
+	#setupContainer() {
 		// Create toast container if it doesn't exist
-		this.container = document.getElementById("grid-toast-container");
-		if (!this.container) {
-			this.container = document.createElement("div");
-			this.container.id = "grid-toast-container";
-			this.container.className = "grid-toast-container";
-			this.container.setAttribute("aria-live", "polite");
-			this.container.setAttribute("aria-label", "Grid notifications");
+		this.#container = document.getElementById("grid-toast-container");
+		if (!this.#container) {
+			this.#container = document.createElement("div");
+			this.#container.id = "grid-toast-container";
+			this.#container.className = "grid-toast-container";
+			this.#container.setAttribute("aria-live", "polite");
+			this.#container.setAttribute("aria-label", "Grid notifications");
 
 			// Position container
-			this.container.style.cssText = `
+			this.#container.style.cssText = `
         position: fixed;
         top: 20px;
         right: 20px;
@@ -70,7 +102,7 @@ export class GridToastManager {
         max-width: 300px;
       `;
 
-			document.body.appendChild(this.container);
+			document.body.appendChild(this.#container);
 		}
 	}
 
@@ -78,21 +110,29 @@ export class GridToastManager {
 	 * Sets up event listeners to react to system events and display toasts.
 	 * @private
 	 */
-	setupEventListeners() {
+	#setupEventListeners() {
 		// Listen for layout changes to show save feedback
-		if (typeof window.eventFlowEngine !== "undefined") {
-			window.eventFlowEngine.on(
-				"layoutChanged",
-				this.onLayoutChanged.bind(this)
+		if (this.#eventFlowEngine) {
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on(
+					"layoutChanged",
+					this.#onLayoutChanged.bind(this)
+				)
 			);
-			window.eventFlowEngine.on(
-				"gridPerformanceMode",
-				this.onPerformanceModeChanged.bind(this)
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on(
+					"gridPerformanceMode",
+					this.#onPerformanceModeChanged.bind(this)
+				)
 			);
-			window.eventFlowEngine.on("error", this.onError.bind(this));
-			window.eventFlowEngine.on(
-				"performance_alert",
-				this.onPerformanceAlert.bind(this)
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on("error", this.#onError.bind(this))
+			);
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on(
+					"performance_alert",
+					this.#onPerformanceAlert.bind(this)
+				)
 			);
 		}
 	}
@@ -102,11 +142,10 @@ export class GridToastManager {
 	 * @private
 	 * @param {object} changeEvent - The event data for the layout change.
 	 */
-	onLayoutChanged(changeEvent) {
+	#onLayoutChanged(changeEvent) {
 		// Check policy to see if we should show feedback
 		try {
-			const context = this.getContext();
-			if (!context || !this.shouldShowSaveFeedback(context)) {
+			if (!this.#shouldShowSaveFeedback()) {
 				return;
 			}
 
@@ -122,114 +161,62 @@ export class GridToastManager {
 
 			const message =
 				messages[changeEvent.changeType] || "💾 Layout saved";
-			this.showToast(message, "success", 2000);
+			this.success(message, 2000);
 		} catch (error) {
-			console.warn(
-				"Toast notification error onLayoutChanged:",
-				error.message
-			);
+			this.#metrics?.increment("toast.create_failed");
+			this.#errorHelpers?.handleError(error, {
+				component: "GridToastManager",
+				operation: "onLayoutChanged",
+				userFriendlyMessage:
+					"Could not display layout save notification.",
+			});
 		}
-	}
-
-	/**
-	 * Handles `gridPerformanceMode` events, displaying a toast notification for policy overrides.
-	 * @private
-	 * @param {object} data - The event data for the performance mode change.
-	 */
-	onPerformanceModeChanged(data) {
-		if (data.reason === "policy_override") {
-			const message = data.enabled
-				? "🚀 Performance mode enabled"
-				: "✨ Full features enabled";
-			this.showToast(message, "info", 3000);
-		}
-	}
-
-	/**
-	 * Handles `error` events, displaying a toast if the error is user-facing.
-	 * @private
-	 * @param {object} error - The formatted error object from ErrorHelpers.
-	 */
-	onError(error) {
-		if (error.showToUser) {
-			const typeMap = {
-				high: "error",
-				medium: "warning",
-				low: "info",
-			};
-			this.showToast(
-				error.userFriendlyMessage,
-				typeMap[error.severity] || "error"
-			);
-		}
-	}
-
-	/**
-	 * Handles `performance_alert` events, displaying a warning toast.
-	 * @private
-	 * @param {object} alert - The performance alert object from MetricsReporter.
-	 */
-	onPerformanceAlert(alert) {
-		this.showToast(alert.message, "warning", 4000);
 	}
 
 	/**
 	 * Checks the system policy to determine if save feedback toasts should be displayed.
 	 * @private
-	 * @param {object} context - The application context, expected to have a `getBooleanPolicy` method.
 	 * @returns {boolean} `true` if save feedback should be shown, `false` otherwise.
 	 */
-	shouldShowSaveFeedback(context) {
+	#shouldShowSaveFeedback() {
 		// Check policy or use default
 		try {
-			return (
-				context.getBooleanPolicy?.(
-					"system",
-					"grid_save_feedback",
-					true
-				) ?? true
-			);
+			return this.#policyManager
+				? this.#policyManager.getPolicy("system", "grid_save_feedback")
+				: true;
 		} catch (error) {
-			console.warn(
-				"Toast notification error shouldShowSaveFeedback:",
-				error.message
-			);
+			this.#errorHelpers?.handleError(error, {
+				component: "GridToastManager",
+				operation: "shouldShowSaveFeedback",
+				severity: "low",
+			});
 			return true; // Default to showing feedback
 		}
 	}
 
 	/**
-	 * Retrieves the application context from the global `window` object.
-	 * @private
-	 * @returns {object|null} The application context, or `null` if not available.
-	 */
-	getContext() {
-		// Try to get context from global app or window
-		return window.appViewModel?.context || null;
-	}
-
-	/**
 	 * Displays a toast notification with the given message, type, and duration.
+	 * @private
 	 * @param {string} message - The message to display in the toast.
 	 * @param {'info'|'success'|'error'|'warning'} [type='info'] - The type of toast, influencing its styling.
 	 * @param {number|null} [duration=null] - The duration in milliseconds before the toast automatically dismisses. If `null`, uses `defaultDuration`.
 	 * @returns {string} The unique ID of the displayed toast.
 	 */
-	showToast(message, type = "info", duration = null) {
+	#showToast(message, type = "info", duration = null) {
 		const id = DateCore.timestamp().toString();
-		const toast = this.createToast(id, message, type);
+		const toast = this.#createToast(id, message, type);
 
 		// Add to container
-		this.container.appendChild(toast);
-		this.toasts.set(id, { element: toast, type });
+		this.#container.appendChild(toast);
+		this.#toasts.set(id, { element: toast, type });
 
 		// Limit number of toasts
-		this.enforceMaxToasts();
+		this.#enforceMaxToasts();
 
 		// Auto-remove after duration
-		const actualDuration = duration || this.defaultDuration;
+		const actualDuration = duration || this.#defaultDuration;
 		setTimeout(() => {
-			this.removeToast(id);
+			this.#removeToast(id);
 		}, actualDuration);
 
 		// Animate in
@@ -237,6 +224,8 @@ export class GridToastManager {
 			toast.style.transform = "translateX(0)";
 			toast.style.opacity = "1";
 		});
+
+		this.#metrics?.increment("toast.shown", { type });
 
 		return id;
 	}
@@ -249,7 +238,7 @@ export class GridToastManager {
 	 * @param {string} type - The type of the toast ('info', 'success', 'error', 'warning').
 	 * @returns {HTMLElement} The created toast DOM element.
 	 */
-	createToast(id, message, type) {
+	#createToast(id, message, type) {
 		const toast = document.createElement("div");
 		toast.className = `grid-toast grid-toast-${type}`;
 		toast.setAttribute("data-toast-id", id);
@@ -258,14 +247,14 @@ export class GridToastManager {
 
 		// Set initial styles for animation
 		toast.style.cssText = `
-      background: ${this.getBackgroundColor(type)};
-      color: ${this.getTextColor(type)};
+      background: ${this.#getBackgroundColor(type)};
+      color: ${this.#getTextColor(type)};
       padding: 12px 16px;
       border-radius: 6px;
       margin-bottom: 8px;
       font-size: 14px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      border-left: 4px solid ${this.getBorderColor(type)};
+      border-left: 4px solid ${this.#getBorderColor(type)};
       transform: translateX(100%);
       opacity: 0;
       transition: all 0.3s ease;
@@ -283,7 +272,7 @@ export class GridToastManager {
 
 		// Add close button
 		const closeBtn = document.createElement("button");
-		closeBtn.innerHTML = "×";
+		closeBtn.textContent = "×";
 		closeBtn.className = "toast-close";
 		closeBtn.setAttribute("aria-label", "Close notification");
 		closeBtn.style.cssText = `
@@ -300,7 +289,7 @@ export class GridToastManager {
     `;
 
 		closeBtn.addEventListener("click", () => {
-			this.removeToast(id);
+			this.#removeToast(id);
 		});
 
 		toast.appendChild(closeBtn);
@@ -308,7 +297,7 @@ export class GridToastManager {
 		// Click to dismiss
 		toast.addEventListener("click", (e) => {
 			if (e.target !== closeBtn) {
-				this.removeToast(id);
+				this.#removeToast(id);
 			}
 		});
 
@@ -321,7 +310,7 @@ export class GridToastManager {
 	 * @param {string} type - The type of the toast.
 	 * @returns {string} The CSS color value.
 	 */
-	getBackgroundColor(type) {
+	#getBackgroundColor(type) {
 		const colors = {
 			success: "#d4edda",
 			error: "#f8d7da",
@@ -337,7 +326,7 @@ export class GridToastManager {
 	 * @param {string} type - The type of the toast.
 	 * @returns {string} The CSS color value.
 	 */
-	getTextColor(type) {
+	#getTextColor(type) {
 		const colors = {
 			success: "#155724",
 			error: "#721c24",
@@ -353,7 +342,7 @@ export class GridToastManager {
 	 * @param {string} type - The type of the toast.
 	 * @returns {string} The CSS color value.
 	 */
-	getBorderColor(type) {
+	#getBorderColor(type) {
 		const colors = {
 			success: "#28a745",
 			error: "#dc3545",
@@ -368,8 +357,8 @@ export class GridToastManager {
 	 * @private
 	 * @param {string} id - The unique ID of the toast to remove.
 	 */
-	removeToast(id) {
-		const toast = this.toasts.get(id);
+	#removeToast(id) {
+		const toast = this.#toasts.get(id);
 		if (!toast) return;
 
 		const element = toast.element;
@@ -383,7 +372,9 @@ export class GridToastManager {
 			if (element.parentNode) {
 				element.parentNode.removeChild(element);
 			}
-			this.toasts.delete(id);
+
+			this.#metrics?.increment("toast.removed");
+			this.#toasts.delete(id);
 		}, 300);
 	}
 
@@ -391,15 +382,15 @@ export class GridToastManager {
 	 * Ensures that the number of displayed toasts does not exceed `maxToasts` by removing the oldest ones.
 	 * @private
 	 */
-	enforceMaxToasts() {
-		const toastIds = Array.from(this.toasts.keys());
-		if (toastIds.length > this.maxToasts) {
+	#enforceMaxToasts() {
+		const toastIds = Array.from(this.#toasts.keys());
+		if (toastIds.length > this.#maxToasts) {
 			// Remove oldest toasts
 			const toRemove = toastIds.slice(
 				0,
-				toastIds.length - this.maxToasts
+				toastIds.length - this.#maxToasts
 			);
-			toRemove.forEach((id) => this.removeToast(id));
+			toRemove.forEach((id) => this.#removeToast(id));
 		}
 	}
 
@@ -411,7 +402,7 @@ export class GridToastManager {
 	 * @returns {string} The ID of the toast.
 	 */
 	success(message, duration) {
-		return this.showToast(message, "success", duration);
+		return this.#showToast(message, "success", duration);
 	}
 
 	/**
@@ -422,7 +413,7 @@ export class GridToastManager {
 	 * @returns {string} The ID of the toast.
 	 */
 	error(message, duration) {
-		return this.showToast(message, "error", duration);
+		return this.#showToast(message, "error", duration);
 	}
 
 	/**
@@ -433,7 +424,7 @@ export class GridToastManager {
 	 * @returns {string} The ID of the toast.
 	 */
 	warning(message, duration) {
-		return this.showToast(message, "warning", duration);
+		return this.#showToast(message, "warning", duration);
 	}
 
 	/**
@@ -444,7 +435,7 @@ export class GridToastManager {
 	 * @returns {string} The ID of the toast.
 	 */
 	info(message, duration) {
-		return this.showToast(message, "info", duration);
+		return this.#showToast(message, "info", duration);
 	}
 
 	/**
@@ -452,7 +443,7 @@ export class GridToastManager {
 	 * @public
 	 */
 	clear() {
-		Array.from(this.toasts.keys()).forEach((id) => this.removeToast(id));
+		Array.from(this.#toasts.keys()).forEach((id) => this.#removeToast(id));
 	}
 
 	/**
@@ -461,57 +452,12 @@ export class GridToastManager {
 	 */
 	destroy() {
 		this.clear();
-		if (this.container && this.container.parentNode) {
-			this.container.parentNode.removeChild(this.container);
+		this.#unsubscribeFunctions.forEach((unsubscribe) => unsubscribe());
+		this.#unsubscribeFunctions = [];
+		if (this.#container?.parentNode) {
+			this.#container.parentNode.removeChild(this.#container);
 		}
 	}
-}
-
-/**
- * The singleton instance of the `GridToastManager`.
- * @private
- * @type {GridToastManager|null}
- */
-let toastManager = null;
-
-/**
- * Retrieves the singleton instance of the `GridToastManager`, creating it if it doesn't already exist.
- * @returns {GridToastManager} The singleton instance.
- */
-export function getToastManager() {
-	if (!toastManager) {
-		toastManager = new GridToastManager();
-	}
-	return toastManager;
-}
-
-/**
- * A convenience function to show a toast notification without directly accessing the manager instance.
- * @param {string} message - The message to display.
- * @param {'info'|'success'|'error'|'warning'} [type='info'] - The type of toast.
- * @param {number|null} [duration=null] - The duration in milliseconds.
- * @returns {string} The ID of the toast.
- */
-export function showGridToast(message, type = "info", duration = null) {
-	return getToastManager().showToast(message, type, duration);
-}
-
-/**
- * A convenience function to show a success toast specifically for layout save events.
- * @param {'drag'|'resize'|'keyboard_move'|'keyboard_resize'|'change'} [changeType='change'] - The type of layout change.
- * @returns {string} The ID of the toast.
- */
-export function showLayoutSaved(changeType = "change") {
-	const messages = {
-		drag: "📍 Layout saved",
-		resize: "📏 Layout saved",
-		keyboard_move: "⌨️ Position saved",
-		keyboard_resize: "⌨️ Size saved",
-		change: "💾 Layout saved",
-	};
-
-	const message = messages[changeType] || messages.change;
-	return getToastManager().success(message, 2000);
 }
 
 export default GridToastManager;

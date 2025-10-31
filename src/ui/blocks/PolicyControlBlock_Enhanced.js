@@ -1,104 +1,140 @@
 // ui/blocks/PolicyControlBlock.js
 // Enhanced with permission/domain restriction tooltips
 
-import { OptimizationAccessControl } from "../../core/OptimizationAccessControl.js";
-import { SystemPolicies } from "../../core/SystemPolicies.js";
-
 /**
- * @function PolicyControlBlock
- * @description A composable BuildingBlock that renders a UI for managing system policies.
+ * @class PolicyControlBlock_V2
+ * @description A class-based BuildingBlock that renders a UI for managing system policies.
  * It provides detailed feedback on user permissions based on their role and allowed domains,
- * showing which policies are readable or editable.
- * @param {object} params - The parameters for rendering the block.
- * @param {import('../../core/RenderContext.js').RenderContext} params.context - The rendering context, providing access to system policies, user roles, and theme variables.
- * @param {object} [params.config={}] - Configuration options for the block, such as title and dimensions.
- * @returns {HTMLElement} The rendered HTML element for the policy control panel.
+ * showing which policies are readable or editable. This class adheres to all V8 Parity Mandates.
+ * @privateFields {#context, #config, #theme, #container, #userRole, #allowedDomains, #canEditGlobal, #accessControl, #policyManager, #eventFlow}
  */
-export function PolicyControlBlock({ context, config = {} }) {
-	const container = document.createElement("div");
-	container.className = "policy-control-block";
+class PolicyControlBlock_V2 {
+	#context;
+	#config;
+	#theme;
+	#container;
+	#userRole;
+	#allowedDomains;
+	#canEditGlobal;
+	#accessControl;
+	#policyManager;
+	#eventFlow;
 
-	// Apply theme-aware styling
-	const theme = context.getThemeVariables();
-	container.style.cssText = `
-    padding: ${config.padding || "1rem"};
-    border-radius: ${config.borderRadius || "8px"};
-    background: ${config.background || theme["--surface"]};
-    color: ${config.color || theme["--text"]};
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    border: 1px solid ${theme["--border"]};
-    min-width: ${config.minWidth || "300px"};
-    position: relative;
-  `;
+	/**
+	 * @constructor
+	 * @param {object} params - The parameters for rendering the block.
+	 * @param {import('../../core/RenderContext.js').RenderContext} params.context - The rendering context.
+	 * @param {object} [params.config={}] - Configuration options for the block.
+	 */
+	constructor({ context, config = {} }) {
+		this.#context = context;
+		this.#config = config;
 
-	// Get current user session and permissions
-	const session = OptimizationAccessControl.currentSession || {};
-	const userRole = session.role || context.userRole || "guest";
-	const allowedDomains =
-		OptimizationAccessControl.getAllowedDomainsForRole(userRole);
-	const canEditGlobal =
-		OptimizationAccessControl.checkSessionPermission("manage_policies");
+		// Mandate 1.1 & 1.2: Get services from the context, not direct imports
+		this.#theme = this.#context.getThemeVariables();
+		this.#accessControl = this.#context.accessControl;
+		this.#policyManager = this.#context.policyManager;
+		this.#eventFlow = this.#context.eventFlow;
 
-	// Create header
-	const header = createHeader();
-	container.appendChild(header);
+		// Get current user session and permissions via the AccessControl manager
+		const session = this.#accessControl.getSession() || {};
+		this.#userRole = session.role || "guest";
+		this.#allowedDomains = this.#accessControl.getAllowedDomainsForRole(
+			this.#userRole
+		);
+		this.#canEditGlobal =
+			this.#accessControl.checkPermission("manage_policies");
 
-	// Create permission status with enhanced feedback
-	const permissionStatus = createPermissionStatus();
-	container.appendChild(permissionStatus);
+		this.#container = document.createElement("div");
+		this.#container.className = "policy-control-block";
 
-	// Create policy sections
-	const policies = context.policies || {};
-	const policyContainer = createPolicyContainer(policies);
-	container.appendChild(policyContainer);
-
-	// Create action buttons
-	if (canEditGlobal) {
-		const actions = createActionButtons();
-		container.appendChild(actions);
+		this.#applyStyling();
+		this.#buildDOM();
 	}
 
 	/**
-	 * @function createHeader
-	 * @description Creates the header for the policy control block, including the title and user role indicator.
+	 * Applies CSS styling to the main container element.
+	 * @private
+	 */
+	#applyStyling() {
+		this.#container.style.cssText = `
+            padding: ${this.#config.padding || "1rem"};
+            border-radius: ${this.#config.borderRadius || "8px"};
+            background: ${this.#config.background || this.#theme["--surface"]};
+            color: ${this.#config.color || this.#theme["--text"]};
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            border: 1px solid ${this.#theme["--border"]};
+            min-width: ${this.#config.minWidth || "300px"};
+            position: relative;
+        `;
+	}
+
+	/**
+	 * Builds the entire DOM structure for the block.
+	 * @private
+	 */
+	#buildDOM() {
+		// Clear any existing content
+		this.#container.innerHTML = "";
+
+		// Create header
+		this.#container.appendChild(this.#createHeader());
+
+		// Create permission status with enhanced feedback
+		this.#container.appendChild(this.#createPermissionStatus());
+
+		// Create policy sections
+		const policies = this.#policyManager.getAllPolicies() || {};
+		this.#container.appendChild(this.#createPolicyContainer(policies));
+
+		// Create action buttons
+		if (this.#canEditGlobal) {
+			this.#container.appendChild(this.#createActionButtons());
+		}
+	}
+
+	/**
+	 * Creates the header for the policy control block.
 	 * @private
 	 * @returns {HTMLElement} The header element.
 	 */
-	function createHeader() {
+	#createHeader() {
 		const headerDiv = document.createElement("div");
 		headerDiv.style.cssText = `
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 0.5rem;
-    `;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        `;
 
 		const title = document.createElement("h3");
-		title.textContent = config.title || "System Policy Control";
+		title.textContent = this.#config.title || "System Policy Control";
 		title.style.cssText = `
-      margin: 0;
-      color: ${theme["--text"]};
-      font-size: 1.1rem;
-      font-weight: 600;
-    `;
+            margin: 0;
+            color: ${this.#theme["--text"]};
+            font-size: 1.1rem;
+            font-weight: 600;
+        `;
 
 		const roleIndicator = document.createElement("span");
-		roleIndicator.textContent = userRole.toUpperCase();
+		roleIndicator.textContent = this.#userRole.toUpperCase();
 		roleIndicator.style.cssText = `
-      padding: 0.25rem 0.5rem;
-      background: ${getRoleColor(userRole)};
-      color: white;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: bold;
-      text-transform: uppercase;
-      cursor: help;
-    `;
+            padding: 0.25rem 0.5rem;
+            background: ${this.#getRoleColor(this.#userRole)};
+            color: white;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: help;
+        `;
 
-		// Add tooltip to role indicator
-		addTooltip(roleIndicator, getRoleDescription(userRole));
+		this.#addTooltip(
+			roleIndicator,
+			this.#getRoleDescription(this.#userRole)
+		);
 
 		headerDiv.appendChild(title);
 		headerDiv.appendChild(roleIndicator);
@@ -106,91 +142,102 @@ export function PolicyControlBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function createPermissionStatus
-	 * @description Creates a status section that displays the user's access level and allowed policy domains.
-	 * Provides helpful tips if access is restricted.
+	 * Creates a status section that displays the user's access level and allowed policy domains.
 	 * @private
 	 * @returns {HTMLElement} The permission status element.
 	 */
-	function createPermissionStatus() {
+	#createPermissionStatus() {
 		const statusDiv = document.createElement("div");
 		statusDiv.style.cssText = `
-      padding: 0.5rem;
-      background: ${theme["--surface-elevated"]};
-      border-radius: 4px;
-      border: 1px solid ${theme["--border"]};
-      font-size: 0.85rem;
-    `;
+            padding: 0.5rem;
+            background: ${this.#theme["--surface-elevated"]};
+            border-radius: 4px;
+            border: 1px solid ${this.#theme["--border"]};
+            font-size: 0.85rem;
+        `;
 
-		const accessLevel = canEditGlobal ? "Full Control" : "Read Only";
-		const accessColor = canEditGlobal
-			? theme["--success"]
-			: theme["--warning"];
+		const accessLevel = this.#canEditGlobal ? "Full Control" : "Read Only";
+		const accessColor = this.#canEditGlobal
+			? this.#theme["--success"]
+			: this.#theme["--warning"];
 		const domainList =
-			allowedDomains.length > 0 ? allowedDomains.join(", ") : "None";
+			this.#allowedDomains.length > 0
+				? this.#allowedDomains.join(", ")
+				: "None";
 
 		const accessInfo = document.createElement("div");
-		accessInfo.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-        <strong>Access Level:</strong> 
-        <span style="color: ${accessColor}; font-weight: bold;">${accessLevel}</span>
-      </div>
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <strong>Allowed Domains:</strong> 
-        <span style="color: ${theme["--text-muted"]};">${domainList}</span>
-      </div>
-    `;
-		accessInfo.style.color = theme["--text-muted"];
+		accessInfo.style.color = this.#theme["--text-muted"];
+
+		// Mandate 2.1: Avoid innerHTML
+		const accessLevelDiv = document.createElement("div");
+		accessLevelDiv.style.cssText = `display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;`;
+		const accessLevelLabel = document.createElement("strong");
+		accessLevelLabel.textContent = "Access Level:";
+		const accessLevelValue = document.createElement("span");
+		accessLevelValue.style.cssText = `color: ${accessColor}; font-weight: bold;`;
+		accessLevelValue.textContent = accessLevel;
+		accessLevelDiv.appendChild(accessLevelLabel);
+		accessLevelDiv.appendChild(accessLevelValue);
+
+		const allowedDomainsDiv = document.createElement("div");
+		allowedDomainsDiv.style.cssText = `display: flex; justify-content: space-between; align-items: center;`;
+		const allowedDomainsLabel = document.createElement("strong");
+		allowedDomainsLabel.textContent = "Allowed Domains:";
+		const allowedDomainsValue = document.createElement("span");
+		allowedDomainsValue.style.color = this.#theme["--text-muted"];
+		allowedDomainsValue.textContent = domainList;
+		allowedDomainsDiv.appendChild(allowedDomainsLabel);
+		allowedDomainsDiv.appendChild(allowedDomainsValue);
+
+		accessInfo.appendChild(accessLevelDiv);
+		accessInfo.appendChild(allowedDomainsDiv);
+
+		statusDiv.appendChild(accessInfo);
 
 		// Add help text for restricted access
-		if (!canEditGlobal || allowedDomains.length < 5) {
+		if (!this.#canEditGlobal || this.#allowedDomains.length < 5) {
 			const helpText = document.createElement("div");
 			helpText.style.cssText = `
-        margin-top: 0.5rem;
-        padding: 0.25rem;
-        background: ${theme["--warning"]}20;
-        border-left: 3px solid ${theme["--warning"]};
-        font-size: 0.8rem;
-        color: ${theme["--text-muted"]};
-      `;
+                margin-top: 0.5rem;
+                padding: 0.25rem;
+                background: ${this.#theme["--warning"]}20;
+                border-left: 3px solid ${this.#theme["--warning"]};
+                font-size: 0.8rem;
+                color: ${this.#theme["--text-muted"]};
+            `;
 
 			let helpMessage = "";
-			if (!canEditGlobal) {
+			if (!this.#canEditGlobal) {
 				helpMessage =
 					"💡 You have read-only access. Contact an administrator to modify policies.";
-			} else if (allowedDomains.length < 5) {
+			} else if (this.#allowedDomains.length < 5) {
 				helpMessage = `💡 You can only modify policies in: ${domainList}`;
 			}
 
 			helpText.textContent = helpMessage;
-			statusDiv.appendChild(accessInfo);
 			statusDiv.appendChild(helpText);
-		} else {
-			statusDiv.appendChild(accessInfo);
 		}
 
 		return statusDiv;
 	}
 
 	/**
-	 * @function createPolicyContainer
-	 * @description Creates the main container that holds all the policy sections (System, UI, etc.).
+	 * Creates the main container that holds all the policy sections.
 	 * @private
-	 * @param {object} policies - The policies object from the render context.
+	 * @param {object} policies - The policies object from the PolicyManager.
 	 * @returns {HTMLElement} The container element for policy sections.
 	 */
-	function createPolicyContainer(policies) {
+	#createPolicyContainer(policies) {
 		const policyDiv = document.createElement("div");
 		policyDiv.className = "policy-sections";
 		policyDiv.style.cssText = `
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-      max-height: ${config.maxHeight || "400px"};
-      overflow-y: auto;
-    `;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            max-height: ${this.#config.maxHeight || "400px"};
+            overflow-y: auto;
+        `;
 
-		// Define policy sections with their display names and descriptions
 		const sections = {
 			system: {
 				name: "System Policies",
@@ -220,10 +267,9 @@ export function PolicyControlBlock({ context, config = {} }) {
 			},
 		};
 
-		// Create each policy section
 		Object.entries(sections).forEach(([sectionKey, sectionInfo]) => {
 			const sectionPolicies = policies[sectionKey] || {};
-			const sectionElement = createPolicySection(
+			const sectionElement = this.#createPolicySection(
 				sectionKey,
 				sectionInfo,
 				sectionPolicies
@@ -235,149 +281,109 @@ export function PolicyControlBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function createPolicySection
-	 * @description Creates a UI section for a specific policy domain (e.g., 'system', 'ui').
-	 * It includes a header with access status and a content area with policy toggles.
+	 * Creates a UI section for a specific policy domain.
 	 * @private
 	 * @param {string} sectionKey - The key for the policy section (e.g., 'system').
 	 * @param {object} sectionInfo - Contains the name, icon, and description for the section.
 	 * @param {object} sectionPolicies - The policies within this section.
 	 * @returns {HTMLElement} The policy section element.
 	 */
-	function createPolicySection(sectionKey, sectionInfo, sectionPolicies) {
+	#createPolicySection(sectionKey, sectionInfo, sectionPolicies) {
 		const sectionDiv = document.createElement("div");
 		sectionDiv.className = `policy-section-${sectionKey}`;
 
-		const isDomainAllowed = allowedDomains.includes(
+		const isDomainAllowed = this.#allowedDomains.includes(
 			sectionKey.toLowerCase()
 		);
-		const canEditSection = canEditGlobal && isDomainAllowed;
+		const canEditSection = this.#canEditGlobal && isDomainAllowed;
 
-		// Calculate restriction reason
 		let restrictionReason = "";
-		if (!canEditGlobal) {
+		if (!this.#canEditGlobal) {
 			restrictionReason = "Insufficient permissions to manage policies";
 		} else if (!isDomainAllowed) {
-			restrictionReason = `Role "${userRole}" cannot access "${sectionKey}" domain`;
+			restrictionReason = `Role "${this.#userRole}" cannot access "${sectionKey}" domain`;
 		}
 
 		sectionDiv.style.cssText = `
-      border: 1px solid ${theme["--border"]};
-      border-radius: 6px;
-      overflow: hidden;
-      background: ${theme["--surface-elevated"]};
-      opacity: ${canEditSection ? "1" : "0.7"};
-      transition: opacity 0.2s ease;
-    `;
+            border: 1px solid ${this.#theme["--border"]};
+            border-radius: 6px;
+            overflow: hidden;
+            background: ${this.#theme["--surface-elevated"]};
+            opacity: ${canEditSection ? "1" : "0.7"};
+            transition: opacity 0.2s ease;
+        `;
 
-		// Section header with tooltip
 		const header = document.createElement("div");
 		header.style.cssText = `
-      padding: 0.75rem;
-      background: ${theme["--surface"]};
-      border-bottom: 1px solid ${theme["--border"]};
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      cursor: ${restrictionReason ? "help" : "default"};
-    `;
+            padding: 0.75rem;
+            background: ${this.#theme["--surface"]};
+            border-bottom: 1px solid ${this.#theme["--border"]};
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: ${restrictionReason ? "help" : "default"};
+        `;
 
 		const headerTitle = document.createElement("div");
-		headerTitle.innerHTML = `${sectionInfo.icon} <strong>${sectionInfo.name}</strong>`;
-		headerTitle.style.cssText = `
-      font-size: 0.9rem;
-      color: ${theme["--text"]};
-    `;
+		headerTitle.style.cssText = `font-size: 0.9rem; color: ${this.#theme["--text"]};`;
+		const headerTitleIcon = document.createElement("span");
+		headerTitleIcon.textContent = `${sectionInfo.icon} `;
+		const headerTitleText = document.createElement("strong");
+		headerTitleText.textContent = sectionInfo.name;
+		headerTitle.appendChild(headerTitleIcon);
+		headerTitle.appendChild(headerTitleText);
 
 		const accessBadge = document.createElement("span");
 		accessBadge.textContent = canEditSection ? "Edit" : "Read Only";
 		accessBadge.style.cssText = `
-      padding: 0.25rem 0.5rem;
-      background: ${canEditSection ? theme["--success"] : theme["--warning"]};
-      color: white;
-      border-radius: 3px;
-      font-size: 0.7rem;
-      font-weight: bold;
-      cursor: help;
-    `;
+            padding: 0.25rem 0.5rem;
+            background: ${canEditSection ? this.#theme["--success"] : this.#theme["--warning"]};
+            color: white;
+            border-radius: 3px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            cursor: help;
+        `;
 
-		// Add tooltips for restrictions
 		if (restrictionReason) {
-			addTooltip(header, restrictionReason);
-			addTooltip(accessBadge, restrictionReason);
+			this.#addTooltip(header, restrictionReason);
+			this.#addTooltip(accessBadge, restrictionReason);
 		} else {
-			addTooltip(headerTitle, sectionInfo.description);
-			addTooltip(accessBadge, "You can modify policies in this domain");
+			this.#addTooltip(headerTitle, sectionInfo.description);
+			this.#addTooltip(
+				accessBadge,
+				"You can modify policies in this domain"
+			);
 		}
 
 		header.appendChild(headerTitle);
 		header.appendChild(accessBadge);
 		sectionDiv.appendChild(header);
 
-		// Section content
 		const content = document.createElement("div");
-		content.style.cssText = `
-      padding: 0.75rem;
-    `;
+		content.style.padding = "0.75rem";
 
-		if (!isDomainAllowed && !canEditGlobal) {
-			// Enhanced no access message with explanation
-			const noAccess = document.createElement("div");
-			noAccess.style.cssText = `
-        text-align: center;
-        padding: 1rem;
-        background: ${theme["--warning"]}10;
-        border-radius: 4px;
-        border: 1px dashed ${theme["--warning"]};
-      `;
-
-			const icon = document.createElement("div");
-			icon.textContent = "🔒";
-			icon.style.cssText = `
-        font-size: 2rem;
-        margin-bottom: 0.5rem;
-      `;
-
-			const message = document.createElement("div");
-			message.textContent = "Access Restricted";
-			message.style.cssText = `
-        font-weight: bold;
-        color: ${theme["--text"]};
-        margin-bottom: 0.25rem;
-      `;
-
-			const reason = document.createElement("div");
-			reason.textContent = restrictionReason;
-			reason.style.cssText = `
-        color: ${theme["--text-muted"]};
-        font-size: 0.85rem;
-        font-style: italic;
-      `;
-
-			noAccess.appendChild(icon);
-			noAccess.appendChild(message);
-			noAccess.appendChild(reason);
-			content.appendChild(noAccess);
+		if (!isDomainAllowed && !this.#canEditGlobal) {
+			content.appendChild(this.#createNoAccessMessage(restrictionReason));
 		} else {
-			// Policy toggles
 			if (Object.keys(sectionPolicies).length === 0) {
 				const noPolicies = document.createElement("div");
 				noPolicies.textContent =
 					"No policies configured for this domain";
 				noPolicies.style.cssText = `
-          color: ${theme["--text-muted"]};
-          font-style: italic;
-          text-align: center;
-          padding: 1rem;
-          background: ${theme["--surface"]};
-          border-radius: 4px;
-          border: 1px dashed ${theme["--border"]};
-        `;
+                    color: ${this.#theme["--text-muted"]};
+                    font-style: italic;
+                    text-align: center;
+                    padding: 1rem;
+                    background: ${this.#theme["--surface"]};
+                    border-radius: 4px;
+                    border: 1px dashed ${this.#theme["--border"]};
+                `;
 				content.appendChild(noPolicies);
 			} else {
 				Object.entries(sectionPolicies).forEach(
 					([policyKey, policyValue]) => {
-						const toggle = createPolicyToggle(
+						const toggle = this.#createPolicyToggle(
 							sectionKey,
 							policyKey,
 							policyValue,
@@ -395,150 +401,136 @@ export function PolicyControlBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function createPolicyToggle
-	 * @description Creates a single policy row with a name, description, and a toggle switch.
-	 * The toggle is enabled or disabled based on user permissions. Tooltips provide context for restrictions and dependencies.
+	 * Creates a message for sections where the user has no access.
 	 * @private
-	 * @param {string} section - The policy domain (e.g., 'system').
-	 * @param {string} key - The specific policy key (e.g., 'enable_caching').
-	 * @param {boolean} value - The current value of the policy (true or false).
+	 * @param {string} restrictionReason - The reason for the lack of access.
+	 * @returns {HTMLElement}
+	 */
+	#createNoAccessMessage(restrictionReason) {
+		const noAccess = document.createElement("div");
+		noAccess.style.cssText = `
+            text-align: center;
+            padding: 1rem;
+            background: ${this.#theme["--warning"]}10;
+            border-radius: 4px;
+            border: 1px dashed ${this.#theme["--warning"]};
+        `;
+
+		const icon = document.createElement("div");
+		icon.textContent = "🔒";
+		icon.style.cssText = `font-size: 2rem; margin-bottom: 0.5rem;`;
+
+		const message = document.createElement("div");
+		message.textContent = "Access Restricted";
+		message.style.cssText = `font-weight: bold; color: ${this.#theme["--text"]}; margin-bottom: 0.25rem;`;
+
+		const reason = document.createElement("div");
+		reason.textContent = restrictionReason;
+		reason.style.cssText = `color: ${this.#theme["--text-muted"]}; font-size: 0.85rem; font-style: italic;`;
+
+		noAccess.appendChild(icon);
+		noAccess.appendChild(message);
+		noAccess.appendChild(reason);
+		return noAccess;
+	}
+
+	/**
+	 * Creates a single policy row with a name, description, and a toggle switch.
+	 * @private
+	 * @param {string} section - The policy domain.
+	 * @param {string} key - The specific policy key.
+	 * @param {boolean} value - The current value of the policy.
 	 * @param {boolean} editable - Whether the current user can edit this policy.
 	 * @param {string} restrictionReason - The reason why the policy might not be editable.
 	 * @returns {HTMLLabelElement} The row element for the policy toggle.
 	 */
-	function createPolicyToggle(
-		section,
-		key,
-		value,
-		editable,
-		restrictionReason
-	) {
+	#createPolicyToggle(section, key, value, editable, restrictionReason) {
 		const row = document.createElement("label");
 		row.style.cssText = `
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.5rem 0;
-      border-bottom: 1px solid ${theme["--border"]};
-      cursor: ${editable ? "pointer" : "help"};
-      font-size: 0.85rem;
-      transition: background-color 0.2s ease;
-    `;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid ${this.#theme["--border"]};
+            cursor: ${editable ? "pointer" : "help"};
+            font-size: 0.85rem;
+            transition: background-color 0.2s ease;
+        `;
+		row.style.opacity = editable ? "1" : "0.6";
 
-		if (!editable) {
-			row.style.opacity = "0.6";
-		}
-
-		// Add hover effect for interactive rows
 		if (editable) {
 			row.addEventListener("mouseenter", () => {
-				row.style.backgroundColor = theme["--surface-elevated"];
+				row.style.backgroundColor = this.#theme["--surface-elevated"];
 			});
 			row.addEventListener("mouseleave", () => {
 				row.style.backgroundColor = "transparent";
 			});
 		}
 
-		// Policy name and description
 		const nameDiv = document.createElement("div");
-		nameDiv.style.cssText = `
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-      flex: 1;
-    `;
+		nameDiv.style.cssText = `display: flex; flex-direction: column; gap: 0.25rem; flex: 1;`;
 
 		const name = document.createElement("span");
-		name.textContent = formatPolicyName(key);
-		name.style.cssText = `
-      font-weight: 500;
-      color: ${theme["--text"]};
-    `;
+		name.textContent = this.#formatPolicyName(key);
+		name.style.cssText = `font-weight: 500; color: ${this.#theme["--text"]};`;
 
 		const description = document.createElement("small");
-		description.textContent = getPolicyDescription(key);
-		description.style.cssText = `
-      color: ${theme["--text-muted"]};
-      font-size: 0.75rem;
-      line-height: 1.3;
-    `;
+		description.textContent = this.#getPolicyDescription(key);
+		description.style.cssText = `color: ${this.#theme["--text-muted"]}; font-size: 0.75rem; line-height: 1.3;`;
 
 		nameDiv.appendChild(name);
 		nameDiv.appendChild(description);
 
-		// Toggle switch container
 		const toggleContainer = document.createElement("div");
-		toggleContainer.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      position: relative;
-    `;
+		toggleContainer.style.cssText = `display: flex; align-items: center; gap: 0.5rem; position: relative;`;
 
 		const toggle = document.createElement("input");
 		toggle.type = "checkbox";
 		toggle.checked = !!value;
 		toggle.disabled = !editable;
-		toggle.style.cssText = `
-      width: 18px;
-      height: 18px;
-      cursor: ${editable ? "pointer" : "not-allowed"};
-    `;
+		toggle.dataset.policy = `${section}.${key}`; // For easier selection
+		toggle.style.cssText = `width: 18px; height: 18px; cursor: ${editable ? "pointer" : "not-allowed"};`;
 
 		const statusText = document.createElement("span");
 		statusText.textContent = value ? "ON" : "OFF";
 		statusText.style.cssText = `
-      font-size: 0.75rem;
-      font-weight: bold;
-      color: ${value ? theme["--success"] : theme["--error"]};
-      min-width: 25px;
-    `;
+            font-size: 0.75rem;
+            font-weight: bold;
+            color: ${value ? this.#theme["--success"] : this.#theme["--error"]};
+            min-width: 25px;
+        `;
 
-		// Add restriction icon for disabled toggles
 		if (!editable) {
 			const restrictionIcon = document.createElement("span");
 			restrictionIcon.textContent = "🔒";
-			restrictionIcon.style.cssText = `
-        font-size: 0.8rem;
-        opacity: 0.7;
-        cursor: help;
-      `;
-
-			addTooltip(
+			restrictionIcon.style.cssText = `font-size: 0.8rem; opacity: 0.7; cursor: help;`;
+			this.#addTooltip(
 				restrictionIcon,
 				restrictionReason || "Policy cannot be modified"
 			);
 			toggleContainer.appendChild(restrictionIcon);
 		}
 
-		// Add dependency info if policy has dependencies
-		const dependencies = SystemPolicies.getPolicyDependencies(section, key);
+		const dependencies = this.#policyManager.getDependencies(section, key);
 		if (dependencies.length > 0) {
 			const depIcon = document.createElement("span");
 			depIcon.textContent = "🔗";
-			depIcon.style.cssText = `
-        font-size: 0.8rem;
-        opacity: 0.7;
-        cursor: help;
-        margin-left: 0.25rem;
-      `;
-
-			const depText = `Depends on: ${dependencies.map((dep) => formatPolicyName(dep.split(".")[1])).join(", ")}`;
-			addTooltip(depIcon, depText);
+			depIcon.style.cssText = `font-size: 0.8rem; opacity: 0.7; cursor: help; margin-left: 0.25rem;`;
+			const depText = `Depends on: ${dependencies.map((dep) => this.#formatPolicyName(dep.split(".")[1])).join(", ")}`;
+			this.#addTooltip(depIcon, depText);
 			toggleContainer.appendChild(depIcon);
 		}
 
 		if (editable) {
 			toggle.addEventListener("change", async () => {
-				await handlePolicyToggle(section, key, toggle.checked);
+				await this.#handlePolicyToggle(section, key, toggle.checked);
 				statusText.textContent = toggle.checked ? "ON" : "OFF";
 				statusText.style.color = toggle.checked
-					? theme["--success"]
-					: theme["--error"];
+					? this.#theme["--success"]
+					: this.#theme["--error"];
 			});
 		} else {
-			// Add tooltip explaining why toggle is disabled
-			addTooltip(
+			this.#addTooltip(
 				toggle,
 				restrictionReason ||
 					"You do not have permission to modify this policy"
@@ -555,29 +547,24 @@ export function PolicyControlBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function addTooltip
-	 * @description Attaches mouse enter/leave event listeners to an element to show and hide a tooltip.
+	 * Attaches a tooltip to an element.
 	 * @private
 	 * @param {HTMLElement} element - The element to attach the tooltip to.
 	 * @param {string} text - The text content of the tooltip.
-	 * @returns {void}
 	 */
-	function addTooltip(element, text) {
+	#addTooltip(element, text) {
 		if (!text) return;
 
 		element.addEventListener("mouseenter", (e) => {
-			const tooltip = createTooltip(text);
+			const tooltip = this.#createTooltip(text);
 			document.body.appendChild(tooltip);
 
 			const rect = element.getBoundingClientRect();
 			tooltip.style.left = `${rect.left + rect.width / 2}px`;
 			tooltip.style.top = `${rect.top - tooltip.offsetHeight - 8}px`;
 
-			// Adjust if tooltip goes off screen
 			const tooltipRect = tooltip.getBoundingClientRect();
-			if (tooltipRect.left < 10) {
-				tooltip.style.left = "10px";
-			}
+			if (tooltipRect.left < 10) tooltip.style.left = "10px";
 			if (tooltipRect.right > window.innerWidth - 10) {
 				tooltip.style.left = `${window.innerWidth - tooltipRect.width - 10}px`;
 			}
@@ -594,216 +581,174 @@ export function PolicyControlBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function createTooltip
-	 * @description Creates the DOM element for a tooltip with standard styling.
+	 * Creates the DOM element for a tooltip.
 	 * @private
 	 * @param {string} text - The text to display in the tooltip.
 	 * @returns {HTMLElement} The tooltip div element.
 	 */
-	function createTooltip(text) {
+	#createTooltip(text) {
 		const tooltip = document.createElement("div");
 		tooltip.textContent = text;
 		tooltip.style.cssText = `
-      position: absolute;
-      background: ${theme["--surface-elevated"]};
-      color: ${theme["--text"]};
-      padding: 0.5rem;
-      border-radius: 4px;
-      border: 1px solid ${theme["--border"]};
-      font-size: 0.8rem;
-      max-width: 200px;
-      z-index: 10000;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      pointer-events: none;
-      transform: translateX(-50%);
-    `;
+            position: absolute;
+            background: ${this.#theme["--surface-elevated"]};
+            color: ${this.#theme["--text"]};
+            padding: 0.5rem;
+            border-radius: 4px;
+            border: 1px solid ${this.#theme["--border"]};
+            font-size: 0.8rem;
+            max-width: 200px;
+            z-index: 10000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            pointer-events: none;
+            transform: translateX(-50%);
+        `;
 
-		// Add arrow
 		const arrow = document.createElement("div");
 		arrow.style.cssText = `
-      position: absolute;
-      top: 100%;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 0;
-      height: 0;
-      border-left: 5px solid transparent;
-      border-right: 5px solid transparent;
-      border-top: 5px solid ${theme["--border"]};
-    `;
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0; height: 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 5px solid ${this.#theme["--border"]};
+        `;
 		tooltip.appendChild(arrow);
 
 		return tooltip;
 	}
 
 	/**
-	 * @function createActionButtons
-	 * @description Creates the action buttons (e.g., Refresh, Export, Import) for the block.
+	 * Creates the action buttons (Refresh, Export, Import).
 	 * @private
 	 * @returns {HTMLElement} A div containing the action buttons.
 	 */
-	function createActionButtons() {
+	#createActionButtons() {
 		const actionsDiv = document.createElement("div");
 		actionsDiv.style.cssText = `
-      display: flex;
-      gap: 0.5rem;
-      padding-top: 0.5rem;
-      border-top: 1px solid ${theme["--border"]};
-      margin-top: 0.5rem;
-    `;
+            display: flex;
+            gap: 0.5rem;
+            padding-top: 0.5rem;
+            border-top: 1px solid ${this.#theme["--border"]};
+            margin-top: 0.5rem;
+        `;
 
-		// Refresh button
-		const refreshBtn = createButton(
+		const refreshBtn = this.#createButton(
 			"Refresh",
 			"🔄",
-			() => {
-				window.location.reload();
-			},
+			() => window.location.reload(),
 			"Reload the page to refresh policy states"
 		);
-
-		// Export button
-		const exportBtn = createButton(
+		const exportBtn = this.#createButton(
 			"Export",
 			"📤",
-			() => {
-				exportPolicies();
-			},
+			() => this.#exportPolicies(),
 			"Export current policy configuration as JSON"
 		);
 
-		// Import button (if super admin)
-		if (userRole === "super_admin") {
-			const importBtn = createButton(
+		actionsDiv.appendChild(refreshBtn);
+		actionsDiv.appendChild(exportBtn);
+
+		if (this.#userRole === "super_admin") {
+			const importBtn = this.#createButton(
 				"Import",
 				"📥",
-				() => {
-					importPolicies();
-				},
+				() => this.#importPolicies(),
 				"Import policy configuration from JSON file"
 			);
 			actionsDiv.appendChild(importBtn);
 		}
 
-		actionsDiv.appendChild(refreshBtn);
-		actionsDiv.appendChild(exportBtn);
-
 		return actionsDiv;
 	}
 
 	/**
-	 * @function createButton
-	 * @description A helper function to create a styled button with an icon and a tooltip.
+	 * A helper function to create a styled button.
 	 * @private
 	 * @param {string} text - The button's text label.
-	 * @param {string} icon - An emoji or icon character for the button.
-	 * @param {function} onClick - The function to call when the button is clicked.
+	 * @param {string} icon - An emoji or icon character.
+	 * @param {function} onClick - The click handler.
 	 * @param {string} tooltipText - The text for the button's tooltip.
-	 * @returns {HTMLButtonElement} The created button element.
+	 * @returns {HTMLButtonElement}
 	 */
-	function createButton(text, icon, onClick, tooltipText) {
+	#createButton(text, icon, onClick, tooltipText) {
 		const button = document.createElement("button");
-		button.innerHTML = `${icon} ${text}`;
+		// Mandate 2.1: Avoid innerHTML
+		button.textContent = `${icon} ${text}`;
 		button.style.cssText = `
-      padding: 0.5rem 1rem;
-      background: ${theme["--primary"]};
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 0.8rem;
-      font-weight: 500;
-      transition: background 0.2s;
-    `;
+            padding: 0.5rem 1rem;
+            background: ${this.#theme["--primary"]};
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 500;
+            transition: background 0.2s;
+        `;
 
 		button.addEventListener("click", onClick);
 		button.addEventListener("mouseenter", () => {
 			button.style.background =
-				theme["--primary-dark"] || theme["--primary"];
+				this.#theme["--primary-dark"] || this.#theme["--primary"];
 		});
 		button.addEventListener("mouseleave", () => {
-			button.style.background = theme["--primary"];
+			button.style.background = this.#theme["--primary"];
 		});
 
 		if (tooltipText) {
-			addTooltip(button, tooltipText);
+			this.#addTooltip(button, tooltipText);
 		}
 
 		return button;
 	}
 
 	/**
-	 * @function handlePolicyToggle
-	 * @description Handles the logic for updating a policy when its toggle is changed.
-	 * This includes checking dependencies, updating system state, emitting events, and logging the action.
-	 * It also includes error handling and UI reversion if the update fails.
+	 * Handles the logic for updating a policy when its toggle is changed.
 	 * @private
 	 * @param {string} section - The policy domain.
 	 * @param {string} key - The policy key.
-	 * @param {boolean} enabled - The new state of the policy.
+	_param {boolean} enabled - The new state of the policy.
 	 * @returns {Promise<void>}
 	 */
-	async function handlePolicyToggle(section, key, enabled) {
+	async #handlePolicyToggle(section, key, enabled) {
 		try {
-			// Check dependencies before enabling
-			if (enabled) {
-				const dependencies = SystemPolicies.getPolicyDependencies(
-					section,
-					key
-				);
-				for (const dep of dependencies) {
-					const [depDomain, depKey] = dep.split(".");
-					const depValue = context.getPolicy(depDomain, depKey);
-					if (!depValue) {
-						throw new Error(
-							`Cannot enable ${key}: dependency ${dep} is not enabled`
-						);
-					}
-				}
-			}
+			// Mandate 1.1: Use the central policy manager to update
+			await this.#policyManager.update(section, key, enabled);
 
-			// Update local context
-			if (!context.policies[section]) {
-				context.policies[section] = {};
-			}
-			context.policies[section][key] = enabled;
-
-			// Update system policies
-			await SystemPolicies.update(section, key, enabled);
-
-			// Emit event
-			if (context.eventFlow) {
-				context.eventFlow.emit("policy_updated", {
+			// Mandate 2.4: Emit a standardized event
+			if (this.#eventFlow) {
+				this.#eventFlow.emit("policy_updated", {
 					section,
 					key,
 					enabled,
-					role: userRole,
+					role: this.#userRole,
 					timestamp: new Date().toISOString(),
 				});
 			}
 
-			// Audit log
-			OptimizationAccessControl.auditUserAction(
-				userRole,
-				`policy_update:${section}.${key}`,
-				{ enabled, domain: section }
-			);
+			// Mandate 2.4: Create a standardized audit log
+			this.#accessControl.auditAction(`policy_update:${section}.${key}`, {
+				enabled,
+				domain: section,
+			});
 
 			console.log(`Policy updated: ${section}.${key} = ${enabled}`);
 		} catch (error) {
 			console.error(`Failed to update policy ${section}.${key}:`, error);
 
 			// Revert UI state on error
-			const toggle = container.querySelector(
+			const toggle = this.#container.querySelector(
 				`input[data-policy="${section}.${key}"]`
 			);
 			if (toggle) {
 				toggle.checked = !enabled;
 			}
 
-			// Show error notification
-			if (context.eventFlow) {
-				context.eventFlow.emit("error", {
+			if (this.#eventFlow) {
+				this.#eventFlow.emit("error", {
 					message: `Failed to update policy: ${error.message}`,
 					level: "medium",
 					context: { section, key, enabled },
@@ -812,16 +757,79 @@ export function PolicyControlBlock({ context, config = {} }) {
 		}
 	}
 
-	// ... rest of helper functions (exportPolicies, importPolicies, etc.) remain the same ...
+	/**
+	 * Exports the current policy configuration to a JSON file.
+	 * @private
+	 */
+	#exportPolicies() {
+		const export_data = {
+			timestamp: new Date().toISOString(),
+			exportedBy: this.#userRole,
+			policies: this.#policyManager.getAllPolicies(),
+			metadata: {
+				version: "1.0",
+				domains: this.#allowedDomains,
+			},
+		};
+
+		const blob = new Blob([JSON.stringify(export_data, null, 2)], {
+			type: "application/json",
+		});
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `policies-${new Date().toISOString().split("T")[0]}.json`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 
 	/**
-	 * @function getRoleColor
-	 * @description Gets a representative color for a given user role.
+	 * Opens a file dialog to import a policy configuration from a JSON file.
 	 * @private
-	 * @param {string} role - The user role (e.g., 'super_admin', 'developer').
-	 * @returns {string} A hex color code.
 	 */
-	function getRoleColor(role) {
+	#importPolicies() {
+		const input = document.createElement("input");
+		input.type = "file";
+		input.accept = ".json";
+		input.onchange = (e) => {
+			const file = e.target.files[0];
+			if (file) {
+				const reader = new FileReader();
+				reader.onload = async (e) => {
+					try {
+						const imported = JSON.parse(e.target.result);
+						if (imported && imported.policies) {
+							await this.#policyManager.importPolicies(
+								imported.policies
+							);
+							this.#buildDOM(); // Re-render the component with new policies
+							this.#eventFlow.emit("notification", {
+								message:
+									"Policies imported successfully. Refreshing view.",
+							});
+						} else {
+							throw new Error("Invalid policy file format.");
+						}
+					} catch (error) {
+						console.error("Invalid policy file:", error);
+						this.#eventFlow.emit("error", {
+							message: `Failed to import policies: ${error.message}`,
+						});
+					}
+				};
+				reader.readAsText(file);
+			}
+		};
+		input.click();
+	}
+
+	/**
+	 * Gets a representative color for a given user role.
+	 * @private
+	 * @param {string} role
+	 * @returns {string}
+	 */
+	#getRoleColor(role) {
 		const colors = {
 			super_admin: "#dc3545",
 			db_admin: "#fd7e14",
@@ -834,13 +842,12 @@ export function PolicyControlBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function getRoleDescription
-	 * @description Gets a human-readable description for a given user role.
+	 * Gets a human-readable description for a given user role.
 	 * @private
-	 * @param {string} role - The user role.
-	 * @returns {string} The role's description.
+	 * @param {string} role
+	 * @returns {string}
 	 */
-	function getRoleDescription(role) {
+	#getRoleDescription(role) {
 		const descriptions = {
 			super_admin: "Full system access across all domains and operations",
 			db_admin:
@@ -854,13 +861,12 @@ export function PolicyControlBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function formatPolicyName
-	 * @description Converts a camelCase or snake_case policy key into a human-readable title.
+	 * Converts a policy key into a human-readable title.
 	 * @private
-	 * @param {string} key - The policy key.
-	 * @returns {string} The formatted policy name.
+	 * @param {string} key
+	 * @returns {string}
 	 */
-	function formatPolicyName(key) {
+	#formatPolicyName(key) {
 		return key
 			.replace(/_/g, " ")
 			.replace(/([A-Z])/g, " $1")
@@ -869,13 +875,12 @@ export function PolicyControlBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function getPolicyDescription
-	 * @description Retrieves a pre-defined description for a specific policy key.
+	 * Retrieves a pre-defined description for a specific policy key.
 	 * @private
-	 * @param {string} key - The policy key.
-	 * @returns {string} The policy's description.
+	 * @param {string} key
+	 * @returns {string}
 	 */
-	function getPolicyDescription(key) {
+	#getPolicyDescription(key) {
 		const descriptions = {
 			enable_analytics:
 				"Track user interactions and system usage patterns",
@@ -903,69 +908,31 @@ export function PolicyControlBlock({ context, config = {} }) {
 			enable_error_reporting: "Report errors to monitoring",
 			enable_health_checks: "System health monitoring",
 		};
-
 		return descriptions[key] || "Policy configuration option";
 	}
 
 	/**
-	 * @function exportPolicies
-	 * @description Exports the current policy configuration to a JSON file.
-	 * @private
-	 * @returns {void}
+	 * Returns the main DOM element for the block.
+	 * @public
+	 * @returns {HTMLElement}
 	 */
-	function exportPolicies() {
-		const export_data = {
-			timestamp: new Date().toISOString(),
-			exportedBy: userRole,
-			policies: context.policies,
-			metadata: {
-				version: "1.0",
-				domains: allowedDomains,
-			},
-		};
-
-		const blob = new Blob([JSON.stringify(export_data, null, 2)], {
-			type: "application/json",
-		});
-
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement("a");
-		a.href = url;
-		a.download = `policies-${new Date().toISOString().split("T")[0]}.json`;
-		a.click();
-		URL.revokeObjectURL(url);
+	render() {
+		return this.#container;
 	}
+}
 
-	/**
-	 * @function importPolicies
-	 * @description Opens a file dialog to import a policy configuration from a JSON file.
-	 * @private
-	 * @returns {void}
-	 */
-	function importPolicies() {
-		const input = document.createElement("input");
-		input.type = "file";
-		input.accept = ".json";
-		input.onchange = (e) => {
-			const file = e.target.files[0];
-			if (file) {
-				const reader = new FileReader();
-				reader.onload = (e) => {
-					try {
-						const imported = JSON.parse(e.target.result);
-						console.log("Imported policies:", imported);
-						// Implementation would update policies here
-					} catch (error) {
-						console.error("Invalid policy file:", error);
-					}
-				};
-				reader.readAsText(file);
-			}
-		};
-		input.click();
-	}
-
-	return container;
+/**
+ * @function PolicyControlBlock
+ * @description A factory function that creates and returns the DOM element for the policy control block.
+ * This maintains compatibility with the original functional block signature.
+ * @param {object} params - The parameters for rendering the block.
+ * @param {import('../../core/RenderContext.js').RenderContext} params.context - The rendering context.
+ * @param {object} [params.config={}] - Configuration options for the block.
+ * @returns {HTMLElement} The rendered HTML element for the policy control panel.
+ */
+export function PolicyControlBlock({ context, config = {} }) {
+	const block = new PolicyControlBlock_V2({ context, config });
+	return block.render();
 }
 
 /**
@@ -984,7 +951,7 @@ export function registerPolicyControlBlock(renderer) {
 			minWidth: "300px",
 			maxHeight: "500px",
 		},
-		dependencies: ["policies", "eventFlow"],
+		dependencies: ["accessControl", "policyManager", "eventFlow"],
 	});
 }
 

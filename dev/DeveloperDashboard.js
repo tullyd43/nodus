@@ -5,12 +5,14 @@ import { DateCore } from "../src/utils/DateUtils.js";
  * @class DeveloperDashboard
  * @description A floating UI component that provides a real-time view of application
  * performance and custom metrics by hooking into the application's state manager.
+ * @privateFields {#container, #stateManager, #reporter, #options, #updateInterval, #eventLog, #dashboardElement, #toggleBtn, #perfMetrics, #coreMetricsContainer, #eventLogContainer, #unsubscribe}
  */
 export class DeveloperDashboard {
 	// Private fields for encapsulation
 	#container;
 	#stateManager;
 	#reporter;
+	#perfMetrics = {};
 	#options;
 	#updateInterval = null;
 	#eventLog = new BoundedStack(50);
@@ -77,42 +79,82 @@ export class DeveloperDashboard {
 	 * @private
 	 */
 	#render() {
+		// Create main container
 		this.#dashboardElement = document.createElement("div");
 		this.#dashboardElement.className = "dev-dashboard";
 		if (!this.#options.startOpen) {
 			this.#dashboardElement.classList.add("collapsed");
 		}
 
-		this.#dashboardElement.innerHTML = `
-      <div class="dashboard-header">
-        <h3>Dev Dashboard</h3>
-        <button class="dashboard-toggle-btn">${this.#options.startOpen ? "Collapse" : "Expand"}</button>
-      </div>
-      <div class="dashboard-content">
-        <div class="dashboard-section" id="perf-metrics"></div>
-        <div class="dashboard-section" id="core-metrics">
-          <h4>Core Metrics</h4>
-          <div class="metrics-table-container">No data</div>
-        </div>
-        <div class="dashboard-section" id="event-log">
-          <h4>Event Log</h4>
-          <div class="event-log-container">No events</div>
-        </div>
-      </div>
-    `;
+		// Header
+		const header = document.createElement("div");
+		header.className = "dashboard-header";
+		const title = document.createElement("h3");
+		title.textContent = "Dev Dashboard";
+		this.#toggleBtn = document.createElement("button");
+		this.#toggleBtn.className = "dashboard-toggle-btn";
+		this.#toggleBtn.textContent = this.#options.startOpen
+			? "Collapse"
+			: "Expand";
+		header.append(title, this.#toggleBtn);
 
+		// Content Area
+		const content = document.createElement("div");
+		content.className = "dashboard-content";
+
+		// --- Performance Section ---
+		const perfSection = document.createElement("div");
+		perfSection.className = "dashboard-section";
+		this.#perfMetricsContainer = document.createElement("div");
+		this.#perfMetricsContainer.id = "perf-metrics";
+		this.#perfMetrics.fps = this.#createPerfItem("FPS", "N/A");
+		this.#perfMetrics.latency = this.#createPerfItem("Latency", "N/A");
+		this.#perfMetrics.memory = this.#createPerfItem("Memory", "N/A");
+		perfSection.appendChild(this.#perfMetricsContainer);
+
+		// --- Core Metrics Section ---
+		const coreSection = document.createElement("div");
+		coreSection.className = "dashboard-section";
+		const coreTitle = document.createElement("h4");
+		coreTitle.textContent = "Core Metrics";
+		this.#coreMetricsContainer = document.createElement("div");
+		this.#coreMetricsContainer.className = "metrics-table-container";
+		this.#coreMetricsContainer.textContent = "No data";
+		coreSection.append(coreTitle, this.#coreMetricsContainer);
+
+		// --- Event Log Section ---
+		const eventLogSection = document.createElement("div");
+		eventLogSection.className = "dashboard-section";
+		const eventLogTitle = document.createElement("h4");
+		eventLogTitle.textContent = "Event Log";
+		this.#eventLogContainer = document.createElement("div");
+		this.#eventLogContainer.className = "event-log-container";
+		this.#eventLogContainer.textContent = "No events";
+		eventLogSection.append(eventLogTitle, this.#eventLogContainer);
+
+		// Assemble dashboard
+		content.append(perfSection, coreSection, eventLogSection);
+		this.#dashboardElement.append(header, content);
 		this.#container.appendChild(this.#dashboardElement);
-		this.#toggleBtn = this.#dashboardElement.querySelector(
-			".dashboard-toggle-btn"
-		);
-		this.#perfMetricsContainer =
-			this.#dashboardElement.querySelector("#perf-metrics");
-		this.#coreMetricsContainer = this.#dashboardElement.querySelector(
-			"#core-metrics .metrics-table-container"
-		);
-		this.#eventLogContainer = this.#dashboardElement.querySelector(
-			"#event-log .event-log-container"
-		);
+	}
+
+	/**
+	 * Helper to create a performance metric item.
+	 * @param {string} label - The label for the metric.
+	 * @param {string} initialValue - The initial value.
+	 * @returns {HTMLSpanElement} The value element for the metric.
+	 * @private
+	 */
+	#createPerfItem(label, initialValue) {
+		const item = document.createElement("div");
+		item.className = "perf-item";
+		const strong = document.createElement("strong");
+		strong.textContent = `${label}:`;
+		const valueSpan = document.createElement("span");
+		valueSpan.textContent = ` ${initialValue}`;
+		item.append(strong, valueSpan);
+		this.#perfMetricsContainer.appendChild(item);
+		return valueSpan;
 	}
 
 	/**
@@ -195,29 +237,48 @@ export class DeveloperDashboard {
 		const memory = summary.memory
 			? (summary.memory.jsHeapUsed / 1024 / 1024).toFixed(2)
 			: "N/A";
-		this.#perfMetricsContainer.innerHTML = `
-      <div class="perf-item"><strong>FPS:</strong> ${summary.fps}</div>
-      <div class="perf-item"><strong>Latency:</strong> ${summary.latency.render.toFixed(2)}ms</div>
-      <div class="perf-item"><strong>Memory:</strong> ${memory} MB</div>
-    `;
+
+		this.#perfMetrics.fps.textContent = ` ${summary.fps}`;
+		this.#perfMetrics.latency.textContent = ` ${summary.latency.render.toFixed(
+			2
+		)}ms`;
+		this.#perfMetrics.memory.textContent = ` ${memory} MB`;
 
 		// Update core metrics table
-		let coreHtml =
-			"<table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>";
+		this.#coreMetricsContainer.innerHTML = ""; // Clear previous content safely
+		const table = document.createElement("table");
+		const thead = document.createElement("thead");
+		thead.innerHTML = "<tr><th>Metric</th><th>Value</th></tr>"; // Static, safe
+		const tbody = document.createElement("tbody");
+
 		for (const [key, metric] of Object.entries(summary.core || {})) {
+			const row = tbody.insertRow();
+			const keyCell = row.insertCell();
+			const valueCell = row.insertCell();
+			keyCell.textContent = key;
+
 			let value = "";
 			if (metric.type === "counter") {
 				value = metric.value;
 			} else if (metric.type === "timer") {
-				value = `avg: ${metric.avg.toFixed(2)}ms (count: ${metric.count})`;
+				value = `avg: ${metric.avg.toFixed(2)}ms (count: ${
+					metric.count
+				})`;
 			} else if (metric.type === "histogram") {
-				value = `avg: ${metric.avg.toFixed(2)} (count: ${metric.count})`;
+				value = `avg: ${metric.avg.toFixed(2)} (count: ${
+					metric.count
+				})`;
 			}
-			coreHtml += `<tr><td>${key}</td><td>${value}</td></tr>`;
+			valueCell.textContent = value;
 		}
-		coreHtml += "</tbody></table>";
-		this.#coreMetricsContainer.innerHTML = coreHtml;
+		table.append(thead, tbody);
+		this.#coreMetricsContainer.appendChild(table);
 	}
+
+	/**
+	 * Updates the event log in the UI by rendering the latest events.
+	 * @private
+	 */
 	#updateEventLog() {
 		this.#eventLogContainer.innerHTML = this.#eventLog
 			.toArray()
@@ -310,7 +371,24 @@ export class DeveloperDashboard {
 		const time = loggedAt.toLocaleTimeString([], { hour12: false });
 		// V8.0 Parity: Standardize source/component from payload
 		const source = payload.source || payload.component || "system";
-		return `<div class="event-log-item"><span class="event-log-name">${name}</span> <span class="event-log-source">${source}</span> <span class="event-log-time">${time}</span></div>`;
+
+		const item = document.createElement("div");
+		item.className = "event-log-item";
+
+		const nameSpan = document.createElement("span");
+		nameSpan.className = "event-log-name";
+		nameSpan.textContent = name;
+
+		const sourceSpan = document.createElement("span");
+		sourceSpan.className = "event-log-source";
+		sourceSpan.textContent = source;
+
+		const timeSpan = document.createElement("span");
+		timeSpan.className = "event-log-time";
+		timeSpan.textContent = time;
+
+		item.append(nameSpan, sourceSpan, timeSpan);
+		return item.outerHTML;
 	}
 
 	/**

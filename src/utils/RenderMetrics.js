@@ -1,20 +1,19 @@
 import { DateCore } from "./DateUtils.js";
 
 /**
+ * @file RenderMetrics.js
  * @class RenderMetrics
  * @description A utility class for collecting and analyzing real-time rendering performance metrics.
  * It tracks Frames Per Second (FPS), various latency types (render, layout, interaction),
  * memory usage, and other web vital statistics like Cumulative Layout Shift (CLS).
  *
- * @borrows DateCore.timestamp as timestamp
- * @property {object} options - Configuration options for the metrics collector.
- * @property {number} fps - The current calculated Frames Per Second.
+ * @privateFields {#options, #stateManager, #errorHelpers, #fps, #frameCount, #lastFrameTime, #frameTimes, #renderLatencies, #layoutLatencies, #interactionLatencies, #memoryStats, #subscribers, #metricsHistory, #performanceObserver, #rafId, #reportInterval, #isTracking, #firstContentfulPaint, #layoutShifts}
  */
 export class RenderMetrics {
 	// V8.0 Parity: Use private fields for true encapsulation.
 	#options;
 	#stateManager;
-	#metricsRegistry;
+	#errorHelpers;
 	#fps = 0;
 	#frameCount = 0;
 	#lastFrameTime;
@@ -28,12 +27,10 @@ export class RenderMetrics {
 	#performanceObserver = null;
 	#rafId = null;
 	#reportInterval = null;
+	#isTracking = false;
 	#firstContentfulPaint = null;
 	#layoutShifts = [];
 
-	/**
-	 * @borrows DateCore.timestamp as timestamp
-	 */
 	static timestamp = DateCore.timestamp;
 
 	/**
@@ -56,12 +53,10 @@ export class RenderMetrics {
 		};
 		this.#stateManager = stateManager;
 		// V8.0 Parity: Derive metrics from the stateManager's registry.
-		this.#metricsRegistry = this.#stateManager?.metricsRegistry;
+		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from the stateManager.
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
 
 		this.#lastFrameTime = RenderMetrics.timestamp();
-
-		// V8.0 Parity: Lifecycle is managed externally. Do not start tracking in the constructor.
-		// The `initialize` method will be called by the SystemBootstrap or parent manager.
 	}
 
 	initialize() {
@@ -73,16 +68,30 @@ export class RenderMetrics {
 	 * reporting interval to calculate and emit metrics.
 	 */
 	startTracking() {
-		if (this.#rafId) return; // Already running
-		this.#rafId = requestAnimationFrame(this.#trackFrame.bind(this));
+		this.#errorHelpers?.try(
+			() => {
+				if (this.#isTracking) {
+					console.warn("[RenderMetrics] Already tracking.");
+					return;
+				}
 
-		// Set up periodic reporting
-		this.#reportInterval = setInterval(() => {
-			this.#calculateMetrics();
-			this.#emitUpdate();
-		}, this.#options.reportInterval);
+				this.#rafId = requestAnimationFrame(
+					this.#trackFrame.bind(this)
+				);
 
-		console.log("[RenderMetrics] Started tracking performance metrics");
+				// Set up periodic reporting
+				this.#reportInterval = setInterval(() => {
+					this.#calculateMetrics();
+					this.#emitUpdate();
+				}, this.#options.reportInterval);
+
+				this.#isTracking = true;
+				console.log(
+					"[RenderMetrics] Started tracking performance metrics"
+				);
+			},
+			{ component: "RenderMetrics", operation: "startTracking" }
+		);
 	}
 
 	/**
@@ -90,28 +99,38 @@ export class RenderMetrics {
 	 * PerformanceObserver to clean up resources.
 	 */
 	stopTracking() {
-		if (this.#rafId) {
-			cancelAnimationFrame(this.#rafId);
-			this.#rafId = null;
-		}
+		this.#errorHelpers?.try(
+			() => {
+				if (!this.#isTracking) return;
 
-		if (this.#reportInterval) {
-			clearInterval(this.#reportInterval);
-			this.#reportInterval = null;
-		}
+				if (this.#rafId) {
+					cancelAnimationFrame(this.#rafId);
+					this.#rafId = null;
+				}
 
-		if (this.#performanceObserver) {
-			this.#performanceObserver.disconnect();
-			this.#performanceObserver = null;
-		}
-		console.log("[RenderMetrics] Stopped tracking performance metrics");
+				if (this.#reportInterval) {
+					clearInterval(this.#reportInterval);
+					this.#reportInterval = null;
+				}
+
+				if (this.#performanceObserver) {
+					this.#performanceObserver.disconnect();
+				}
+
+				this.#isTracking = false;
+				console.log(
+					"[RenderMetrics] Stopped tracking performance metrics"
+				);
+			},
+			{ component: "RenderMetrics", operation: "stopTracking" }
+		);
 	}
 
 	/**
 	 * The core tracking function called by `requestAnimationFrame`. It calculates the time
 	 * since the last frame and stores it for FPS calculation.
 	 * @private
-	 * @param {DOMHighResTimeStamp} currentTime - The timestamp provided by `requestAnimationFrame`.
+	 * @param {number} currentTime - The timestamp provided by `requestAnimationFrame`.
 	 */
 	#trackFrame(currentTime) {
 		this.#frameCount++;
@@ -128,7 +147,17 @@ export class RenderMetrics {
 		this.#lastFrameTime = currentTime;
 
 		// Continue tracking
-		this.#rafId = requestAnimationFrame(this.#trackFrame.bind(this));
+		this.#errorHelpers?.try(
+			() => {
+				this.#rafId = requestAnimationFrame(
+					this.#trackFrame.bind(this)
+				);
+			},
+			{
+				component: "RenderMetrics",
+				operation: "trackFrameLoop",
+			}
+		);
 	}
 
 	/**
@@ -190,10 +219,11 @@ export class RenderMetrics {
 				entryTypes: ["paint", "measure", "navigation", "layout-shift"],
 			});
 		} catch (error) {
-			console.warn(
-				"[RenderMetrics] Failed to setup PerformanceObserver:",
-				error
-			);
+			this.#errorHelpers?.handleError(error, {
+				component: "RenderMetrics",
+				operation: "setupPerformanceObserver",
+				message: "Failed to setup PerformanceObserver",
+			});
 		}
 	}
 
@@ -399,9 +429,14 @@ export class RenderMetrics {
 
 		for (const callback of this.#subscribers) {
 			try {
-				callback(metrics);
+				// Use a non-blocking call to prevent one subscriber from halting others
+				setTimeout(() => callback(metrics), 0);
 			} catch (error) {
-				console.warn("[RenderMetrics] Subscriber error:", error);
+				this.#errorHelpers?.handleError(error, {
+					component: "RenderMetrics",
+					operation: "emitUpdate",
+					message: "Error in metrics subscriber callback",
+				});
 			}
 		}
 	}
@@ -533,6 +568,14 @@ export class RenderMetrics {
 	 */
 	get currentFPS() {
 		return this.#fps;
+	}
+
+	/**
+	 * A getter to check if the service is actively tracking.
+	 * @type {boolean}
+	 */
+	get isTracking() {
+		return this.#isTracking;
 	}
 }
 

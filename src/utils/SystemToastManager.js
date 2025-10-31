@@ -10,15 +10,18 @@ import { DateCore } from "./DateUtils.js";
  * @class SystemToastManager
  * @classdesc Manages the display of transient, non-intrusive toast notifications for the entire application.
  * It handles creation, styling, automatic dismissal, and accessibility features for toasts.
+ * @privateFields {#toasts, #stateManager, #policiesManager, #metricsRegistry, #container, #maxToasts, #defaultDuration}
  */
 export class SystemToastManager {
+	static #ANIMATION_DURATION = 300; // ms
+
 	// V8.0 Parity: Use private fields for true encapsulation.
 	#toasts = new Map();
 	#stateManager;
 	#policiesManager;
 	#metricsRegistry;
 	#container = null;
-	#maxToasts = 3;
+	#maxToasts = 4;
 	#defaultDuration = 2500;
 
 	/**
@@ -180,18 +183,19 @@ export class SystemToastManager {
 	 * Displays a toast notification with the given message, type, and duration.
 	 * @param {string} message - The message to display in the toast.
 	 * @param {'info'|'success'|'error'|'warning'} [type='info'] - The type of toast, influencing its styling.
-	 * @param {number|null} [duration=null] - The duration in milliseconds before the toast automatically dismisses. If `null`, uses `defaultDuration`.
+	 * @param {number} duration - The duration in milliseconds before the toast automatically dismisses.
 	 * @returns {string} The unique ID of the displayed toast.
+	 * @private
 	 */
-	showToast(message, type = "info", duration = null) {
+	#showToast(message, type = "info", duration) {
 		// Metrics Integration
 		this.#metricsRegistry?.increment("ui.toast.shown");
 		if (type) this.#metricsRegistry?.increment(`ui.toast.by_type.${type}`);
 
 		const id = `toast_${DateCore.timestamp()}_${Math.random().toString(36).substr(2, 5)}`;
-		const toast = this.#createToast(id, message, type);
+		const toast = this.#createToastElement(id, message, type);
 
-		// Add to container
+		// Add to DOM
 		this.#container.appendChild(toast);
 		this.#toasts.set(id, { element: toast, type });
 
@@ -199,10 +203,9 @@ export class SystemToastManager {
 		this.#enforceMaxToasts();
 
 		// Auto-remove after duration
-		const actualDuration = duration || this.#defaultDuration;
 		setTimeout(() => {
-			this.removeToast(id);
-		}, actualDuration);
+			this.#removeToast(id);
+		}, duration);
 
 		// Animate in
 		requestAnimationFrame(() => {
@@ -221,7 +224,7 @@ export class SystemToastManager {
 	 * @param {string} type - The type of the toast ('info', 'success', 'error', 'warning').
 	 * @returns {HTMLElement} The created toast DOM element.
 	 */
-	#createToast(id, message, type) {
+	#createToastElement(id, message, type) {
 		const toast = document.createElement("div");
 		toast.className = `system-toast system-toast-${type}`;
 		toast.setAttribute("data-toast-id", id);
@@ -240,7 +243,7 @@ export class SystemToastManager {
       border-left: 4px solid ${this.#getBorderColor(type)};
       transform: translateX(100%);
       opacity: 0;
-      transition: all 0.3s ease;
+      transition: all ${SystemToastManager.#ANIMATION_DURATION}ms ease;
       pointer-events: auto;
       cursor: pointer;
       user-select: none;
@@ -255,7 +258,7 @@ export class SystemToastManager {
 
 		// Add close button
 		const closeBtn = document.createElement("button");
-		closeBtn.innerHTML = "×";
+		closeBtn.textContent = "×";
 		closeBtn.className = "toast-close";
 		closeBtn.setAttribute("aria-label", "Close notification");
 		closeBtn.style.cssText = `
@@ -272,7 +275,7 @@ export class SystemToastManager {
     `;
 
 		closeBtn.addEventListener("click", () => {
-			this.removeToast(id);
+			this.#removeToast(id);
 		});
 
 		toast.appendChild(closeBtn);
@@ -280,7 +283,7 @@ export class SystemToastManager {
 		// Click to dismiss
 		toast.addEventListener("click", (e) => {
 			if (e.target !== closeBtn) {
-				this.removeToast(id);
+				this.#removeToast(id);
 			}
 		});
 
@@ -338,10 +341,10 @@ export class SystemToastManager {
 	/**
 	 * Removes a toast notification from the DOM and the internal registry.
 	 * @private
-	 * @param {string} id - The unique ID of the toast to remove.
+	 * @param {string} toastId - The unique ID of the toast to remove.
 	 */
-	removeToast(id) {
-		const toast = this.#toasts.get(id);
+	#removeToast(toastId) {
+		const toast = this.#toasts.get(toastId);
 		if (!toast) return;
 
 		const element = toast.element;
@@ -355,8 +358,8 @@ export class SystemToastManager {
 			if (element.parentNode) {
 				element.parentNode.removeChild(element);
 			}
-			this.#toasts.delete(id);
-		}, 300);
+			this.#toasts.delete(toastId);
+		}, SystemToastManager.#ANIMATION_DURATION);
 	}
 
 	/**
@@ -371,7 +374,7 @@ export class SystemToastManager {
 				0,
 				toastIds.length - this.#maxToasts
 			);
-			toRemove.forEach((id) => this.removeToast(id));
+			toRemove.forEach((id) => this.#removeToast(id));
 		}
 	}
 
@@ -379,11 +382,11 @@ export class SystemToastManager {
 	 * Displays a success-type toast notification.
 	 * @public
 	 * @param {string} message - The message to display.
-	 * @param {number|null} [duration=null] - The duration in milliseconds.
+	 * @param {number} [duration=this.#defaultDuration] - The duration in milliseconds.
 	 * @returns {string} The ID of the toast.
 	 */
-	success(message, duration) {
-		return this.showToast(message, "success", duration);
+	success(message, duration = this.#defaultDuration) {
+		return this.#showToast(message, "success", duration);
 	}
 
 	/**
@@ -391,10 +394,10 @@ export class SystemToastManager {
 	 * @public
 	 * @param {string} message - The message to display.
 	 * @param {number|null} [duration=null] - The duration in milliseconds.
-	 * @returns {string} The ID of the toast.
+	 * @returns {string} The ID of the toast. // V8.0 Parity: Use private fields for true encapsulation.
 	 */
-	error(message, duration) {
-		return this.showToast(message, "error", duration);
+	error(message, duration = this.#defaultDuration) {
+		return this.#showToast(message, "error", duration);
 	}
 
 	/**
@@ -404,8 +407,8 @@ export class SystemToastManager {
 	 * @param {number|null} [duration=null] - The duration in milliseconds.
 	 * @returns {string} The ID of the toast.
 	 */
-	warning(message, duration) {
-		return this.showToast(message, "warning", duration);
+	warning(message, duration = this.#defaultDuration) {
+		return this.#showToast(message, "warning", duration);
 	}
 
 	/**
@@ -415,8 +418,8 @@ export class SystemToastManager {
 	 * @param {number|null} [duration=null] - The duration in milliseconds.
 	 * @returns {string} The ID of the toast.
 	 */
-	info(message, duration) {
-		return this.showToast(message, "info", duration);
+	info(message, duration = this.#defaultDuration) {
+		return this.#showToast(message, "info", duration);
 	}
 
 	/**
@@ -424,7 +427,7 @@ export class SystemToastManager {
 	 * @public
 	 */
 	clear() {
-		Array.from(this.#toasts.keys()).forEach((id) => this.removeToast(id));
+		Array.from(this.#toasts.keys()).forEach((id) => this.#removeToast(id));
 	}
 
 	/**
@@ -437,49 +440,6 @@ export class SystemToastManager {
 			this.#container.parentNode.removeChild(this.#container);
 		}
 	}
-}
-
-let toastManager = null;
-
-/**
- * Retrieves the singleton instance of the `SystemToastManager`, creating it if it doesn't already exist.
- * @param {object} [dependencies={}] - Dependencies to pass to the constructor if creating a new instance.
- * @returns {SystemToastManager} The singleton instance.
- */
-export function getToastManager(dependencies = {}) {
-	if (!toastManager) {
-		toastManager = new SystemToastManager(dependencies);
-	}
-	return toastManager;
-}
-
-/**
- * A convenience function to show a toast notification without directly accessing the manager instance.
- * @param {string} message - The message to display.
- * @param {'info'|'success'|'error'|'warning'} [type='info'] - The type of toast.
- * @param {number|null} [duration=null] - The duration in milliseconds.
- * @returns {string} The ID of the toast.
- */
-export function showSystemToast(message, type = "info", duration = null) {
-	return getToastManager().showToast(message, type, duration);
-}
-
-/**
- * A convenience function to show a success toast specifically for layout save events.
- * @param {'drag'|'resize'|'keyboard_move'|'keyboard_resize'|'change'} [changeType='change'] - The type of layout change.
- * @returns {string} The ID of the toast.
- */
-export function showLayoutSaved(changeType = "change") {
-	const messages = {
-		drag: "📍 Layout saved",
-		resize: "📏 Layout saved",
-		keyboard_move: "⌨️ Position saved",
-		keyboard_resize: "⌨️ Size saved",
-		change: "💾 Layout saved",
-	};
-
-	const message = messages[changeType] || messages.change;
-	return getToastManager().success(message, 2000);
 }
 
 export default SystemToastManager;

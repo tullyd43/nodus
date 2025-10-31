@@ -1,21 +1,12 @@
 /**
  * @file GridPolicyIntegration.js
- * @description Defines grid-specific policies and provides a helper class for accessing them.
- * This module is designed to extend the main `SystemPolicies` with configurations
- * that control the behavior of the enhanced grid system.
+ * @description Defines grid-specific policies and provides a managed service for accessing them. This module extends the main `SystemPolicies` with configurations that control the behavior of the enhanced grid system.
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
-import { DateCore } from "../utils/DateUtils.js";
-
 /**
  * An object containing grid-specific policy definitions.
- * These are intended to be merged into the main `SystemPolicies` definitions.
- * @type {object}
- * @property {object} system.grid_performance_mode - Policy for controlling grid performance mode.
- * @property {object} system.grid_auto_save_layouts - Policy for enabling/disabling layout auto-save.
- * @property {object} system.grid_save_feedback - Policy for showing/hiding save notifications.
- * @property {object} system.grid_ai_suggestions - Policy for enabling/disabling AI layout suggestions.
+ * These are merged into the main `SystemPolicies` definitions during system initialization.
  */
 export const GRID_POLICY_DEFINITIONS = {
 	"system.grid_performance_mode": {
@@ -51,7 +42,6 @@ export const GRID_POLICY_DEFINITIONS = {
 
 /**
  * An object containing validation functions for the grid-specific policies.
- * These are intended to be merged into the main `SystemPolicies` validators.
  * @type {object}
  */
 export const GRID_POLICY_VALIDATORS = {
@@ -96,7 +86,6 @@ export const GRID_POLICY_VALIDATORS = {
 
 /**
  * An object defining dependencies for grid-specific policies.
- * These are intended to be merged into the main `SystemPolicies` dependencies.
  * @type {object}
  */
 export const GRID_POLICY_DEPENDENCIES = {
@@ -109,33 +98,62 @@ export const GRID_POLICY_DEPENDENCIES = {
 };
 
 /**
- * @class GridPolicyHelper
- * @classdesc A helper class with static methods for accessing and managing grid-specific policies.
- * It provides a clear, cached, and robust interface for interacting with grid configurations.
+ * @class GridPolicyService
+ * @classdesc A managed service for accessing and managing grid-specific policies. It provides a clear, cached, and robust interface for interacting with grid configurations, adhering to V8 Parity Mandates.
+ * @privateFields {#policyManager, #cache}
  */
-export class GridPolicyHelper {
-	/** @private @type {Map<string, any>} */
-	static cache = new Map(); // Local cache for grid-specific policies
-	/** @private @type {number} */
-	static lastCacheTime = 0;
-	/** @private @type {number} */
-	static CACHE_TTL = 30000; // 30 seconds
+export class GridPolicyService {
+	/** @private @type {import('../core/SystemPolicies_Cached.js').SystemPolicies} */
+	#policyManager;
+	/** @private @type {import('../managers/CacheManager.js').LRUCache} */
+	#cache;
 
 	/**
-	 * Gets the grid performance mode policy from the provided context.
+	 * Creates an instance of GridPolicyService.
+	 * @param {object} context - The context object from the ServiceRegistry.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The application's state manager.
+	 */
+	constructor({ stateManager }) {
+		this.#policyManager = stateManager.managers.policies;
+
+		// Mandate 4.1: Use a bounded cache from the central CacheManager.
+		this.#cache = stateManager.managers.cacheManager.getCache(
+			"gridPolicies",
+			{
+				max: 10, // Cache up to 10 policy sets/keys
+				ttl: 30000, // 30-second TTL
+			}
+		);
+	}
+
+	/**
+	 * Registers the grid-specific policies, validators, and dependencies with the main SystemPolicies manager.
+	 * This is the V8 Parity-compliant replacement for the old `extendSystemPoliciesWithGrid` function.
+	 * @returns {void}
+	 */
+	registerGridPolicies() {
+		if (!this.#policyManager) {
+			console.warn(
+				"[GridPolicyService] Cannot register policies, SystemPolicies manager not found."
+			);
+			return;
+		}
+
+		this.#policyManager.registerPolicyDefinitions(GRID_POLICY_DEFINITIONS);
+		this.#policyManager.registerPolicyValidators(GRID_POLICY_VALIDATORS);
+	}
+
+	/**
+	 * Gets the grid performance mode policy.
 	 * The policy can be `true` (force on), `false` (force off), or `null` (automatic).
-	 * @static
-	 * @param {object} context - The application context, expected to have a `getPolicy` method.
 	 * @returns {boolean|null} The current performance mode policy.
 	 */
-	static getPerformanceMode(context) {
+	getPerformanceMode() {
 		try {
-			const policy = context.getPolicy("system", "grid_performance_mode");
-
-			// null = auto mode (FPS-based)
-			// true = force performance mode on
-			// false = force performance mode off
-			return policy;
+			return this.#policyManager.getPolicy(
+				"system",
+				"grid_performance_mode"
+			);
 		} catch (error) {
 			console.warn("Could not get grid performance policy:", error);
 			return null; // Default to auto mode
@@ -144,19 +162,14 @@ export class GridPolicyHelper {
 
 	/**
 	 * Checks if the auto-save layout policy is enabled.
-	 * @static
-	 * @param {object} context - The application context.
 	 * @returns {boolean} `true` if auto-save is enabled, `false` otherwise.
 	 */
-	static isAutoSaveEnabled(context) {
+	isAutoSaveEnabled() {
 		try {
-			// Use getPolicy and provide a default value if it's null or undefined.
-			const policy = context.getPolicy(
+			const policy = this.#policyManager.getPolicy(
 				"system",
 				"grid_auto_save_layouts"
 			);
-			// The '??' operator returns the right-hand side if the left-hand side is null or undefined.
-			// This correctly handles cases where the policy is explicitly set to `false`.
 			return policy ?? true;
 		} catch (error) {
 			console.warn("Could not get grid auto-save policy:", error);
@@ -166,13 +179,14 @@ export class GridPolicyHelper {
 
 	/**
 	 * Checks if the policy for showing save feedback (toasts) is enabled.
-	 * @static
-	 * @param {object} context - The application context.
 	 * @returns {boolean} `true` if save feedback should be shown, `false` otherwise.
 	 */
-	static shouldShowSaveFeedback(context) {
+	shouldShowSaveFeedback() {
 		try {
-			const policy = context.getPolicy("system", "grid_save_feedback");
+			const policy = this.#policyManager.getPolicy(
+				"system",
+				"grid_save_feedback"
+			);
 			return policy ?? true;
 		} catch (error) {
 			console.warn("Could not get grid save feedback policy:", error);
@@ -182,13 +196,14 @@ export class GridPolicyHelper {
 
 	/**
 	 * Checks if the policy for AI-powered layout suggestions is enabled.
-	 * @static
-	 * @param {object} context - The application context.
 	 * @returns {boolean} `true` if AI suggestions are enabled, `false` otherwise.
 	 */
-	static isAiSuggestionsEnabled(context) {
+	isAiSuggestionsEnabled() {
 		try {
-			const policy = context.getPolicy("system", "grid_ai_suggestions");
+			const policy = this.#policyManager.getPolicy(
+				"system",
+				"grid_ai_suggestions"
+			);
 			return policy ?? false;
 		} catch (error) {
 			console.warn("Could not get grid AI suggestions policy:", error);
@@ -198,28 +213,21 @@ export class GridPolicyHelper {
 
 	/**
 	 * Sets the grid performance mode policy and emits an event to notify the system of the change.
-	 * @static
-	 * @param {object} context - The application context.
 	 * @param {boolean|null} mode - The new mode (`true` for on, `false` for off, `null` for auto).
 	 * @returns {Promise<boolean>} `true` if the policy was set successfully, `false` otherwise.
 	 */
-	static async setPerformanceMode(context, mode) {
+	async setPerformanceMode(mode) {
 		try {
-			await context.setPolicy("system", "grid_performance_mode", mode);
+			await this.#policyManager.setPolicy(
+				"system",
+				"grid_performance_mode",
+				mode
+			);
 
 			// Clear cache to force refresh
-			this.cache.clear();
+			this.clearCache();
 
-			// Emit policy change event for real-time updates
-			if (typeof window.eventFlowEngine !== "undefined") {
-				window.eventFlowEngine.emit("policyChanged", {
-					domain: "system",
-					key: "grid_performance_mode",
-					value: mode,
-					timestamp: DateCore.timestamp(),
-				});
-			}
-
+			// Event is emitted by SystemPolicies automatically, no need to re-emit.
 			return true;
 		} catch (error) {
 			console.error("Failed to set grid performance mode:", error);
@@ -228,41 +236,34 @@ export class GridPolicyHelper {
 	}
 
 	/**
-	 * Gets an object containing all grid-related policies, using a local cache for performance.
-	 * @static
-	 * @param {object} context - The application context.
+	 * Gets an object containing all grid-related policies, using a bounded LRU cache for performance.
 	 * @returns {{performanceMode: boolean|null, autoSave: boolean, saveFeedback: boolean, aiSuggestions: boolean}}
 	 * An object with the current state of all grid policies.
 	 */
-	static getGridPolicies(context) {
-		const now = Date.now();
+	getGridPolicies() {
 		const cacheKey = "grid_policies";
+		const cachedPolicies = this.#cache.get(cacheKey);
 
 		// Check cache first
-		if (
-			this.cache.has(cacheKey) &&
-			now - this.lastCacheTime < this.CACHE_TTL
-		) {
-			return this.cache.get(cacheKey);
+		if (cachedPolicies) {
+			return cachedPolicies;
 		}
 
 		try {
 			const policies = {
-				performanceMode: this.getPerformanceMode(context),
-				autoSave: this.isAutoSaveEnabled(context),
-				saveFeedback: this.shouldShowSaveFeedback(context),
-				aiSuggestions: this.isAiSuggestionsEnabled(context),
+				performanceMode: this.getPerformanceMode(),
+				autoSave: this.isAutoSaveEnabled(),
+				saveFeedback: this.shouldShowSaveFeedback(),
+				aiSuggestions: this.isAiSuggestionsEnabled(),
 			};
 
 			// Cache the result
-			this.cache.set(cacheKey, policies);
-			this.lastCacheTime = now;
+			this.#cache.set(cacheKey, policies);
 
 			return policies;
 		} catch (error) {
 			console.warn("Could not get grid policies:", error);
 
-			// Return safe defaults
 			return {
 				performanceMode: null,
 				autoSave: true,
@@ -274,31 +275,14 @@ export class GridPolicyHelper {
 
 	/**
 	 * Clears the local cache for grid-specific policies.
-	 * This should be called if policies are updated externally to ensure fresh data is fetched.
-	 * @static
 	 */
-	static clearCache() {
-		this.cache.clear();
-		this.lastCacheTime = 0;
+	clearCache() {
+		this.#cache.clear();
 	}
 }
 
 /**
- * An integration function to extend the main `SystemPolicies` with grid-specific definitions.
- * This function is intended to be called during system initialization to ensure grid policies
- * are available throughout the application.
- * @returns {void}
+ * Renaming the default export for clarity and to avoid confusion with the old static helper.
+ * The class itself is the primary export.
  */
-export function extendSystemPoliciesWithGrid() {
-	// This would integrate with your existing SystemPolicies_Cached.js
-	// by adding the grid policies to the main policy definitions
-
-	console.log("Grid policies integrated with SystemPolicies");
-
-	// Example integration pattern:
-	// Object.assign(POLICY_DEFINITIONS, GRID_POLICY_DEFINITIONS);
-	// Object.assign(POLICY_VALIDATORS, GRID_POLICY_VALIDATORS);
-	// Object.assign(POLICY_DEPENDENCIES, GRID_POLICY_DEPENDENCIES);
-}
-
-export default GridPolicyHelper;
+export default GridPolicyService;

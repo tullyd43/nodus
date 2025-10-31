@@ -1,14 +1,31 @@
 /**
  * @file DateUtils.js
- * @description A lightweight, high-performance, and fully integrated suite of date and time utilities for Nodus.
- * This module replaces the legacy, isolated DateUtils system with a streamlined and maintainable alternative.
+ * @description A lightweight, dependency-free, and high-performance suite of date and time utilities.
+ * This module provides a set of static methods for common date operations, ensuring consistency
+ * and replacing the need for external libraries in accordance with Mandate 1.4.
+ *
+ * @see {@link ../../DEVELOPER_MANDATES.md} - Mandate 1.4: Zero New Runtime Dependencies
  */
 
 /**
+ * @class DateUtilsError
+ * @description Custom error class for exceptions thrown by the DateUtils module.
+ * This allows callers to specifically catch errors from this utility.
+ * @extends Error
+ */
+export class DateUtilsError extends Error {
+	constructor(message) {
+		super(message);
+		this.name = "DateUtilsError";
+	}
+}
+
+/**
  * @class ImmutableDateTime
- * @description An immutable wrapper around the native JavaScript Date object.
- * It prevents accidental mutations of date values. Any method that "modifies"
- * the date returns a new ImmutableDateTime instance.
+ * @description An immutable wrapper around the native JavaScript `Date` object.
+ * It prevents accidental mutations of date values. Any method that would typically
+ * modify the date returns a new `ImmutableDateTime` instance instead.
+ * All standard `Date.prototype` getters are proxied for convenience.
  */
 export class ImmutableDateTime {
 	/** @private */
@@ -16,18 +33,21 @@ export class ImmutableDateTime {
 
 	/**
 	 * @param {Date|number|string} dateInput - A Date object, timestamp, or date string.
+	 * @throws {DateUtilsError} if the dateInput is invalid.
 	 */
 	constructor(dateInput) {
 		this.#date = new Date(dateInput);
 		if (isNaN(this.#date.getTime())) {
-			throw new Error("Invalid date provided to ImmutableDateTime.");
+			throw new DateUtilsError(
+				`Invalid date provided to ImmutableDateTime: ${dateInput}`
+			);
 		}
 		// Freeze the object to prevent adding new properties.
 		Object.freeze(this);
 	}
 
 	/**
-	 * Returns the underlying primitive value (Unix timestamp).
+	 * Returns the primitive value (Unix timestamp in milliseconds).
 	 * @returns {number}
 	 */
 	valueOf() {
@@ -35,25 +55,104 @@ export class ImmutableDateTime {
 	}
 
 	/**
-	 * Returns the native Date object. Use with caution, as it is mutable.
-	 * This is primarily for compatibility with external libraries.
-	 * @returns {Date} A new Date instance to prevent mutation of the internal state.
+	 * Returns a new, mutable native `Date` object from the instance.
+	 * @returns {Date} A new `Date` instance to prevent mutation of the internal state.
 	 */
 	toDate() {
 		return new Date(this.#date);
 	}
 
-	// --- Add other getter methods as needed, e.g., getFullYear, toISOString ---
+	// --- Proxy all standard Date.prototype getters for convenience ---
+	getFullYear() {
+		return this.#date.getFullYear();
+	}
+	getMonth() {
+		return this.#date.getMonth();
+	}
+	getDate() {
+		return this.#date.getDate();
+	}
+	getDay() {
+		return this.#date.getDay();
+	}
+	getHours() {
+		return this.#date.getHours();
+	}
+	getMinutes() {
+		return this.#date.getMinutes();
+	}
+	getSeconds() {
+		return this.#date.getSeconds();
+	}
+	getMilliseconds() {
+		return this.#date.getMilliseconds();
+	}
+	getTime() {
+		return this.#date.getTime();
+	}
+	getTimezoneOffset() {
+		return this.#date.getTimezoneOffset();
+	}
+	getUTCFullYear() {
+		return this.#date.getUTCFullYear();
+	}
+	getUTCMonth() {
+		return this.#date.getUTCMonth();
+	}
+	getUTCDate() {
+		return this.#date.getUTCDate();
+	}
+	getUTCDay() {
+		return this.#date.getUTCDay();
+	}
+	getUTCHours() {
+		return this.#date.getUTCHours();
+	}
+	getUTCMinutes() {
+		return this.#date.getUTCMinutes();
+	}
+	getUTCSeconds() {
+		return this.#date.getUTCSeconds();
+	}
+	getUTCMilliseconds() {
+		return this.#date.getUTCMilliseconds();
+	}
+	toISOString() {
+		return this.#date.toISOString();
+	}
+	toJSON() {
+		return this.#date.toJSON();
+	}
+	toLocaleDateString(locales, options) {
+		return this.#date.toLocaleDateString(locales, options);
+	}
+	toLocaleString(locales, options) {
+		return this.#date.toLocaleString(locales, options);
+	}
+	toLocaleTimeString(locales, options) {
+		return this.#date.toLocaleTimeString(locales, options);
+	}
+	toString() {
+		return this.#date.toString();
+	}
+	toDateString() {
+		return this.#date.toDateString();
+	}
+	toTimeString() {
+		return this.#date.toTimeString();
+	}
+	toUTCString() {
+		return this.#date.toUTCString();
+	}
 }
 
 /**
- * @class DateCore
- * @description Provides fundamental, high-reliability date and time operations.
- * All methods are wrapped for performance tracking and error handling.
+ * @class DateUtils
+ * @description A static class providing a suite of dependency-free date and time utilities.
  */
-export class DateCore {
+export class DateUtils {
 	/**
-	 * Returns the current time as a Unix timestamp (milliseconds).
+	 * Returns the current time as a high-resolution Unix timestamp in milliseconds.
 	 * This is the primary method for getting a numeric timestamp.
 	 * @returns {number} The number of milliseconds since the Unix epoch.
 	 */
@@ -63,7 +162,7 @@ export class DateCore {
 
 	/**
 	 * Returns the current time as a full ISO 8601 timestamp string in UTC.
-	 * e.g., "2024-01-01T12:00:00.000Z"
+	 * @example "2024-01-01T12:00:00.000Z"
 	 * @returns {string} The ISO timestamp string.
 	 */
 	static now() {
@@ -71,32 +170,27 @@ export class DateCore {
 	}
 
 	/**
-	 * Safely converts various input types (Date, number, string) into a valid `Date` object.
-	 * Throws a standardized `AppError` if the input is invalid or unparseable.
+	 * Safely converts various input types into a valid `ImmutableDateTime` object.
+	 * Throws a `DateUtilsError` if the input is invalid or unparseable.
 	 * @param {Date|ImmutableDateTime|number|string} input - The value to convert.
 	 * @returns {ImmutableDateTime} The converted `ImmutableDateTime` object.
+	 * @throws {DateUtilsError} if the input cannot be parsed into a valid date.
 	 */
 	static toDate(input) {
-		// The ImmutableDateTime constructor handles Date, number, and string types.
-		// We can centralize the validation and conversion logic there.
-		try {
-			if (input instanceof ImmutableDateTime) {
-				return input;
-			}
-			return new ImmutableDateTime(input);
-		} catch (error) {
-			// Re-throw as a generic error; the wrapper will format it.
-			throw new Error(`Invalid date input: ${input}`);
+		if (input instanceof ImmutableDateTime) {
+			return input;
 		}
+		// The constructor handles validation and throws DateUtilsError on failure.
+		return new ImmutableDateTime(input);
 	}
 
 	/**
-	 * Formats a date into an ISO date string (YYYY-MM-DD) in the local timezone.
+	 * Formats a date into an ISO date string (YYYY-MM-DD) in the *local* timezone.
 	 * @param {Date|number|string} date - The date to format.
 	 * @returns {string} The formatted date string in the local timezone.
 	 */
 	static toISODateLocal(date) {
-		const d = this.toDate(date).toDate(); // Get the native Date object for formatting
+		const d = this.toDate(date);
 		const year = d.getFullYear();
 		const month = String(d.getMonth() + 1).padStart(2, "0");
 		const day = String(d.getDate()).padStart(2, "0");
@@ -104,13 +198,12 @@ export class DateCore {
 	}
 
 	/**
-	 * Formats a date into a string suitable for HTML `<input type="datetime-local">`.
-	 * Correctly uses the local timezone. Format: YYYY-MM-DDTHH:mm
+	 * Formats a date into a `datetime-local` input string (YYYY-MM-DDTHH:mm) in the *local* timezone.
 	 * @param {Date|number|string} date - The date to format.
 	 * @returns {string} The formatted datetime-local string.
 	 */
 	static toDateTimeLocal(date) {
-		const d = this.toDate(date).toDate(); // Get the native Date object for formatting
+		const d = this.toDate(date);
 		const pad = (n) => String(n).padStart(2, "0");
 		const year = d.getFullYear();
 		const month = pad(d.getMonth() + 1);
@@ -121,7 +214,26 @@ export class DateCore {
 	}
 
 	/**
-	 * Converts a duration in milliseconds into a human-readable string.
+	 * Parses a time string (HH:mm) into the number of minutes from midnight.
+	 * @param {string} timeString - The time string to parse (e.g., "14:30").
+	 * @returns {number} The number of minutes from midnight.
+	 * @throws {DateUtilsError} if the time string is invalid.
+	 */
+	static parseTimeString(timeString) {
+		if (typeof timeString !== "string" || !/^\d{2}:\d{2}$/.test(timeString)) {
+			throw new DateUtilsError(
+				`Invalid time string format: ${timeString}. Expected HH:mm.`
+			);
+		}
+		const [hours, minutes] = timeString.split(":").map(Number);
+		if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+			throw new DateUtilsError(`Invalid time value: ${timeString}.`);
+		}
+		return hours * 60 + minutes;
+	}
+
+	/**
+	 * Converts a duration in milliseconds into a human-readable string (e.g., "2 days, 3 hours").
 	 * @param {number} ms - The duration in milliseconds.
 	 * @param {object} [options={}] - Formatting options.
 	 * @param {number} [options.maxUnits=2] - The maximum number of time units to display.
@@ -129,39 +241,40 @@ export class DateCore {
 	 * @returns {string} The human-readable duration string.
 	 */
 	static humanizeDuration(ms, { maxUnits = 2, compact = false } = {}) {
-		if (typeof ms !== "number" || !isFinite(ms)) {
+		if (typeof ms !== "number" || !Number.isFinite(ms)) {
 			return compact ? "0s" : "0 seconds";
 		}
 
 		const units = [
-			{ name: "year", short: "y", ms: 31536000000 },
-			{ name: "month", short: "mo", ms: 2592000000 },
-			{ name: "week", short: "w", ms: 604800000 },
-			{ name: "day", short: "d", ms: 86400000 },
-			{ name: "hour", short: "h", ms: 3600000 },
-			{ name: "minute", short: "m", ms: 60000 },
-			{ name: "second", short: "s", ms: 1000 },
+			{ name: "year", short: "y", ms: 31_536_000_000 },
+			{ name: "month", short: "mo", ms: 2_592_000_000 },
+			{ name: "week", short: "w", ms: 604_800_000 },
+			{ name: "day", short: "d", ms: 86_400_000 },
+			{ name: "hour", short: "h", ms: 3_600_000 },
+			{ name: "minute", short: "m", ms: 60_000 },
+			{ name: "second", short: "s", ms: 1_000 },
 		];
 
 		const parts = [];
 		let remaining = Math.abs(ms);
 
 		for (const unit of units) {
-			if (parts.length >= maxUnits) break;
+			if (parts.length >= maxUnits || remaining < unit.ms) continue;
+
 			const count = Math.floor(remaining / unit.ms);
 			if (count > 0) {
-				if (compact) {
-					parts.push(`${count}${unit.short}`);
-				} else {
-					parts.push(
-						`${count} ${unit.name}${count !== 1 ? "s" : ""}`
-					);
-				}
+				const name = compact
+					? unit.short
+					: ` ${unit.name}${count !== 1 ? "s" : ""}`;
+				parts.push(`${count}${name}`);
 				remaining -= count * unit.ms;
 			}
 		}
 
 		if (parts.length === 0) {
+			if (ms < 1000 && ms > 0) {
+				return compact ? "<1s" : "less than 1 second";
+			}
 			return compact ? "0s" : "0 seconds";
 		}
 
@@ -169,52 +282,7 @@ export class DateCore {
 	}
 }
 
-/**
- * @description A proxy that wraps all static methods of `DateCore` with integrated
- * performance tracking and error handling. This ensures that every date operation
- * is automatically monitored without needing to wrap each call individually.
- */
-export const MonitoredDateUtils = new Proxy(DateCore, {
-	// This proxy requires ErrorHelpers, which must be passed in context, not imported.
-	// The implementation below assumes ErrorHelpers will be on the context object.
-
-	get(target, prop, receiver) {
-		const originalMethod = target[prop];
-		if (
-			typeof originalMethod !== "function" ||
-			!Object.prototype.hasOwnProperty.call(target, prop)
-		) {
-			return Reflect.get(target, prop, receiver);
-		}
-
-		// Return a wrapped version of the static method
-		return function (...args) {
-			// The first argument to a utility might be the context object
-			const context =
-				args[0] &&
-				typeof args[0] === "object" &&
-				args[0].stateManager?.managers?.errorHelpers
-					? args.shift()
-					: {};
-
-			const errorHelpers = context.stateManager?.managers?.errorHelpers;
-			if (!errorHelpers) {
-				// If no error helpers, just run the original method.
-				return originalMethod.apply(this, args);
-			}
-
-			const fn = () => originalMethod.apply(this, args);
-			const wrappedFn = errorHelpers.withPerformanceTracking(
-				fn,
-				`DateUtils.${prop}`
-			);
-
-			return ErrorHelpers.captureSync(wrappedFn, context.eventFlow, {
-				component: `DateUtils.${prop}`,
-				...context,
-			});
-		};
-	},
-});
-
-export default MonitoredDateUtils;
+// For backward compatibility and ease of use, we export the main class as the default.
+// The previous `DateCore` and `MonitoredDateUtils` are now replaced by this single, clean class.
+export { DateUtils as DateCore };
+export default DateUtils;

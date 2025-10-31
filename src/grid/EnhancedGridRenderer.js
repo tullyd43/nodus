@@ -12,107 +12,135 @@ import { DateCore } from "../utils/DateUtils.js";
 
 /**
  * @class EnhancedGridRenderer
+
+/**
+ * @class EnhancedGridRenderer
  * @classdesc A class that enhances an existing grid layout with modern features without replacing its core logic.
  * It layers on top of the existing DOM structure and event system to provide a more robust and accessible user experience.
+ * This class is designed to be instantiated and managed by the HybridStateManager.
+ * @privateFields {#stateManager, #errorHelpers, #metrics, #policyManager, #eventFlowEngine, #container, #appViewModel, #options, #isEnhanced, #isDragging, #isResizing, #currentDragItem, #performanceMode, #unsubscribeFunctions}
  */
 export class EnhancedGridRenderer {
+	/** @private @type {import('../core/HybridStateManager.js').default|null} */
+	#stateManager = null;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../core/SystemPolicies.js').SystemPolicies|null} */
+	#policyManager = null;
+	/** @private @type {import('../core/EventFlowEngine.js').EventFlowEngine|null} */
+	#eventFlowEngine = null;
+
+	/** @private @type {HTMLElement|null} */
+	#container = null;
+	/** @private @type {object|null} */
+	#appViewModel = null;
+	/** @private @type {object} */
+	#options = {};
+	/** @private @type {boolean} */
+	#isEnhanced = false;
+	/** @private @type {boolean} */
+	#isDragging = false;
+	/** @private @type {boolean} */
+	#isResizing = false;
+	/** @private @type {object|null} */
+	#currentDragItem = null;
+	/** @private @type {boolean} */
+	#performanceMode = false; // Start in full-feature mode
+	/** @private @type {Function[]} */
+	#unsubscribeFunctions = [];
+
 	/**
 	 * Creates an instance of EnhancedGridRenderer.
-	 * @param {object} gridOptions - The main configuration object for the grid.
-	 * @param {HTMLElement} gridOptions.container - The container element of the grid.
-	 * @param {object} gridOptions.appViewModel - The main application view model.
-	 * @param {object} [gridOptions.options] - Additional options for the renderer.
-	 * @param {Function} [gridOptions.options.onLayoutChange] - A callback function for layout persistence.
-	 * @param {boolean} [gridOptions.options.enableKeyboard=true] - Whether to enable keyboard accessibility features.
-	 * @param {boolean} [gridOptions.options.enableAria=true] - Whether to enable ARIA attributes for screen readers.
 	 * @param {import('../core/HybridStateManager.js').default} stateManager - The application's state manager.
 	 */
-	constructor(gridOptions, stateManager) {
-		this.gridOptions = gridOptions;
-		this.stateManager = stateManager;
-		this.container = gridOptions.container;
-		this.appViewModel = gridOptions.appViewModel;
-		this.options = {
-			onLayoutChange: null, // Callback for layout persistence
-			enableKeyboard: true, // Enable keyboard accessibility
-			enableAria: true, // Enable ARIA attributes
-			...gridOptions.options,
-		};
-		this.isEnhanced = false;
-		this.isDragging = false;
-		this.isResizing = false;
-		this.currentDragItem = null;
-		this.performanceMode = false; // Start in full-feature mode
-		this.unsubscribeFunctions = [];
-
-		this.init();
+	constructor(stateManager) {
+		this.#stateManager = stateManager;
+		this.#errorHelpers = stateManager.managers.errorHelpers;
+		this.#metrics =
+			stateManager.metricsRegistry?.namespace("grid.renderer");
+		this.#policyManager = stateManager.managers.policies;
+		this.#eventFlowEngine = stateManager.eventFlowEngine;
 	}
 
 	/**
-	 * Safely emits an event through the global `eventFlowEngine`.
-	 * @param {string} eventName - The name of the event to emit.
-	 * @param {object} detail - The data payload for the event.
-	 * @private
+	 * Initializes the grid enhancement. This method should be called after the main application view is ready.
+	 * @param {object} gridConfig - The configuration for this grid instance.
+	 * @param {HTMLElement} gridConfig.container - The container element of the grid.
+	 * @param {object} gridConfig.appViewModel - The main application view model.
+	 * @param {object} [gridConfig.options] - Additional options for the renderer.
 	 */
-	safeEmit(eventName, detail) {
-		if (typeof window.eventFlowEngine !== "undefined") {
-			window.eventFlowEngine.emit(eventName, detail);
+	initialize(gridConfig) {
+		if (this.#isEnhanced) {
+			console.warn("EnhancedGridRenderer is already initialized.");
+			return;
 		}
+
+		this.#container = gridConfig.container;
+		this.#appViewModel = gridConfig.appViewModel;
+		this.#options = {
+			onLayoutChange: null, // Callback for layout persistence
+			enableKeyboard: true, // Enable keyboard accessibility
+			enableAria: true, // Enable ARIA attributes
+			...gridConfig.options,
+		};
+
+		// Enhance existing grid container with modern CSS Grid
+		this.#setupModernGridStyles();
+		this.#setupPerformanceMonitoring();
+		this.#bindState();
+		this.#setupEventListeners();
+		this.#isEnhanced = true;
+
+		this.#metrics?.increment("grid.enhanced");
+		this.#eventFlowEngine?.emit("gridEnhanced", { renderer: this });
 	}
 
 	/**
 	 * Binds to state manager events to automatically refresh the grid on data changes.
 	 * @private
 	 */
-	bindState() {
-		const refresh = () => this.refresh?.();
-		this.stateManager.on?.("entitySaved", refresh);
-		this.stateManager.on?.("entityDeleted", refresh);
-		this.stateManager.on?.("syncCompleted", refresh);
-	}
-
-	/**
-	 * Initializes the grid enhancement by setting up styles, monitoring, and event listeners.
-	 * @private
-	 * @returns {void}
-	 */
-	init() {
-		// Enhance existing grid container with modern CSS Grid
-		this.setupModernGridStyles();
-		this.setupPerformanceMonitoring();
-		this.setupEventListeners();
-		this.isEnhanced = true;
-
-		this.safeEmit("gridEnhanced", { renderer: this });
+	#bindState() {
+		const refreshGrid = () => this.refresh();
+		if (this.#stateManager?.on) {
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.on("entitySaved", refreshGrid)
+			);
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.on("entityDeleted", refreshGrid)
+			);
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.on("syncCompleted", refreshGrid)
+			);
+		}
 	}
 
 	/**
 	 * Applies modern CSS Grid styles to the container and enhances existing grid blocks.
 	 * @private
-	 * @returns {void}
 	 */
-	setupModernGridStyles() {
+	#setupModernGridStyles() {
 		// Use CSS Grid while maintaining existing block structure
-		const existingBlocks = this.container.querySelectorAll(".grid-block");
+		const existingBlocks = this.#container.querySelectorAll(".grid-block");
 
 		// Apply modern grid template
-		this.container.style.display = "grid";
-		this.container.style.gridTemplateColumns = "repeat(24, 1fr)";
-		this.container.style.gridAutoRows = "60px";
-		this.container.style.gap = "16px";
+		this.#container.style.display = "grid";
+		this.#container.style.gridTemplateColumns = "repeat(24, 1fr)";
+		this.#container.style.gridAutoRows = "60px";
+		this.#container.style.gap = "16px";
 
 		// Enhance existing blocks with modern positioning
-		existingBlocks.forEach((block) => this.enhanceExistingBlock(block));
+		existingBlocks.forEach((block) => this.#enhanceExistingBlock(block));
 	}
 
 	/**
 	 * Enhances a single, existing grid block with modern positioning, accessibility features, and event handlers.
 	 * @private
 	 * @param {HTMLElement} blockEl - The DOM element of the grid block.
-	 * @returns {void}
 	 */
-	enhanceExistingBlock(blockEl) {
-		const blockData = this.getBlockDataFromElement(blockEl);
+	#enhanceExistingBlock(blockEl) {
+		const blockData = this.#getBlockDataFromElement(blockEl);
 		if (!blockData) return;
 
 		// Add modern grid positioning
@@ -127,19 +155,23 @@ export class EnhancedGridRenderer {
 		blockEl.classList.add("enhanced-grid-block");
 
 		// Add accessibility attributes
-		this.addAccessibilityFeatures(blockEl, blockData);
+		if (this.#options.enableAria) {
+			this.#addAccessibilityFeatures(blockEl, blockData);
+		}
 
 		// Enhance existing resize handle if present
 		const existingHandle = blockEl.querySelector(".resize-handle");
 		if (existingHandle) {
-			this.enhanceResizeHandle(existingHandle, blockData);
+			this.#enhanceResizeHandle(existingHandle, blockData);
 		}
 
 		// Add improved drag capabilities to existing drag handlers
-		this.enhanceDragCapabilities(blockEl, blockData);
+		this.#enhanceDragCapabilities(blockEl, blockData);
 
 		// Add keyboard support
-		this.addKeyboardSupport(blockEl, blockData);
+		if (this.#options.enableKeyboard) {
+			this.#addKeyboardSupport(blockEl, blockData);
+		}
 	}
 
 	/**
@@ -148,7 +180,7 @@ export class EnhancedGridRenderer {
 	 * @param {HTMLElement} blockEl - The grid block element.
 	 * @param {object} blockData - The data object for the block.
 	 */
-	addAccessibilityFeatures(blockEl, blockData) {
+	#addAccessibilityFeatures(blockEl, blockData) {
 		// ARIA attributes for screen readers
 		blockEl.setAttribute("role", "gridcell");
 		blockEl.setAttribute(
@@ -200,7 +232,7 @@ export class EnhancedGridRenderer {
 	 * @param {HTMLElement} blockEl - The grid block element.
 	 * @param {object} blockData - The data object for the block.
 	 */
-	addKeyboardSupport(blockEl, blockData) {
+	#addKeyboardSupport(blockEl, blockData) {
 		blockEl.addEventListener("keydown", (e) => {
 			if (!blockEl.matches(":focus")) return;
 
@@ -212,19 +244,19 @@ export class EnhancedGridRenderer {
 			if (!e.shiftKey) {
 				switch (e.key) {
 					case "ArrowLeft":
-						this.moveBlock(blockData, -moveStep, 0);
+						this.#moveBlock(blockData, -moveStep, 0);
 						handled = true;
 						break;
 					case "ArrowRight":
-						this.moveBlock(blockData, moveStep, 0);
+						this.#moveBlock(blockData, moveStep, 0);
 						handled = true;
 						break;
 					case "ArrowUp":
-						this.moveBlock(blockData, 0, -moveStep);
+						this.#moveBlock(blockData, 0, -moveStep);
 						handled = true;
 						break;
 					case "ArrowDown":
-						this.moveBlock(blockData, 0, moveStep);
+						this.#moveBlock(blockData, 0, moveStep);
 						handled = true;
 						break;
 				}
@@ -234,19 +266,19 @@ export class EnhancedGridRenderer {
 			if (e.shiftKey) {
 				switch (e.key) {
 					case "ArrowLeft":
-						this.resizeBlock(blockData, -resizeStep, 0);
+						this.#resizeBlock(blockData, -resizeStep, 0);
 						handled = true;
 						break;
 					case "ArrowRight":
-						this.resizeBlock(blockData, resizeStep, 0);
+						this.#resizeBlock(blockData, resizeStep, 0);
 						handled = true;
 						break;
 					case "ArrowUp":
-						this.resizeBlock(blockData, 0, -resizeStep);
+						this.#resizeBlock(blockData, 0, -resizeStep);
 						handled = true;
 						break;
 					case "ArrowDown":
-						this.resizeBlock(blockData, 0, resizeStep);
+						this.#resizeBlock(blockData, 0, resizeStep);
 						handled = true;
 						break;
 				}
@@ -262,7 +294,7 @@ export class EnhancedGridRenderer {
 				);
 
 				// Announce change to screen readers
-				this.announceChange(
+				this.#announceChange(
 					blockData,
 					e.shiftKey ? "resized" : "moved"
 				);
@@ -277,7 +309,7 @@ export class EnhancedGridRenderer {
 	 * @param {number} deltaX - The change in the x-coordinate.
 	 * @param {number} deltaY - The change in the y-coordinate.
 	 */
-	moveBlock(blockData, deltaX, deltaY) {
+	#moveBlock(blockData, deltaX, deltaY) {
 		const newX = Math.max(0, blockData.position.x + deltaX);
 		const newY = Math.max(0, blockData.position.y + deltaY);
 
@@ -286,7 +318,7 @@ export class EnhancedGridRenderer {
 			blockData.position.y = newY;
 
 			// Update visual position
-			const blockEl = this.container.querySelector(
+			const blockEl = this.#container.querySelector(
 				`[data-block-id="${blockData.blockId}"]`
 			);
 			if (blockEl) {
@@ -295,7 +327,7 @@ export class EnhancedGridRenderer {
 			}
 
 			// Save changes
-			this.appViewModel.gridLayoutViewModel.updatePositions([
+			this.#appViewModel.gridLayoutViewModel.updatePositions([
 				{
 					blockId: blockData.blockId,
 					x: newX,
@@ -305,7 +337,8 @@ export class EnhancedGridRenderer {
 				},
 			]);
 
-			this.triggerLayoutPersistence("keyboard_move", blockData);
+			this.#metrics?.increment("grid.keyboard_move");
+			this.#triggerLayoutPersistence("keyboard_move", blockData);
 		}
 	}
 
@@ -316,7 +349,7 @@ export class EnhancedGridRenderer {
 	 * @param {number} deltaW - The change in width.
 	 * @param {number} deltaH - The change in height.
 	 */
-	resizeBlock(blockData, deltaW, deltaH) {
+	#resizeBlock(blockData, deltaW, deltaH) {
 		const newW = Math.max(1, blockData.position.w + deltaW);
 		const newH = Math.max(1, blockData.position.h + deltaH);
 
@@ -325,7 +358,7 @@ export class EnhancedGridRenderer {
 			blockData.position.h = newH;
 
 			// Update visual size
-			const blockEl = this.container.querySelector(
+			const blockEl = this.#container.querySelector(
 				`[data-block-id="${blockData.blockId}"]`
 			);
 			if (blockEl) {
@@ -334,7 +367,7 @@ export class EnhancedGridRenderer {
 			}
 
 			// Save changes
-			this.appViewModel.gridLayoutViewModel.updatePositions([
+			this.#appViewModel.gridLayoutViewModel.updatePositions([
 				{
 					blockId: blockData.blockId,
 					x: blockData.position.x,
@@ -344,7 +377,8 @@ export class EnhancedGridRenderer {
 				},
 			]);
 
-			this.triggerLayoutPersistence("keyboard_resize", blockData);
+			this.#metrics?.increment("grid.keyboard_resize");
+			this.#triggerLayoutPersistence("keyboard_resize", blockData);
 		}
 	}
 
@@ -354,7 +388,7 @@ export class EnhancedGridRenderer {
 	 * @param {object} blockData - The data for the changed block.
 	 * @param {string} action - The action that was performed (e.g., 'moved', 'resized').
 	 */
-	announceChange(blockData, action) {
+	#announceChange(blockData, action) {
 		// Create live region for screen reader announcements
 		let liveRegion = document.getElementById("grid-live-region");
 		if (!liveRegion) {
@@ -385,13 +419,13 @@ export class EnhancedGridRenderer {
 	 * @param {HTMLElement} blockEl - The grid block element.
 	 * @returns {object|null} The block's data object, or null if not found.
 	 */
-	getBlockDataFromElement(blockEl) {
+	#getBlockDataFromElement(blockEl) {
 		// Extract block data using existing patterns from main-view.js
 		const blockId = blockEl.dataset.blockId;
 		if (!blockId) return null;
 
 		const currentLayout =
-			this.appViewModel.gridLayoutViewModel.getCurrentLayout();
+			this.#appViewModel.gridLayoutViewModel.getCurrentLayout();
 		return currentLayout?.blocks.find((b) => b.blockId === blockId);
 	}
 
@@ -401,7 +435,7 @@ export class EnhancedGridRenderer {
 	 * @param {HTMLElement} handle - The resize handle element.
 	 * @param {object} blockData - The data for the block.
 	 */
-	enhanceResizeHandle(handle, blockData) {
+	#enhanceResizeHandle(handle, blockData) {
 		// Enhance existing resize handle with improved UX
 		handle.style.cssText += `
       width: 16px;
@@ -419,7 +453,7 @@ export class EnhancedGridRenderer {
 			handle.style.opacity = "0.7";
 		});
 		blockEl.addEventListener("mouseleave", () => {
-			if (!this.isResizing) {
+			if (!this.#isResizing) {
 				handle.style.opacity = "0";
 			}
 		});
@@ -431,15 +465,15 @@ export class EnhancedGridRenderer {
 	 * @param {HTMLElement} blockEl - The grid block element.
 	 * @param {object} blockData - The data for the block.
 	 */
-	enhanceDragCapabilities(blockEl, blockData) {
+	#enhanceDragCapabilities(blockEl, blockData) {
 		// Enhance existing drag with modern techniques while maintaining compatibility
 		const existingDragHandler = blockEl.onmousedown;
 
 		const enhancedDragStart = (e) => {
 			if (e.target.classList.contains("resize-handle")) return;
 
-			this.isDragging = true;
-			this.currentDragItem = { element: blockEl, data: blockData };
+			this.#isDragging = true;
+			this.#currentDragItem = { element: blockEl, data: blockData };
 
 			// Add visual feedback
 			blockEl.style.transform = "rotate(1deg)";
@@ -447,8 +481,8 @@ export class EnhancedGridRenderer {
 			blockEl.style.zIndex = "1000";
 			blockEl.style.transition = "none";
 
-			// Emit event for analytics/audit (follows existing EventBus pattern)
-			this.safeEmit("blockDragStart", {
+			// Emit event for analytics/audit
+			this.#eventFlowEngine?.emit("blockDragStart", {
 				blockId: blockData.blockId,
 				position: blockData.position,
 			});
@@ -465,9 +499,8 @@ export class EnhancedGridRenderer {
 	/**
 	 * Sets up performance monitoring to automatically adjust grid features based on frame rate.
 	 * @private
-	 * @returns {void}
 	 */
-	setupPerformanceMonitoring() {
+	#setupPerformanceMonitoring() {
 		// Respects existing performance boundaries from the philosophy
 		let frameCount = 0;
 		let lastFrameTime = DateCore.timestamp();
@@ -480,19 +513,21 @@ export class EnhancedGridRenderer {
 				const fps = frameCount / ((now - lastFrameTime) / 1000);
 
 				// Check policy override before auto-adjusting performance mode
-				const manualOverride = this.checkPerformancePolicyOverride();
+				const manualOverride = this.#checkPerformancePolicyOverride();
 
-				if (!manualOverride) {
+				if (manualOverride === null) {
+					// null means 'auto'
 					// Adjust performance mode based on FPS (follows robustness principle)
-					if (fps < 30 && !this.performanceMode) {
-						this.safeEmit("gridPerformanceMode", {
+					if (fps < 30 && !this.#performanceMode) {
+						this.#enablePerformanceMode();
+						this.#eventFlowEngine?.emit("gridPerformanceMode", {
 							fps,
 							enabled: true,
 							reason: "auto",
 						});
-					} else if (fps > 50 && this.performanceMode) {
-						this.disablePerformanceMode();
-						this.safeEmit("gridPerformanceMode", {
+					} else if (fps > 50 && this.#performanceMode) {
+						this.#disablePerformanceMode();
+						this.#eventFlowEngine?.emit("gridPerformanceMode", {
 							fps,
 							enabled: false,
 							reason: "auto",
@@ -504,28 +539,28 @@ export class EnhancedGridRenderer {
 				lastFrameTime = now;
 			}
 
-			if (this.isDragging || this.isResizing) {
+			if (this.#isDragging || this.#isResizing) {
 				requestAnimationFrame(monitorFrame);
 			}
 		};
 
-		if (window.eventFlowEngine) {
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on("blockDragStart", () =>
+		if (this.#eventFlowEngine) {
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on("blockDragStart", () =>
 					requestAnimationFrame(monitorFrame)
 				)
 			);
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on("blockResizeStart", () =>
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on("blockResizeStart", () =>
 					requestAnimationFrame(monitorFrame)
 				)
 			);
 
 			// Listen for policy changes to update performance mode
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on(
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on(
 					"policyChanged",
-					this.onPerformancePolicyChanged.bind(this)
+					this.#onPerformancePolicyChanged.bind(this)
 				)
 			);
 		}
@@ -534,34 +569,35 @@ export class EnhancedGridRenderer {
 	/**
 	 * Checks system policies to see if performance mode has been manually overridden by the user.
 	 * @private
-	 * @returns {boolean} `true` if a manual override is active.
+	 * @returns {boolean|null} `true` for forced on, `false` for forced off, `null` for auto.
 	 */
-	checkPerformancePolicyOverride() {
-		// Hook into existing SystemPolicies pattern
+	#checkPerformancePolicyOverride() {
 		try {
-			// Check if user has manually set performance mode policy
-			const manualMode = this.appViewModel?.context?.getPolicy?.(
+			const manualMode = this.#policyManager?.getPolicy(
 				"system",
 				"grid_performance_mode"
 			);
-			if (manualMode !== undefined && manualMode !== null) {
-				if (manualMode !== this.performanceMode) {
-					if (manualMode) {
-						this.enablePerformanceMode();
-					} else {
-						this.disablePerformanceMode();
-					}
-					this.safeEmit("gridPerformanceMode", {
-						enabled: manualMode,
-						reason: "policy_override",
-					});
+
+			if (manualMode !== null && manualMode !== this.#performanceMode) {
+				if (manualMode) {
+					this.#enablePerformanceMode();
+				} else {
+					this.#disablePerformanceMode();
 				}
-				return true; // Manual override active
+				this.#eventFlowEngine?.emit("gridPerformanceMode", {
+					enabled: manualMode,
+					reason: "policy_override",
+				});
 			}
+			return manualMode;
 		} catch (error) {
-			console.warn("Could not check performance policy:", error);
+			this.#errorHelpers?.handleError(error, {
+				component: "EnhancedGridRenderer",
+				operation: "checkPerformancePolicyOverride",
+				severity: "low",
+			});
+			return null; // Default to auto mode on error
 		}
-		return false; // No manual override, use auto mode
 	}
 
 	/**
@@ -569,10 +605,10 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {object} data - The policy change event data.
 	 */
-	onPerformancePolicyChanged(data) {
+	#onPerformancePolicyChanged(data) {
 		// React to policy changes in real-time
 		if (data.domain === "system" && data.key === "grid_performance_mode") {
-			this.checkPerformancePolicyOverride();
+			this.#checkPerformancePolicyOverride();
 		}
 	}
 
@@ -580,54 +616,57 @@ export class EnhancedGridRenderer {
 	 * Enables performance mode, reducing visual effects to improve frame rate.
 	 * @private
 	 */
-	enablePerformanceMode() {
-		// Reduce visual effects during performance constraints
-		this.container.classList.add("performance-mode");
-		this.performanceMode = true;
+	#enablePerformanceMode() {
+		if (this.#performanceMode) return;
+		this.#container.classList.add("performance-mode");
+		this.#performanceMode = true;
+		this.#metrics?.increment("performance_mode.toggled", { status: "on" });
 	}
 
 	/**
 	 * Disables performance mode, restoring full visual features.
 	 * @private
 	 */
-	disablePerformanceMode() {
-		this.container.classList.remove("performance-mode");
-		this.performanceMode = false;
+	#disablePerformanceMode() {
+		if (!this.#performanceMode) return;
+		this.#container.classList.remove("performance-mode");
+		this.#performanceMode = false;
+		this.#metrics?.increment("performance_mode.toggled", { status: "off" });
 	}
 
 	/**
 	 * Sets up global event listeners for drag/resize operations and for events from the core system.
 	 * @private
 	 */
-	setupEventListeners() {
+	#setupEventListeners() {
 		// Global mouse handlers for enhanced drag/resize
 		document.addEventListener(
 			"mousemove",
-			this.handleGlobalMouseMove.bind(this)
+			this.#handleGlobalMouseMove.bind(this)
 		);
 		document.addEventListener(
 			"mouseup",
-			this.handleGlobalMouseUp.bind(this)
+			this.#handleGlobalMouseUp.bind(this)
 		);
 
-		// Listen to existing events from the new EventFlowEngine
-		if (window.eventFlowEngine) {
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on(
+		// Listen to events from the EventFlowEngine
+		if (this.#eventFlowEngine) {
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on(
 					"gridRendered",
-					this.onGridRendered.bind(this)
+					this.#onGridRendered.bind(this)
 				)
 			);
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on(
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on(
 					"blockAdded",
-					this.onBlockAdded.bind(this)
+					this.#onBlockAdded.bind(this)
 				)
 			);
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on(
+			this.#unsubscribeFunctions.push(
+				this.#eventFlowEngine.on(
 					"blockRemoved",
-					this.onBlockRemoved.bind(this)
+					this.#onBlockRemoved.bind(this)
 				)
 			);
 		}
@@ -638,11 +677,11 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {MouseEvent} e - The mouse move event.
 	 */
-	handleGlobalMouseMove(e) {
-		if (!this.isDragging && !this.isResizing) return;
+	#handleGlobalMouseMove(e) {
+		if (!this.#isDragging && !this.#isResizing) return;
 
-		if (this.isDragging && this.currentDragItem) {
-			this.handleEnhancedDrag(e);
+		if (this.#isDragging && this.#currentDragItem) {
+			this.#handleEnhancedDrag(e);
 		}
 	}
 
@@ -651,9 +690,9 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {MouseEvent} e - The mouse move event.
 	 */
-	handleEnhancedDrag(e) {
+	#handleEnhancedDrag(e) {
 		// Enhanced drag with snap-to-grid and visual feedback
-		const rect = this.container.getBoundingClientRect();
+		const rect = this.#container.getBoundingClientRect();
 		const x = e.clientX - rect.left;
 		const y = e.clientY - rect.top;
 
@@ -664,7 +703,7 @@ export class EnhancedGridRenderer {
 		const gridY = Math.max(0, Math.floor(y / cellHeight));
 
 		// Visual preview of new position
-		const { element, data } = this.currentDragItem;
+		const { element, data } = this.#currentDragItem;
 		element.style.gridColumnStart = gridX + 1;
 		element.style.gridRowStart = gridY + 1;
 
@@ -678,12 +717,12 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {MouseEvent} e - The mouse up event.
 	 */
-	handleGlobalMouseUp(e) {
-		if (this.isDragging) {
-			this.endEnhancedDrag(e);
+	#handleGlobalMouseUp(e) {
+		if (this.#isDragging) {
+			this.#endEnhancedDrag(e);
 		}
-		if (this.isResizing) {
-			this.endEnhancedResize(e);
+		if (this.#isResizing) {
+			this.#endEnhancedResize(e);
 		}
 	}
 
@@ -692,10 +731,10 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {MouseEvent} e - The mouse up event.
 	 */
-	endEnhancedDrag(e) {
-		if (!this.currentDragItem) return;
+	#endEnhancedDrag(e) {
+		if (!this.#currentDragItem) return;
 
-		const { element, data } = this.currentDragItem;
+		const { element, data } = this.#currentDragItem;
 
 		// Reset visual enhancements
 		element.style.transform = "";
@@ -704,7 +743,7 @@ export class EnhancedGridRenderer {
 		element.style.transition = "";
 
 		// Save position using existing ViewModel pattern
-		this.appViewModel.gridLayoutViewModel.updatePositions([
+		this.#appViewModel.gridLayoutViewModel.updatePositions([
 			{
 				blockId: data.blockId,
 				x: data.position.x,
@@ -714,17 +753,18 @@ export class EnhancedGridRenderer {
 			},
 		]);
 
-		// Emit completion event (follows existing EventBus pattern)
-		this.safeEmit("blockDragEnd", {
+		// Emit completion event
+		this.#eventFlowEngine?.emit("blockDragEnd", {
 			blockId: data.blockId,
 			position: data.position,
 		});
 
-		// Trigger layout change persistence if HybridStateManager available
-		this.triggerLayoutPersistence("drag", data);
+		// Trigger layout change persistence
+		this.#metrics?.increment("grid.drag");
+		this.#triggerLayoutPersistence("drag", data);
 
-		this.isDragging = false;
-		this.currentDragItem = null;
+		this.#isDragging = false;
+		this.#currentDragItem = null;
 	}
 
 	/**
@@ -732,13 +772,13 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {MouseEvent} e - The mouse up event.
 	 */
-	endEnhancedResize(e) {
+	#endEnhancedResize(e) {
 		// Similar pattern for resize end
 		if (this.resizeItem) {
 			const data = this.resizeItem;
 
 			// Save using existing ViewModel
-			this.appViewModel.gridLayoutViewModel.updatePositions([
+			this.#appViewModel.gridLayoutViewModel.updatePositions([
 				{
 					blockId: data.blockId,
 					x: data.position.x,
@@ -749,13 +789,14 @@ export class EnhancedGridRenderer {
 			]);
 
 			// Trigger layout change persistence
-			this.triggerLayoutPersistence("resize", data);
+			this.#metrics?.increment("grid.resize");
+			this.#triggerLayoutPersistence("resize", data);
 		}
 
-		this.safeEmit("blockResizeEnd", {
+		this.#eventFlowEngine?.emit("blockResizeEnd", {
 			/* resize data */
 		});
-		this.isResizing = false;
+		this.#isResizing = false;
 	}
 
 	/**
@@ -764,7 +805,7 @@ export class EnhancedGridRenderer {
 	 * @param {string} changeType - The type of change that occurred (e.g., 'drag', 'resize').
 	 * @param {object} blockData - The data for the changed block.
 	 */
-	triggerLayoutPersistence(changeType, blockData) {
+	#triggerLayoutPersistence(changeType, blockData) {
 		// Hook into HybridStateManager for instant persistence
 		try {
 			const layoutChangeEvent = {
@@ -773,27 +814,30 @@ export class EnhancedGridRenderer {
 				blockId: blockData.blockId,
 				position: { ...blockData.position },
 				timestamp: DateCore.timestamp(),
-				userId: this.appViewModel?.getCurrentUser?.()?.id,
+				userId: this.#appViewModel?.getCurrentUser?.()?.id,
 			};
 
 			// Emit for any listeners (audit, analytics, etc.)
-			this.safeEmit("layoutChanged", layoutChangeEvent);
+			this.#eventFlowEngine?.emit("layoutChanged", layoutChangeEvent);
 
 			// If onLayoutChange callback provided, use it
-			if (this.options?.onLayoutChange) {
-				this.options.onLayoutChange(layoutChangeEvent);
+			if (this.#options?.onLayoutChange) {
+				this.#options.onLayoutChange(layoutChangeEvent);
 			}
 
-			// Try to persist via HybridStateManager if available
-			if (this.appViewModel?.hybridStateManager) {
-				this.appViewModel.hybridStateManager.recordOperation({
-					type: "grid_layout_change",
-					data: layoutChangeEvent,
-				});
-			}
+			// Persist via HybridStateManager
+			this.#stateManager?.recordOperation({
+				type: "grid_layout_change",
+				data: layoutChangeEvent,
+			});
 		} catch (error) {
-			console.warn("Layout persistence failed:", error);
-			// Don't throw - grid should work even if persistence fails
+			this.#metrics?.increment("layout_persistence.failed");
+			this.#errorHelpers?.handleError(error, {
+				component: "EnhancedGridRenderer",
+				operation: "triggerLayoutPersistence",
+				userFriendlyMessage: "Could not save layout change.",
+				showToUser: false, // Or true, depending on policy
+			});
 		}
 	}
 
@@ -803,14 +847,14 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {object[]} blocks - An array of block data objects that were rendered.
 	 */
-	onGridRendered(blocks) {
+	#onGridRendered(blocks) {
 		// Re-enhance any new blocks that were rendered
 		blocks.forEach((blockData) => {
-			const blockEl = this.container.querySelector(
+			const blockEl = this.#container.querySelector(
 				`[data-block-id="${blockData.blockId}"]`
 			);
 			if (blockEl && !blockEl.classList.contains("enhanced-grid-block")) {
-				this.enhanceExistingBlock(blockEl);
+				this.#enhanceExistingBlock(blockEl);
 			}
 		});
 	}
@@ -820,14 +864,14 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {object} blockData - The data for the newly added block.
 	 */
-	onBlockAdded(blockData) {
+	#onBlockAdded(blockData) {
 		// Enhance newly added blocks
 		setTimeout(() => {
-			const blockEl = this.container.querySelector(
+			const blockEl = this.#container.querySelector(
 				`[data-block-id="${blockData.blockId}"]`
 			);
 			if (blockEl) {
-				this.enhanceExistingBlock(blockEl);
+				this.#enhanceExistingBlock(blockEl);
 			}
 		}, 0);
 	}
@@ -837,22 +881,36 @@ export class EnhancedGridRenderer {
 	 * @private
 	 * @param {object} blockData - The data for the removed block.
 	 */
-	onBlockRemoved(blockData) {
+	#onBlockRemoved(blockData) {
 		// Cleanup if needed (follows robustness principle)
-		if (this.currentDragItem?.data.blockId === blockData.blockId) {
-			this.isDragging = false;
-			this.currentDragItem = null;
+		if (this.#currentDragItem?.data.blockId === blockData.blockId) {
+			this.#isDragging = false;
+			this.#currentDragItem = null;
 		}
 	}
 
 	// Public API that integrates with existing system
 	/**
+	 * Refreshes the grid by re-applying styles and enhancements to all blocks.
+	 * This is useful when underlying data changes require a full re-render.
+	 * @public
+	 */
+	refresh() {
+		this.#metrics?.increment("grid.refreshed");
+		this.#setupModernGridStyles();
+	}
+
+	/**
 	 * Re-enables the grid enhancements if they have been disabled.
 	 * @public
 	 */
 	enhance() {
-		if (!this.isEnhanced) {
-			this.init();
+		if (!this.#isEnhanced) {
+			this.initialize({
+				container: this.#container,
+				appViewModel: this.#appViewModel,
+				options: this.#options,
+			});
 		}
 	}
 
@@ -861,30 +919,35 @@ export class EnhancedGridRenderer {
 	 * @public
 	 */
 	disable() {
-		this.container.style.display = "";
-		this.container.classList.remove("performance-mode");
+		if (!this.#isEnhanced) return;
 
-		const blocks = this.container.querySelectorAll(".enhanced-grid-block");
+		this.#container.style.display = "";
+		this.#container.classList.remove("performance-mode");
+
+		const blocks = this.#container.querySelectorAll(".enhanced-grid-block");
 		blocks.forEach((block) => {
 			block.classList.remove("enhanced-grid-block");
 			block.style.gridColumnStart = "";
 			block.style.gridRowStart = "";
 			block.style.gridColumnEnd = "";
 			block.style.gridRowEnd = "";
+			// Further cleanup of event listeners and attributes would be needed for a full revert
 		});
 
-		this.isEnhanced = false;
-		this.safeEmit("gridEnhancementDisabled");
+		this.#isEnhanced = false;
+		this.#eventFlowEngine?.emit("gridEnhancementDisabled");
 	}
 
 	// Utility methods for external use
 	/**
 	 * Gets the current layout data from the application's view model.
 	 * @public
-	 * @returns {object} The current layout object.
+	 * @returns {object|null} The current layout object.
 	 */
 	getCurrentLayout() {
-		return this.appViewModel.gridLayoutViewModel.getCurrentLayout();
+		return (
+			this.#appViewModel?.gridLayoutViewModel.getCurrentLayout() ?? null
+		);
 	}
 
 	/**
@@ -895,11 +958,10 @@ export class EnhancedGridRenderer {
 	 * @param {number} y - The new y-coordinate.
 	 * @param {number} width - The new width.
 	 * @param {number} height - The new height.
-	 * @returns {void}
 	 */
 	updateBlockPosition(blockId, x, y, width, height) {
 		// Provides external API while using existing ViewModel
-		return this.appViewModel.gridLayoutViewModel.updatePositions([
+		this.#appViewModel?.gridLayoutViewModel.updatePositions([
 			{
 				blockId,
 				x,
@@ -915,8 +977,9 @@ export class EnhancedGridRenderer {
 	 * @public
 	 */
 	destroy() {
-		this.unsubscribeFunctions.forEach((unsubscribe) => unsubscribe());
-		this.unsubscribeFunctions = [];
+		this.disable();
+		this.#unsubscribeFunctions.forEach((unsubscribe) => unsubscribe());
+		this.#unsubscribeFunctions = [];
 	}
 }
 
@@ -929,6 +992,7 @@ export const ENHANCED_GRID_STYLES = `
 .enhanced-grid-block {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   will-change: transform;
+// Auto-inject styles if in browser environment
 }
 
 .enhanced-grid-block:hover {
@@ -975,7 +1039,7 @@ export const ENHANCED_GRID_STYLES = `
     height: 20px;
     opacity: 0.7;
   }
-  
+
   /* Larger touch targets for accessibility */
   .enhanced-grid-block:focus {
     outline-width: 4px;
@@ -994,7 +1058,7 @@ export const ENHANCED_GRID_STYLES = `
   .enhanced-grid-block {
     transition: none;
   }
-  
+
   .enhanced-grid-block:hover {
     transform: none;
   }
@@ -1003,9 +1067,13 @@ export const ENHANCED_GRID_STYLES = `
 
 // Auto-inject styles if in browser environment
 if (typeof document !== "undefined") {
-	const styleSheet = document.createElement("style");
-	styleSheet.textContent = ENHANCED_GRID_STYLES;
-	document.head.appendChild(styleSheet);
+	```<!--
+```;
+	const styleId = "enhanced-grid-styles";
+	if (!document.getElementById(styleId)) {
+		const style = document.createElement("style");
+		style.id = styleId;
+		style.textContent = ENHANCED_GRID_STYLES;
+		document.head.appendChild(style);
+	}
 }
-
-export default EnhancedGridRenderer;

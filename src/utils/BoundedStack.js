@@ -6,18 +6,18 @@ import { DateCore } from "./DateUtils.js"; // DateCore is now the lean, integrat
  * the oldest items are automatically evicted. This is ideal for managing undo/redo history
  * or any list of operations where only a limited history is needed.
  *
+ * @privateFields {#maxSize, #items, #evictionCount, #stateManager, #metricsRegistry, #name, #AppError}
  * @template T The type of data stored in the stack.
  */
 export class BoundedStack {
 	// V8.0 Parity: Use private fields for true encapsulation.
 	#maxSize;
 	#items = [];
+	/** @type {number} */
 	#evictionCount = 0;
 	#stateManager;
 	#metricsRegistry;
 	#name;
-	/** @private */
-	#AppError;
 
 	/**
 	 * Creates an instance of BoundedStack.
@@ -32,7 +32,8 @@ export class BoundedStack {
 			!Number.isInteger(maxSize) ||
 			maxSize <= 0
 		) {
-			// AppError might not be available yet, this is a startup error.
+			// This is a critical configuration error during instantiation.
+			// A standard Error is appropriate as `stateManager` and its helpers may not be available yet.
 			throw new Error("BoundedStack maxSize must be a positive integer.");
 		}
 
@@ -40,20 +41,15 @@ export class BoundedStack {
 
 		// V8.0 Parity: Derive all dependencies from the stateManager.
 		this.#stateManager = stateManager;
-		this.#name = options.name || "";
-		const metricsRegistry = this.#stateManager?.metricsRegistry;
+		this.#name = options.name || "unnamed";
 
 		// Use a namespaced registry if provided, otherwise use the main one
-		if (metricsRegistry && this.#name) {
-			this.#metricsRegistry = metricsRegistry.namespace(
-				`stack.${this.#name}`
-			);
-		} else if (metricsRegistry) {
-			this.#metricsRegistry = metricsRegistry;
+		if (this.#stateManager?.metricsRegistry) {
+			this.#metricsRegistry =
+				this.#stateManager.metricsRegistry.namespace(
+					`stack.${this.#name}`
+				);
 		}
-
-		this.#AppError =
-			this.#stateManager?.managers?.errorHelpers?.AppError || Error;
 	}
 
 	/**
@@ -67,7 +63,7 @@ export class BoundedStack {
 		const stackItem = {
 			data: item,
 			timestamp: DateCore.timestamp(),
-			id: this.generateItemId(),
+			id: this.#generateItemId(),
 		};
 
 		this.#items.push(stackItem);
@@ -80,7 +76,7 @@ export class BoundedStack {
 
 			this.#metricsRegistry?.increment("evictions");
 			// Notify about eviction for cleanup if a callback is set
-			this.handleEviction(evicted, "capacity");
+			this.#handleEviction(evicted, "capacity");
 		}
 
 		return stackItem.id;
@@ -231,69 +227,7 @@ export class BoundedStack {
 					? DateCore.timestamp() -
 						this.#items[this.#items.length - 1].timestamp
 					: 0,
-			memoryEstimate: this.estimateMemoryUsage(),
 		};
-	}
-
-	/**
-	 * Estimates the current memory usage of the stack in bytes.
-	 * @private
-	 * @returns {number} The estimated memory usage in bytes.
-	 */
-	estimateMemoryUsage() {
-		if (this.#items.length === 0) return 0;
-
-		// Rough estimate:
-		// - Each item wrapper: ~100 bytes
-		// - Each data object: variable (try to estimate)
-		const wrapperOverhead = this.#items.length * 100;
-
-		let dataSize = 0;
-		for (const item of this.#items) {
-			dataSize += this.estimateObjectSize(item.data);
-		}
-
-		return wrapperOverhead + dataSize;
-	}
-
-	/**
-	 * Provides a rough estimation of an object's size in bytes.
-	 * @private
-	 * @param {*} obj - The object to estimate the size of.
-	 * @returns {number} The estimated size in bytes.
-	 */
-	estimateObjectSize(obj) {
-		if (obj === null || obj === undefined) return 0;
-
-		if (typeof obj === "string") {
-			return obj.length * 2; // 2 bytes per character for UTF-16
-		}
-
-		if (typeof obj === "number") {
-			return 8; // 64-bit number
-		}
-
-		if (typeof obj === "boolean") {
-			return 4;
-		}
-
-		if (Array.isArray(obj)) {
-			return obj.reduce(
-				(sum, item) => sum + this.estimateObjectSize(item),
-				0
-			);
-		}
-
-		if (typeof obj === "object") {
-			let size = 0;
-			for (const [key, value] of Object.entries(obj)) {
-				size += key.length * 2; // Key size
-				size += this.estimateObjectSize(value); // Value size
-			}
-			return size;
-		}
-
-		return 100; // Default estimate for unknown types
 	}
 
 	/**
@@ -301,8 +235,8 @@ export class BoundedStack {
 	 * @private
 	 * @returns {string} A unique identifier string.
 	 */
-	generateItemId() {
-		return `stack_${DateCore.timestamp()}_${Math.random().toString(36).substr(2, 9)}`;
+	#generateItemId() {
+		return `stk_${crypto.randomUUID()}`;
 	}
 
 	/**
@@ -342,7 +276,7 @@ export class BoundedStack {
 		const removeCount = this.#items.length - newSize;
 		const removed = this.#items.splice(0, removeCount);
 		this.#evictionCount += removed.length;
-		removed.forEach((item) => this.handleEviction(item, "trim"));
+		removed.forEach((item) => this.#handleEviction(item, "trim"));
 		this.#metricsRegistry?.increment("evictions", removed.length);
 
 		return removed.length;
@@ -379,8 +313,8 @@ export class BoundedStack {
 		) {
 			const evicted = this.#items.shift();
 			removeCount++;
-			this.#evictionCount++;
-			this.handleEviction(evicted, "age");
+			this.#evictionCount++; // Already incremented above
+			this.#handleEviction(evicted, "age");
 			this.#metricsRegistry?.increment("evictions", removeCount);
 		}
 
@@ -393,15 +327,27 @@ export class BoundedStack {
 	 * @param {object} evictedItem - The item that was evicted.
 	 * @param {string} reason - The reason for eviction ('capacity', 'trim', 'age').
 	 */
-	handleEviction(evictedItem, reason) {
+	#handleEviction(evictedItem, reason) {
+		const eventPayload = {
+			timestamp: DateCore.now(),
+			source: `stack:${this.#name}`,
+			reason,
+			item: evictedItem,
+		};
+
 		// V8.0 Parity: Emit to the central stateManager event bus.
 		if (this.#stateManager) {
-			this.#stateManager.emit("stack_eviction", {
-				timestamp: DateCore.now(),
-				source: `stack:${this.#name || "unnamed"}`,
-				reason,
-				item: evictedItem,
-			});
+			this.#stateManager.emit("stack_eviction", eventPayload);
+
+			// Mandate 2.4: If the forensic logger is available, create an audit event.
+			// This is useful for debugging complex state changes and potential data loss.
+			const forensicLogger = this.#stateManager.managers?.forensicLogger;
+			if (forensicLogger) {
+				forensicLogger.logAuditEvent(
+					"STACK_ITEM_EVICTED",
+					eventPayload
+				);
+			}
 		}
 	}
 }

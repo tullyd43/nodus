@@ -322,6 +322,30 @@ export class SystemPolicies {
 	}
 
 	/**
+	 * Registers multiple policy definitions at once.
+	 * @param {object} definitions - An object where keys are policy paths (e.g., 'system.new_policy') and values are definition objects.
+	 */
+	registerPolicyDefinitions(definitions) {
+		for (const [key, definition] of Object.entries(definitions)) {
+			// This is a simplified registration. A real implementation might merge into DEFAULT_POLICIES
+			// or a separate definitions map before loading.
+			const [domain, policyKey] = key.split(".");
+			if (domain && policyKey && !this.#policies[domain]?.[policyKey]) {
+				if (!this.#policies[domain]) this.#policies[domain] = {};
+				this.#policies[domain][policyKey] = definition.default;
+			}
+		}
+	}
+
+	/**
+	 * Registers multiple policy validators at once.
+	 * @param {object} validators - An object where keys are policy paths and values are validator functions.
+	 */
+	registerPolicyValidators(validators) {
+		Object.assign(POLICY_VALIDATORS, validators);
+	}
+
+	/**
 	 * Retrieves the full policies object from the in-memory cache.
 	 * @returns {object|null} The cached policies object, or null if not found.
 	 */

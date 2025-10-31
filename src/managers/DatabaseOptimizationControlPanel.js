@@ -7,35 +7,46 @@
  * and monitoring the `DatabaseOptimizer`. It displays metrics, suggestions, and allows administrators
  * to apply or roll back optimizations.
  */
+
 export class DatabaseOptimizationControlPanel {
 	/**
+	 * @privateFields {#optimizer, #container, #currentView, #refreshInterval, #data, #updateInterval, #metrics, #logger}
+	 */
+
+	/** @private @type {import('../core/DatabaseOptimizer.js').DatabaseOptimizer} */
+	#optimizer;
+	/** @private @type {HTMLElement} */
+	#container;
+	/** @private @type {string} */
+	#currentView = "dashboard";
+	/** @private @type {number|null} */
+	#refreshInterval = null;
+	/** @private @type {object} */
+	#data = {
+		dashboard: null,
+		suggestions: [],
+		health: null,
+	};
+	// Real-time update settings
+	/** @private @type {number} */
+	#updateInterval = 30000; // 30 seconds
+	#metrics;
+	/** @private @type {import('../utils/ForensicLogger.js').ForensicLogger|null} */
+	#logger;
+
+	/**
 	 * Creates an instance of DatabaseOptimizationControlPanel.
-	 * @param {import('../core/DatabaseOptimizer.js').DatabaseOptimizer} optimizer - The DatabaseOptimizer instance to manage.
+	 * @param {object} context - The global application context.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 * @param {HTMLElement} container - The DOM element to render the control panel into.
 	 */
-	constructor(optimizer, container) {
-		/** @type {import('../core/DatabaseOptimizer.js').DatabaseOptimizer} */
-		this.optimizer = optimizer;
-		/** @type {HTMLElement} */
-		this.container = container;
-		/** @type {string} */
-		this.currentView = "dashboard";
-		/** @type {number|null} */
-		this.refreshInterval = null;
-		/** @type {object} */
-		this.data = {
-			dashboard: null,
-			suggestions: [],
-			applied: [],
-			metrics: null,
-			health: null,
-		};
-
-		// Real-time update settings
-		/** @type {number} */
-		this.updateInterval = 30000; // 30 seconds
-		/** @type {object} */
-		this.charts = {};
+	constructor({ stateManager }, container) {
+		this.#optimizer = stateManager.databaseOptimizer;
+		this.#container = container;
+		this.#metrics = stateManager.metricsRegistry?.namespace(
+			"dbOptimizationControlPanel"
+		);
+		this.#logger = stateManager.forensicLogger;
 	}
 
 	/**
@@ -46,8 +57,8 @@ export class DatabaseOptimizationControlPanel {
 	 */
 	async initialize() {
 		try {
-			console.log(
-				"🎛️ Initializing Database Optimization Control Panel..."
+			this.#logger.log(
+				"Initializing Database Optimization Control Panel..."
 			);
 
 			this.render();
@@ -55,9 +66,8 @@ export class DatabaseOptimizationControlPanel {
 			this.setupEventListeners();
 			this.startRealTimeUpdates();
 
-			console.log("✅ Control Panel initialized");
+			this.#logger.log("Control Panel initialized");
 		} catch (error) {
-			console.error("Failed to initialize control panel:", error);
 			this.showError("Failed to initialize control panel", error.message);
 		}
 	}
@@ -68,7 +78,7 @@ export class DatabaseOptimizationControlPanel {
 	 * @public
 	 */
 	render() {
-		this.container.innerHTML = `
+		this.#container.innerHTML = `
       <div class="db-optimization-panel">
         <!-- Header -->
         <div class="panel-header">
@@ -525,7 +535,7 @@ export class DatabaseOptimizationControlPanel {
     `;
 
 		// Set up global click handlers
-		this.container.addEventListener("click", (e) => {
+		this.#container.addEventListener("click", (e) => {
 			if (e.target.matches("[onclick]")) {
 				const method = e.target
 					.getAttribute("onclick")
@@ -545,27 +555,27 @@ export class DatabaseOptimizationControlPanel {
 	 */
 	async loadAllData() {
 		try {
+			this.#metrics?.increment("data.load.attempt");
 			const [dashboard, suggestions, applied, metrics, health] =
 				await Promise.all([
 					this.loadDashboardData(),
-					this.optimizer.getPendingSuggestions(),
-					this.optimizer.getAppliedOptimizations(),
-					this.optimizer.getEnhancedMetrics(),
-					this.optimizer.getHealthStatus(),
+					this.#optimizer.getPendingSuggestions(),
+					this.#optimizer.getAppliedOptimizations(),
+					this.#optimizer.getEnhancedMetrics(),
+					this.#optimizer.getHealthStatus(),
 				]);
 
-			this.data = { dashboard, suggestions, applied, metrics, health };
+			this.#data = { dashboard, suggestions, applied, metrics, health };
 			this.updateHealthIndicator();
 			this.updateBadges();
 			this.renderCurrentView();
+			this.#metrics?.increment("data.load.success");
 		} catch (error) {
-			console.error("Failed to load panel data:", error);
 			this.showError("Failed to load data", error.message);
 		}
 	}
 
 	/**
-	 * Loads the data specifically required for the dashboard view.
 	 * @private
 	 * @returns {Promise<object|null>} A promise that resolves with the dashboard data, or null on failure.
 	 */
@@ -586,11 +596,11 @@ export class DatabaseOptimizationControlPanel {
 	 */
 	switchView(view) {
 		// Update navigation
-		this.container.querySelectorAll(".nav-tab").forEach((tab) => {
+		this.#container.querySelectorAll(".nav-tab").forEach((tab) => {
 			tab.classList.toggle("active", tab.dataset.view === view);
 		});
 
-		this.currentView = view;
+		this.#currentView = view;
 		this.renderCurrentView();
 	}
 
@@ -600,9 +610,9 @@ export class DatabaseOptimizationControlPanel {
 	 * @returns {void}
 	 */
 	renderCurrentView() {
-		const content = this.container.querySelector("#panel-content");
+		const content = this.#container.querySelector("#panel-content");
 
-		switch (this.currentView) {
+		switch (this.#currentView) {
 			case "dashboard":
 				content.innerHTML = this.renderDashboardView();
 				this.initializeDashboardCharts();
@@ -623,7 +633,7 @@ export class DatabaseOptimizationControlPanel {
 			default:
 				content.innerHTML =
 					'<div class="alert alert-error">Unknown view: ' +
-					this.currentView +
+					this.#currentView +
 					"</div>";
 		}
 	}
@@ -635,7 +645,7 @@ export class DatabaseOptimizationControlPanel {
 	 */
 	renderDashboardView() {
 		const metrics = this.data.metrics;
-		if (!metrics) {
+		if (!metrics || !this.#data) {
 			return '<div class="alert alert-warning">No metrics data available</div>';
 		}
 
@@ -643,7 +653,7 @@ export class DatabaseOptimizationControlPanel {
       <div class="dashboard-grid">
         <div class="metric-card">
           <h3>🚀 Query Performance</h3>
-          <div class="metric-value">${metrics.current?.averageLatency?.toFixed(1) || "0"}ms</div>
+          <div class="metric-value">${metrics?.current?.averageLatency?.toFixed(1) || "0"}ms</div>
           <div class="metric-subtitle">Average query latency</div>
           <div class="metric-trend trend-neutral">
             📊 ${metrics.current?.queriesLogged || 0} queries logged
@@ -652,7 +662,7 @@ export class DatabaseOptimizationControlPanel {
 
         <div class="metric-card">
           <h3>💡 Pending Suggestions</h3>
-          <div class="metric-value">${this.data.suggestions?.length || 0}</div>
+          <div class="metric-value">${this.#data.suggestions?.length || 0}</div>
           <div class="metric-subtitle">Optimization opportunities</div>
           <div class="metric-trend trend-up">
             ⚡ Ready for review
@@ -661,7 +671,7 @@ export class DatabaseOptimizationControlPanel {
 
         <div class="metric-card">
           <h3>✅ Applied Optimizations</h3>
-          <div class="metric-value">${this.data.applied?.length || 0}</div>
+          <div class="metric-value">${this.#data.applied?.length || 0}</div>
           <div class="metric-subtitle">Successfully applied</div>
           <div class="metric-trend trend-up">
             📈 ${this.data.applied?.filter((opt) => opt.performance_gain > 0).length || 0} with gains
@@ -670,11 +680,11 @@ export class DatabaseOptimizationControlPanel {
 
         <div class="metric-card">
           <h3>🎯 System Health</h3>
-          <div class="metric-value" style="font-size: 24px; color: ${this.getHealthColor()}">
-            ${this.getHealthIcon()} ${this.data.health || "Unknown"}
+          <div class="metric-value" style="font-size: 24px; color: ${this.#getHealthColor()}">
+            ${this.#getHealthIcon()} ${this.#data.health || "Unknown"}
           </div>
           <div class="metric-subtitle">Database optimizer status</div>
-          <div class="metric-trend trend-neutral">
+          <div class="metric-trend trend-neutral"> 
             🔄 Auto-monitoring ${metrics.config?.monitoring ? "enabled" : "disabled"}
           </div>
         </div>
@@ -708,7 +718,7 @@ export class DatabaseOptimizationControlPanel {
 	 */
 	renderSuggestionsView() {
 		if (!this.data.suggestions || this.data.suggestions.length === 0) {
-			return `
+			return ` 
         <div class="alert alert-success">
           <strong>🎉 No pending suggestions!</strong>
           Your database is well-optimized. New suggestions will appear automatically as query patterns change.
@@ -776,7 +786,7 @@ export class DatabaseOptimizationControlPanel {
 	 */
 	renderAppliedView() {
 		if (!this.data.applied || this.data.applied.length === 0) {
-			return `
+			return ` 
         <div class="alert alert-info">
           <strong>📊 No optimizations applied yet</strong><br>
           Applied optimizations will appear here once you approve suggestions.
@@ -812,11 +822,11 @@ export class DatabaseOptimizationControlPanel {
 			)
 			.join("");
 
-		const totalGain = this.data.applied
+		const totalGain = this.#data.applied
 			.filter((opt) => opt.performance_gain > 0)
 			.reduce((sum, opt) => sum + opt.performance_gain, 0);
 
-		return `
+		return ` 
       <div class="alert alert-success">
         <strong>✅ Optimization Impact</strong><br>
         ${this.data.applied.length} optimizations applied with an average performance gain of ${(totalGain / Math.max(this.data.applied.length, 1)).toFixed(1)}%.
@@ -843,11 +853,11 @@ export class DatabaseOptimizationControlPanel {
 	}
 
 	/**
-	 * Gets the appropriate color for the health indicator based on the current health status.
+	 * #Gets the appropriate color for the health indicator based on the current health status.
 	 * @private
 	 * @returns {string} A CSS color string.
 	 */
-	getHealthColor() {
+	#getHealthColor() {
 		switch (this.data.health) {
 			case "healthy":
 				return "#10b981";
@@ -861,11 +871,11 @@ export class DatabaseOptimizationControlPanel {
 	}
 
 	/**
-	 * Gets the appropriate icon for the health indicator based on the current health status.
+	 * #Gets the appropriate icon for the health indicator based on the current health status.
 	 * @private
 	 * @returns {string} An emoji icon string.
 	 */
-	getHealthIcon() {
+	#getHealthIcon() {
 		switch (this.data.health) {
 			case "healthy":
 				return "🟢";
@@ -879,40 +889,41 @@ export class DatabaseOptimizationControlPanel {
 	}
 
 	/**
-	 * Updates the health indicator UI element with the current status and color.
+	 * #Updates the health indicator UI element with the current status and color.
 	 * @private
 	 * @returns {void}
 	 */
 	updateHealthIndicator() {
-		const dot = this.container.querySelector("#status-dot");
-		const text = this.container.querySelector("#status-text");
+		const dot = this.#container.querySelector("#status-dot");
+		const text = this.#container.querySelector("#status-text");
 
 		if (dot && text) {
-			dot.className = `status-dot ${this.data.health || "warning"}`;
-			text.textContent = `System ${this.data.health || "Unknown"}`;
+			dot.className = `status-dot ${this.#data.health || "warning"}`;
+			text.textContent = `System ${this.#data.health || "Unknown"}`;
 		}
 	}
 
 	/**
-	 * Updates the notification badges on the navigation tabs with the latest counts.
+	 * #Updates the notification badges on the navigation tabs with the latest counts.
 	 * @private
 	 * @returns {void}
 	 */
 	updateBadges() {
 		const suggestionsBadge =
-			this.container.querySelector("#suggestions-badge");
-		const appliedBadge = this.container.querySelector("#applied-badge");
+			this.#container.querySelector("#suggestions-badge");
+		const appliedBadge = this.#container.querySelector("#applied-badge");
 
 		if (suggestionsBadge) {
-			suggestionsBadge.textContent = this.data.suggestions?.length || 0;
+			suggestionsBadge.textContent = this.#data.suggestions?.length || 0;
 		}
 
 		if (appliedBadge) {
-			appliedBadge.textContent = this.data.applied?.length || 0;
+			appliedBadge.textContent = this.#data.applied?.length || 0;
 		}
 	}
 
 	/**
+	 *
 	 * Handles the action to apply a pending optimization suggestion.
 	 * @public
 	 * @param {string} suggestionId - The ID of the suggestion to apply.
@@ -923,7 +934,17 @@ export class DatabaseOptimizationControlPanel {
 			return;
 
 		try {
-			await this.optimizer.applyOptimization(suggestionId, "admin_panel");
+			this.#metrics?.increment("suggestion.apply.attempt");
+			await this.#optimizer.applyOptimization(
+				suggestionId,
+				"admin_panel"
+			);
+			this.#logger.logAuditEvent("OPTIMIZATION_APPLIED", {
+				suggestionId,
+				source: "admin_panel",
+			});
+
+			this.#metrics?.increment("suggestion.apply.success");
 			this.showSuccess("Optimization applied successfully");
 			await this.refreshAllData();
 		} catch (error) {
@@ -941,7 +962,13 @@ export class DatabaseOptimizationControlPanel {
 			return;
 
 		try {
-			await this.optimizer.rollbackOptimization(optimizationId);
+			this.#metrics?.increment("optimization.rollback.attempt");
+			await this.#optimizer.rollbackOptimization(optimizationId);
+			this.#logger.logAuditEvent("OPTIMIZATION_ROLLED_BACK", {
+				optimizationId,
+			});
+
+			this.#metrics?.increment("optimization.rollback.success");
 			this.showSuccess("Optimization rolled back successfully");
 			await this.refreshAllData();
 		} catch (error) {
@@ -961,14 +988,14 @@ export class DatabaseOptimizationControlPanel {
 
 	/**
 	 * Starts a periodic interval to automatically refresh the panel's data.
-	 * @private
+	 * #private
 	 */
 	startRealTimeUpdates() {
-		this.refreshInterval = setInterval(() => {
+		this.#refreshInterval = setInterval(() => {
 			this.loadAllData().catch((err) =>
 				console.error("Auto-refresh failed:", err)
 			);
-		}, this.updateInterval);
+		}, this.#updateInterval);
 	}
 
 	/**
@@ -1016,8 +1043,9 @@ export class DatabaseOptimizationControlPanel {
 	 * @public
 	 */
 	destroy() {
-		if (this.refreshInterval) {
-			clearInterval(this.refreshInterval);
+		if (this.#refreshInterval) {
+			clearInterval(this.#refreshInterval);
+			this.#logger.log("Control Panel destroyed, interval cleared.");
 		}
 	}
 

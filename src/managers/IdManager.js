@@ -8,18 +8,24 @@ import { DateCore } from "../utils/DateUtils.js";
 
 /**
  * @class IdManager
- * @description Manages the creation of unique identifiers (UUIDs) and provides hooks for auditing and metrics.
+ * @description Manages the creation of unique identifiers and provides hooks for auditing and metrics.
+ * @privateFields {#metrics, #logger}
  */
 export class IdManager {
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics;
+	/** @private @type {import('./ForensicLogger.js').ForensicLogger|null} */
+	#logger;
+
 	/**
 	 * Creates an instance of IdManager.
 	 * @param {object} context - The global application context.
 	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
 	constructor({ stateManager } = {}) {
-		// V8.0 Parity: Derive dependencies directly from stateManager.
-		this.metrics = stateManager?.metricsRegistry?.namespace("idManager");
-		this.logger = stateManager?.managers?.forensicLogger;
+		// V8 Parity Mandate: Derive dependencies from the stateManager.
+		this.#metrics = stateManager?.metricsRegistry?.namespace("idManager");
+		this.#logger = stateManager?.managers?.forensicLogger;
 	}
 
 	/**
@@ -39,18 +45,18 @@ export class IdManager {
 		const finalId = prefix ? `${prefix}_${uuid}` : uuid;
 
 		// Metrics Integration
-		this.metrics?.increment("ids.generated.total");
+		this.#metrics?.increment("ids.generated.total");
 		if (entityType) {
-			this.metrics?.increment(`ids.generated.by_type.${entityType}`);
+			this.#metrics?.increment(`ids.generated.by_type.${entityType}`);
 		}
 
 		// Auditing Integration for high-security contexts
 		if (
-			this.logger &&
+			this.#logger &&
 			classification &&
 			["secret", "top_secret"].includes(classification)
 		) {
-			this.logger.logAuditEvent(
+			this.#logger.logAuditEvent(
 				"ID_GENERATION_SENSITIVE",
 				{
 					id: finalId,
@@ -70,6 +76,11 @@ export class IdManager {
 	 * @returns {string} A time-based unique string.
 	 */
 	generateSimpleId(prefix = "id") {
-		return `${prefix}_${DateCore.timestamp()}_${Math.random().toString(36).substr(2, 9)}`;
+		// Generate a small, non-secure random hex string. More performant than Math.random().toString().
+		const randomPart = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
+
+		return `${prefix}_${DateCore.timestamp()}_${randomPart}`;
 	}
 }

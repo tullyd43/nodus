@@ -1,96 +1,108 @@
 /**
  * @file CompleteGridSystem.js
  * @description Integrates all grid-related features into a single, cohesive system.
- * This class orchestrates the `EnhancedGridRenderer`, `GridPolicyHelper`, `GridToastManager`,
- * and the `AILayoutAssistant` to provide a fully-featured, modern grid experience.
+ * This class is a managed service, instantiated by the ServiceRegistry, and orchestrates all other grid-related services.
  */
 
-/* eslint-env browser */
-
-import AILayoutAssistant from "./AILayoutAssistant.js";
-import EnhancedGridRenderer from "./EnhancedGridRenderer.js";
 import GridPolicyHelper, {
 	extendSystemPoliciesWithGrid,
 } from "./GridPolicyIntegration.js";
-import { getToastManager } from "./GridToastManager.js";
 
 /**
  * @class CompleteGridSystem
  * @classdesc Manages the complete, enhanced grid system by initializing and coordinating
- * all optional features like policy management, toast notifications, and the AI layout assistant.
+ * all managed grid services like policy management, toast notifications, and the AI layout assistant.
+ * @privateFields {#stateManager, #options, #gridEnhancer, #toastManager, #aiAssistant, #initialized, #unsubscribeFunctions}
+ * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #initialized, #unsubscribeFunctions}
+ * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #gridPolicyService, #initialized, #unsubscribeFunctions}
  */
 export class CompleteGridSystem {
+	/** @private @type {import('../core/HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('./EnhancedGridRenderer.js').EnhancedGridRenderer|null} */
+	#gridEnhancer = null;
+	/** @private @type {import('../utils/SystemToastManager.js').SystemToastManager|null} */
+	#toastManager = null;
+	/** @private @type {import('./AILayoutAssistant.js').AILayoutAssistant|null} */
+	#aiAssistant = null;
+	/** @private @type {object} */
+	#options;
+	/** @private @type {object} */
+	#appViewModel; // V8.0 Parity: Add appViewModel as a private field.
+	/** @private @type {boolean} */
+	#initialized = false;
+	/** @private @type {Function[]} */
+	#unsubscribeFunctions = []; // V8.0 Parity: Declare private field.
+	/** @private @type {GridPolicyService|null} */
+	#gridPolicyService = null;
+
 	/**
 	 * Creates an instance of CompleteGridSystem.
-	 * @param {object} appViewModel - The main application view model, providing access to other systems.
+	 * @param {object} context - The context object provided by the ServiceRegistry.
+	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The application's state manager.
 	 * @param {object} [options={}] - Configuration options for the grid system.
 	 * @param {string} [options.gridContainer=".grid-container"] - The CSS selector for the grid container element.
+	 * @param {object} [context.appViewModel] - The main application view model, if available.
 	 * @param {boolean} [options.enablePolicies=true] - Whether to enable grid-specific policy management.
 	 * @param {boolean} [options.enableToasts=true] - Whether to enable toast notifications for grid events.
-	 * @param {boolean} [options.enableAI=false] - Whether to enable the AI layout assistant (a future feature).
+	 * @param {boolean} [options.enableAI=true] - Whether to enable the AI layout assistant.
 	 * @param {boolean} [options.enableAnalytics=true] - Whether to enable analytics tracking for grid interactions.
 	 */
-	constructor(appViewModel, options = {}) {
-		this.appViewModel = appViewModel;
-		this.options = {
+	constructor({ stateManager, appViewModel }, options = {}) {
+		// V8.0 Parity: Accept appViewModel in constructor.
+		this.#stateManager = stateManager;
+		this.#appViewModel = appViewModel || {}; // V8.0 Parity: Assign appViewModel.
+
+		// V8.0 Parity: Acquire all dependencies from the state manager.
+		this.#toastManager = this.#stateManager.managers.toastManager;
+		this.#aiAssistant = this.#stateManager.managers.aiLayoutAssistant;
+		this.#gridEnhancer = this.#stateManager.managers.enhancedGridRenderer;
+		this.#gridPolicyService = this.#stateManager.managers.gridPolicyService;
+
+		this.#options = {
 			gridContainer: ".grid-container",
 			enablePolicies: true,
 			enableToasts: true,
-			enableAI: false, // Future feature
+			enableAI: true,
 			enableAnalytics: true,
 			...options,
 		};
-
-		this.gridEnhancer = null;
-		this.toastManager = null;
-		this.aiAssistant = null;
-		this.initialized = false;
-		this.unsubscribeFunctions = [];
-
-		this.init();
 	}
 
 	/**
 	 * Initializes all configured subsystems of the grid system in the correct order.
-	 * @private
+	 * @public
 	 * @returns {Promise<void>}
 	 */
-	async init() {
+	async initialize() {
+		if (this.#initialized) {
+			console.warn("CompleteGridSystem is already initialized.");
+			return;
+		}
+
 		try {
 			// 1. Extend SystemPolicies with grid policies
-			if (this.options.enablePolicies) {
-				extendSystemPoliciesWithGrid();
+			if (this.#options.enablePolicies && this.#gridPolicyService) {
+				this.#gridPolicyService.registerGridPolicies();
 			}
 
-			// 2. Initialize toast manager
-			if (this.options.enableToasts) {
-				this.toastManager = getToastManager();
+			// 2. Initialize grid enhancer with all features
+			await this.#initializeGridEnhancer();
+
+			// 3. Set up policy management UI
+			this.#setupPolicyControls();
+
+			// 4. Set up analytics tracking
+			if (this.#options.enableAnalytics) {
+				this.#setupAnalytics();
 			}
 
-			// 3. Initialize AI assistant if enabled
-			if (this.options.enableAI && this.appViewModel.hybridStateManager) {
-				this.aiAssistant = new AILayoutAssistant(
-					this.appViewModel.hybridStateManager
-				);
-			}
-
-			// 4. Initialize grid enhancer with all features
-			await this.initializeGridEnhancer();
-
-			// 5. Set up policy management UI
-			this.setupPolicyControls();
-
-			// 6. Set up analytics tracking
-			if (this.options.enableAnalytics) {
-				this.setupAnalytics();
-			}
-
-			this.initialized = true;
+			this.#initialized = true;
 			console.log("Complete Grid System initialized with all features");
 
 			// Show initialization success
-			if (this.toastManager) {
-				this.toastManager.success(
+			if (this.#toastManager) {
+				this.#toastManager.success(
 					"🎯 Enhanced grid system ready",
 					3000
 				);
@@ -98,8 +110,8 @@ export class CompleteGridSystem {
 		} catch (error) {
 			console.error("Failed to initialize complete grid system:", error);
 
-			if (this.toastManager) {
-				this.toastManager.error(
+			if (this.#toastManager) {
+				this.#toastManager.error(
 					"Failed to initialize grid enhancements",
 					5000
 				);
@@ -110,61 +122,48 @@ export class CompleteGridSystem {
 	/**
 	 * Initializes the `EnhancedGridRenderer` with all configured features and event listeners.
 	 * @private
-	 * @returns {Promise<void>}
 	 */
-	async initializeGridEnhancer() {
-		const container =
-			this.options.gridContainer instanceof HTMLElement
-				? this.options.gridContainer
-				: document.querySelector(this.options.gridContainer);
-		if (!container) {
-			throw new Error("Grid container not found");
+	async #initializeGridEnhancer() {
+		if (!this.#gridEnhancer) {
+			throw new Error(
+				"EnhancedGridRenderer not available from state manager."
+			);
 		}
 
-		this.gridEnhancer = new EnhancedGridRenderer(
-			{
-				container,
-				appViewModel: this.appViewModel,
-				options: {
-					// Persistence with policy awareness
-					onLayoutChange: (changeEvent) => {
-						this.onLayoutChanged(changeEvent);
-					},
+		// V8.0 Parity: Initialize the EnhancedGridRenderer with its specific configuration.
+		await this.#gridEnhancer.initialize({
+			container: document.querySelector(this.#options.gridContainer),
+			appViewModel: this.#appViewModel,
+		});
 
-					// Accessibility features
-					enableKeyboard: true,
-					enableAria: true,
-
-					// Toast notifications
-					enableToasts: this.options.enableToasts,
-
-					// AI features (future)
-					enableAI: this.options.enableAI,
-				},
-			},
-			this.appViewModel.hybridStateManager
+		// Listen for layout changes to persist them
+		this.#unsubscribeFunctions.push(
+			this.#stateManager.eventFlowEngine.on(
+				"layoutChanged",
+				this.#onLayoutChanged.bind(this)
+			)
 		);
 
 		// Listen for grid events
-		if (window.eventFlowEngine) {
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on(
+		if (this.#stateManager.eventFlowEngine) {
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.eventFlowEngine.on(
 					"gridEnhanced",
-					this.onGridEnhanced.bind(this)
+					this.#onGridEnhanced.bind(this)
 				)
 			);
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on(
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.eventFlowEngine.on(
 					"gridPerformanceMode",
-					this.onPerformanceModeChanged.bind(this)
+					this.#onPerformanceModeChanged.bind(this)
 				)
 			);
 
-			if (this.options.enableAI) {
-				this.unsubscribeFunctions.push(
-					window.eventFlowEngine.on(
+			if (this.#options.enableAI) {
+				this.#unsubscribeFunctions.push(
+					this.#stateManager.eventFlowEngine.on(
 						"aiLayoutSuggestions",
-						this.onAISuggestions.bind(this)
+						this.#onAISuggestions.bind(this)
 					)
 				);
 			}
@@ -176,23 +175,16 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {object} changeEvent - The event data for the layout change.
 	 */
-	onLayoutChanged(changeEvent) {
+	#onLayoutChanged(changeEvent) {
 		// Save to HybridStateManager
-		if (this.appViewModel.hybridStateManager) {
-			this.appViewModel.hybridStateManager.recordOperation({
-				type: "grid_layout_change",
-				data: changeEvent,
-			});
-		}
+		this.#stateManager.recordOperation({
+			type: "grid_layout_change",
+			data: changeEvent,
+		});
 
 		// Track analytics
-		if (this.options.enableAnalytics) {
-			this.trackLayoutChange(changeEvent);
-		}
-
-		// Feed to AI assistant for pattern learning
-		if (this.aiAssistant) {
-			// AI assistant listens to layoutChanged events automatically
+		if (this.#options.enableAnalytics) {
+			this.#trackLayoutChange(changeEvent);
 		}
 	}
 
@@ -201,11 +193,11 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {object} data - The event data.
 	 */
-	onGridEnhanced(data) {
+	#onGridEnhanced(data) {
 		console.log("Grid enhancement active");
 
 		// Show current policy status
-		this.showPolicyStatus();
+		this.#showPolicyStatus();
 	}
 
 	/**
@@ -213,12 +205,12 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {object} data - The performance mode change event data.
 	 */
-	onPerformanceModeChanged(data) {
+	#onPerformanceModeChanged(data) {
 		console.log("Performance mode changed:", data);
 
 		// Could update UI indicators, analytics, etc.
-		if (this.options.enableAnalytics) {
-			this.trackPerformanceMode(data);
+		if (this.#options.enableAnalytics) {
+			this.#trackPerformanceMode(data);
 		}
 	}
 
@@ -227,12 +219,12 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {object} data - The event data containing the suggestions.
 	 */
-	onAISuggestions(data) {
+	#onAISuggestions(data) {
 		console.log("AI suggestions received:", data.suggestions);
 
 		// Show suggestions in UI (future implementation)
-		if (this.toastManager) {
-			this.toastManager.info(
+		if (this.#toastManager) {
+			this.#toastManager.info(
 				`💡 ${data.suggestions.length} layout suggestions available`,
 				5000
 			);
@@ -243,9 +235,9 @@ export class CompleteGridSystem {
 	 * Creates and injects the UI panel for managing grid-related policies.
 	 * @private
 	 */
-	setupPolicyControls() {
+	#setupPolicyControls() {
 		// Add policy control panel to page
-		const controlPanel = this.createPolicyControlPanel();
+		const controlPanel = this.#createPolicyControlPanel();
 
 		// Find a good place to insert it (or create a floating panel)
 		const sidebar = document.querySelector(".sidebar");
@@ -273,7 +265,7 @@ export class CompleteGridSystem {
 	 * @private
 	 * @returns {HTMLElement} The control panel element.
 	 */
-	createPolicyControlPanel() {
+	#createPolicyControlPanel() {
 		const panel = document.createElement("div");
 		panel.className = "grid-policy-panel";
 		panel.innerHTML = `
@@ -312,10 +304,10 @@ export class CompleteGridSystem {
     `;
 
 		// Add event listeners
-		this.setupPolicyEventListeners(panel);
+		this.#setupPolicyEventListeners(panel);
 
 		// Load current policy states
-		this.loadCurrentPolicyStates(panel);
+		this.#loadCurrentPolicyStates(panel);
 
 		return panel;
 	}
@@ -325,7 +317,7 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {HTMLElement} panel - The policy control panel element.
 	 */
-	setupPolicyEventListeners(panel) {
+	#setupPolicyEventListeners(panel) {
 		const perfModeToggle = panel.querySelector("#perf-mode-toggle");
 		const autoSaveToggle = panel.querySelector("#auto-save-toggle");
 		const saveFeedbackToggle = panel.querySelector("#save-feedback-toggle");
@@ -336,42 +328,40 @@ export class CompleteGridSystem {
 
 		perfModeToggle.addEventListener("change", async (e) => {
 			const mode = e.target.checked ? true : null; // true = force on, null = auto
-			await this.setPolicyWithFeedback(
+			await this.#setPolicyWithFeedback(
 				"system.grid_performance_mode",
 				mode
 			);
 		});
 
 		autoSaveToggle.addEventListener("change", async (e) => {
-			await this.setPolicyWithFeedback(
+			await this.#setPolicyWithFeedback(
 				"system.grid_auto_save_layouts",
 				e.target.checked
 			);
 		});
 
 		saveFeedbackToggle.addEventListener("change", async (e) => {
-			await this.setPolicyWithFeedback(
+			await this.#setPolicyWithFeedback(
 				"system.grid_save_feedback",
 				e.target.checked
 			);
 		});
 
 		aiSuggestionsToggle.addEventListener("change", async (e) => {
-			await this.setPolicyWithFeedback(
+			await this.#setPolicyWithFeedback(
 				"system.grid_ai_suggestions",
 				e.target.checked
 			);
 
-			if (e.target.checked && !this.aiAssistant) {
-				// Initialize AI assistant when enabled
-				this.aiAssistant = new AILayoutAssistant(
-					this.appViewModel.hybridStateManager
-				);
+			if (e.target.checked && !this.#aiAssistant) {
+				this.#aiAssistant =
+					this.#stateManager.managers.aiLayoutAssistant;
 			}
 		});
 
 		resetButton.addEventListener("click", () => {
-			this.resetPolicyDefaults();
+			this.#resetPolicyDefaults();
 		});
 	}
 
@@ -381,23 +371,27 @@ export class CompleteGridSystem {
 	 * @param {string} policyKey - The full key of the policy to set (e.g., 'system.grid_performance_mode').
 	 * @param {*} value - The new value for the policy.
 	 */
-	async setPolicyWithFeedback(policyKey, value) {
+	async #setPolicyWithFeedback(policyKey, value) {
 		try {
 			// Use GridPolicyHelper or direct context access
-			await this.appViewModel.context.setPolicy(
-				"system",
-				policyKey.split(".")[1],
+			const [domain, key] = policyKey.split(".");
+			await this.#stateManager.managers.policies.setPolicy(
+				domain,
+				key,
 				value
 			);
 
-			if (this.toastManager) {
-				this.toastManager.success(`Policy updated: ${policyKey}`, 2000);
+			if (this.#toastManager) {
+				this.#toastManager.success(
+					`Policy updated: ${policyKey}`,
+					2000
+				);
 			}
 		} catch (error) {
 			console.error("Failed to set policy:", error);
 
-			if (this.toastManager) {
-				this.toastManager.error(
+			if (this.#toastManager) {
+				this.#toastManager.error(
 					`Failed to update policy: ${policyKey}`,
 					3000
 				);
@@ -410,10 +404,10 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {HTMLElement} panel - The policy control panel element.
 	 */
-	loadCurrentPolicyStates(panel) {
+	#loadCurrentPolicyStates(panel) {
 		try {
 			const policies = GridPolicyHelper.getGridPolicies(
-				this.appViewModel?.context
+				this.#stateManager.managers.policies
 			);
 
 			panel.querySelector("#perf-mode-toggle").checked =
@@ -433,15 +427,15 @@ export class CompleteGridSystem {
 	 * Displays a toast notification summarizing the status of currently active grid policies.
 	 * @private
 	 */
-	showPolicyStatus() {
+	#showPolicyStatus() {
 		try {
 			const policies = GridPolicyHelper.getGridPolicies(
-				this.appViewModel?.context
+				this.#stateManager.managers.policies
 			);
 
 			console.log("Current Grid Policies:", policies);
 
-			if (this.toastManager) {
+			if (this.#toastManager) {
 				const statusMessages = [];
 				if (policies.performanceMode === true)
 					statusMessages.push("🚀 Performance mode forced");
@@ -453,7 +447,7 @@ export class CompleteGridSystem {
 					statusMessages.push("🤖 AI suggestions enabled");
 
 				if (statusMessages.length > 0) {
-					this.toastManager.info(statusMessages.join(" • "), 4000);
+					this.#toastManager.info(statusMessages.join(" • "), 4000);
 				}
 			}
 		} catch (error) {
@@ -465,30 +459,39 @@ export class CompleteGridSystem {
 	 * Sets up event listeners to track grid interactions for analytics purposes.
 	 * @private
 	 */
-	setupAnalytics() {
+	#setupAnalytics() {
 		// Track grid usage patterns
-		if (window.eventFlowEngine) {
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on("layoutChanged", (data) => {
-					this.trackLayoutChange(data);
-				})
-			);
-
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on("gridPerformanceMode", (data) => {
-					this.trackPerformanceMode(data);
-				})
-			);
-
-			this.unsubscribeFunctions.push(
-				window.eventFlowEngine.on("policyChanged", (data) => {
-					if (
-						data.domain === "system" &&
-						data.key.startsWith("grid_")
-					) {
-						this.trackPolicyChange(data);
+		if (this.#stateManager.eventFlowEngine) {
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.eventFlowEngine.on(
+					"layoutChanged",
+					(data) => {
+						this.#trackLayoutChange(data);
 					}
-				})
+				)
+			);
+
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.eventFlowEngine.on(
+					"gridPerformanceMode",
+					(data) => {
+						this.#trackPerformanceMode(data);
+					}
+				)
+			);
+
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.eventFlowEngine.on(
+					"policyChanged",
+					(data) => {
+						if (
+							data.domain === "system" &&
+							data.key.startsWith("grid_")
+						) {
+							this.#trackPolicyChange(data);
+						}
+					}
+				)
 			);
 		}
 	}
@@ -498,7 +501,7 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {object} changeEvent - The layout change event data.
 	 */
-	trackLayoutChange(changeEvent) {
+	#trackLayoutChange(changeEvent) {
 		// Analytics tracking for layout changes
 		const analyticsEvent = {
 			category: "grid_interaction",
@@ -514,8 +517,11 @@ export class CompleteGridSystem {
 		};
 
 		// Emit for analytics system
-		if (window.eventFlowEngine) {
-			window.eventFlowEngine.emit("analyticsEvent", analyticsEvent);
+		if (this.#stateManager.eventFlowEngine) {
+			this.#stateManager.eventFlowEngine.emit(
+				"analyticsEvent",
+				analyticsEvent
+			);
 		}
 	}
 
@@ -524,9 +530,9 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {object} data - The performance mode change event data.
 	 */
-	trackPerformanceMode(data) {
-		if (window.eventFlowEngine) {
-			window.eventFlowEngine.emit("analyticsEvent", {
+	#trackPerformanceMode(data) {
+		if (this.#stateManager.eventFlowEngine) {
+			this.#stateManager.eventFlowEngine.emit("analyticsEvent", {
 				category: "grid_performance",
 				action: data.enabled
 					? "performance_mode_on"
@@ -542,9 +548,9 @@ export class CompleteGridSystem {
 	 * @private
 	 * @param {object} data - The policy change event data.
 	 */
-	trackPolicyChange(data) {
-		if (window.eventFlowEngine) {
-			window.eventFlowEngine.emit("analyticsEvent", {
+	#trackPolicyChange(data) {
+		if (this.#stateManager.eventFlowEngine) {
+			this.#stateManager.eventFlowEngine.emit("analyticsEvent", {
 				category: "grid_policy",
 				action: "policy_changed",
 				label: data.key,
@@ -557,7 +563,7 @@ export class CompleteGridSystem {
 	 * Resets all grid-related policies to their default values.
 	 * @private
 	 */
-	resetPolicyDefaults() {
+	#resetPolicyDefaults() {
 		// Reset all grid policies to defaults
 		const defaults = {
 			grid_performance_mode: null,
@@ -567,50 +573,18 @@ export class CompleteGridSystem {
 		};
 
 		Object.entries(defaults).forEach(async ([key, value]) => {
-			await this.setPolicyWithFeedback(`system.${key}`, value);
+			await this.#setPolicyWithFeedback(`system.${key}`, value);
 		});
 
-		if (this.toastManager) {
-			this.toastManager.success("Grid policies reset to defaults", 3000);
+		if (this.#toastManager) {
+			this.#toastManager.success("Grid policies reset to defaults", 3000);
 		}
 	}
 
 	// Public API
 
-	/**
-	 * Gets the initialized `EnhancedGridRenderer` instance.
-	 * @public
-	 * @returns {EnhancedGridRenderer|null}
-	 */
-	getGridEnhancer() {
-		return this.gridEnhancer;
-	}
-
-	/**
-	 * Gets the initialized `GridToastManager` instance.
-	 * @public
-	 * @returns {import('./GridToastManager.js').GridToastManager|null}
-	 */
-	getToastManager() {
-		return this.toastManager;
-	}
-
-	/**
-	 * Gets the initialized `AILayoutAssistant` instance.
-	 * @public
-	 * @returns {AILayoutAssistant|null}
-	 */
-	getAIAssistant() {
-		return this.aiAssistant;
-	}
-
-	/**
-	 * Checks if the complete grid system has been successfully initialized.
-	 * @public
-	 * @returns {boolean}
-	 */
 	isInitialized() {
-		return this.initialized;
+		return this.#initialized;
 	}
 
 	/**
@@ -618,30 +592,18 @@ export class CompleteGridSystem {
 	 * @public
 	 */
 	destroy() {
-		if (this.gridEnhancer) {
-			this.gridEnhancer.disable();
+		if (this.#gridEnhancer) {
+			this.#gridEnhancer.disable();
 		}
 
-		if (this.toastManager) {
-			this.toastManager.destroy();
+		if (this.#toastManager) {
+			this.#toastManager.destroy();
 		}
 
 		// Remove event listeners
-		this.unsubscribeFunctions.forEach((unsubscribe) => unsubscribe());
-		this.unsubscribeFunctions = [];
+		this.#unsubscribeFunctions.forEach((unsubscribe) => unsubscribe());
+		this.#unsubscribeFunctions = [];
 	}
-}
-
-// Convenience function for easy setup
-/**
- * A convenience function to easily create and initialize an instance of the `CompleteGridSystem`.
- * @param {object} appViewModel - The main application view model.
- * @param {object} [options={}] - Configuration options for the grid system.
- * @returns {Promise<CompleteGridSystem>} A promise that resolves with the initialized grid system instance.
- */
-export async function initializeCompleteGridSystem(appViewModel, options = {}) {
-	const system = new CompleteGridSystem(appViewModel, options);
-	return system;
 }
 
 export default CompleteGridSystem;

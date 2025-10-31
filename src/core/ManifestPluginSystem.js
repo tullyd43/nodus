@@ -393,7 +393,7 @@ export class ManifestPluginSystem {
 
 		// This check should only run in non-production environments to avoid performance overhead.
 		if (this.#stateManager.config.environment !== "production") {
-			const violations = scanForForbiddenPatterns(codeString);
+			const violations = scanForForbiddenPatterns(codeString); // This function is now correctly exported
 
 			if (violations.length > 0) {
 				// V8.0 Parity: Mandate 2.4 - Log the security violation before throwing.

@@ -6,148 +6,174 @@
 
 /* global customElements */
 
+/**
+ * @class GlobalSearchBar
+ * @classdesc A web component for a global search and command bar.
+ * It interacts with the QueryService to provide real-time search results and suggestions.
+ * @privateFields {#stateManager, #queryService, #results, #selectedIndex, #inputElement, #resultsElement, #debounceTimeout}
+ */
 class GlobalSearchBar extends HTMLElement {
+	// V8.0 Parity: Mandate 3.1 - All internal properties MUST be private.
+	/** @private @type {import('../core/HybridStateManager.js').default|null} */
+	#stateManager = null;
+	/** @private @type {import('../core/services/QueryService.js').QueryService|null} */
+	#queryService = null;
+	/** @private @type {Array<object>} */
+	#results = [];
+	/** @private @type {number} */
+	#selectedIndex = -1;
+	/** @private @type {HTMLInputElement|null} */
+	#inputElement = null;
+	/** @private @type {HTMLUListElement|null} */
+	#resultsElement = null;
+	/** @private @type {ReturnType<typeof setTimeout>|null} */
+	#debounceTimeout = null;
+
 	constructor() {
 		super();
 		this.attachShadow({ mode: "open" });
-		this.stateManager = window.stateManager; // Align with global state contract
-		this.queryService = null;
-		this.results = [];
-		this.selectedIndex = -1;
+
+		// V8.0 Parity: Mandate 1.1 & 1.2 - The State Manager is the Single Source of Truth.
+		this.#stateManager = window.stateManager;
+		this.#queryService = this.#stateManager?.managers?.queryService || null;
+
+		if (!this.#queryService) {
+			console.error(
+				"[GlobalSearchBar] QueryService not found on stateManager. Search will be disabled."
+			);
+		}
 	}
 
 	connectedCallback() {
 		this.render();
-		this.inputElement = this.shadowRoot.querySelector("#search-input");
-		this.resultsElement = this.shadowRoot.querySelector("#results-list");
+		this.#inputElement = this.shadowRoot.querySelector("#search-input");
+		this.#resultsElement = this.shadowRoot.querySelector("#results-list");
 
-		this.inputElement.addEventListener(
-			"input",
-			this.debounce(this.onInput.bind(this), 200)
-		);
-		this.inputElement.addEventListener(
+		this.#inputElement.addEventListener("input", this.#onInput.bind(this));
+		this.#inputElement.addEventListener(
 			"keydown",
-			this.onKeyDown.bind(this)
+			this.#onKeyDown.bind(this)
 		);
-		document.addEventListener("click", this.onDocumentClick.bind(this));
+		document.addEventListener("click", this.#onDocumentClick.bind(this));
 	}
 
-	setQueryService(service) {
-		this.queryService = service;
-		// In a fully aligned system, this would be replaced by:
-		// this.queryService = this.stateManager.managers.queryService;
-		// This method is kept for backward compatibility during transition.
-		console.warn(
-			"[GlobalSearchBar] Direct query service injection is deprecated. Use stateManager."
-		);
-	}
-
-	async onInput(event) {
+	/** @private */
+	#onInput(event) {
 		const query = event.target.value;
-		if (query.length < 2) {
-			this.results = [];
-			this.renderResults();
-			return;
-		}
+		this.#debounce(async () => {
+			if (query.length < 2) {
+				this.#results = [];
+				this.#renderResults();
+				return;
+			}
 
-		// Align with V8.0 plan: use the state manager's query service if available
-		const queryService =
-			this.stateManager?.managers?.queryService || this.queryService;
-
-		if (queryService) {
-			this.results = await this.queryService.search(query, { limit: 10 });
-			this.selectedIndex = -1;
-			this.renderResults();
-		}
+			if (this.#queryService) {
+				this.#results = await this.#queryService.search(query, {
+					limit: 10,
+				});
+				this.#selectedIndex = -1;
+				this.#renderResults();
+			}
+		}, 200);
 	}
 
-	onKeyDown(event) {
+	/** @private */
+	#onKeyDown(event) {
 		switch (event.key) {
 			case "ArrowDown":
 				event.preventDefault();
-				this.selectedIndex = Math.min(
-					this.selectedIndex + 1,
-					this.results.length - 1
+				this.#selectedIndex = Math.min(
+					this.#selectedIndex + 1,
+					this.#results.length - 1
 				);
-				this.updateSelection();
+				this.#updateSelection();
 				break;
 			case "ArrowUp":
 				event.preventDefault();
-				this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
-				this.updateSelection();
+				this.#selectedIndex = Math.max(this.#selectedIndex - 1, 0);
+				this.#updateSelection();
 				break;
 			case "Enter":
-				if (this.selectedIndex > -1) {
-					this.selectItem(this.results[this.selectedIndex]);
+				if (this.#selectedIndex > -1) {
+					this.#selectItem(this.#results[this.#selectedIndex]);
 				}
 				break;
 			case "Escape":
-				this.results = [];
-				this.renderResults();
+				this.#results = [];
+				this.#renderResults();
 				break;
 		}
 	}
 
-	onDocumentClick(event) {
+	/** @private */
+	#onDocumentClick(event) {
 		if (!this.contains(event.target)) {
-			this.results = [];
-			this.renderResults();
+			this.#results = [];
+			this.#renderResults();
 		}
 	}
 
-	selectItem(item) {
+	/** @private */
+	#selectItem(item) {
 		console.log("Selected:", item);
 		this.dispatchEvent(new CustomEvent("item-selected", { detail: item }));
-		this.inputElement.value = "";
-		this.results = [];
-		this.renderResults();
+		this.#inputElement.value = "";
+		this.#results = [];
+		this.#renderResults();
 	}
 
-	updateSelection() {
+	/** @private */
+	#updateSelection() {
 		this.shadowRoot.querySelectorAll("li").forEach((li, index) => {
-			li.classList.toggle("selected", index === this.selectedIndex);
+			li.classList.toggle("selected", index === this.#selectedIndex);
 		});
 	}
 
-	renderResults() {
-		if (this.results.length === 0) {
-			this.resultsElement.style.display = "none";
+	/** @private */
+	#renderResults() {
+		if (this.#results.length === 0) {
+			this.#resultsElement.style.display = "none";
+			this.#resultsElement.innerHTML = ""; // Clear content
 			return;
 		}
 
-		this.resultsElement.style.display = "block";
-		this.resultsElement.innerHTML = this.results
-			.map(
-				(item) => `
-      <li data-id="${item.id}">
-        <span class="item-source">${item.source}</span>
-        <span class="item-title">${item.title || item.name}</span>
-        <span class="item-relevance">${(item.relevance || 0).toFixed(2)}</span>
-      </li>
-    `
-			)
-			.join("");
+		this.#resultsElement.style.display = "block";
+		this.#resultsElement.innerHTML = ""; // Clear previous results
 
-		this.shadowRoot.querySelectorAll("li").forEach((li) => {
-			li.addEventListener("click", () => {
-				const selectedItem = this.results.find(
-					(r) => r.id === li.dataset.id
-				);
-				if (selectedItem) {
-					this.selectItem(selectedItem);
-				}
-			});
+		// V8.0 Parity: Mandate 2.1 - Avoid innerHTML for dynamic content.
+		this.#results.forEach((item) => {
+			const li = document.createElement("li");
+			li.dataset.id = item.id;
+
+			const sourceSpan = document.createElement("span");
+			sourceSpan.className = "item-source";
+			sourceSpan.textContent = item.source;
+
+			const titleSpan = document.createElement("span");
+			titleSpan.className = "item-title";
+			titleSpan.textContent = item.title || item.name;
+
+			const relevanceSpan = document.createElement("span");
+			relevanceSpan.className = "item-relevance";
+			relevanceSpan.textContent = (item.relevance || 0).toFixed(2);
+
+			li.appendChild(sourceSpan);
+			li.appendChild(titleSpan);
+			li.appendChild(relevanceSpan);
+
+			li.addEventListener("click", () => this.#selectItem(item));
+
+			this.#resultsElement.appendChild(li);
 		});
 	}
 
-	debounce(func, delay) {
-		let timeout;
-		return function (...args) {
-			clearTimeout(timeout);
-			timeout = setTimeout(() => func.apply(this, args), delay);
-		};
+	/** @private */
+	#debounce(func, delay) {
+		clearTimeout(this.#debounceTimeout);
+		this.#debounceTimeout = setTimeout(func, delay);
 	}
 
+	/** @private */
 	render() {
 		this.shadowRoot.innerHTML = `
       <style>

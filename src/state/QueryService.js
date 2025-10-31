@@ -5,46 +5,63 @@
  */
 
 /**
+ * @privateFields {#stateManager, #pluginSystem, #embeddingManager, #metrics, #errorHelpers, #cache, #errorBoundary}
  * @class QueryService
  * @classdesc Orchestrates search queries across different domains (local, plugin, AI),
  * then ranks and caches the results for performance.
  */
 export class QueryService {
+	// V8.0 Parity: Mandate 3.1 - All internal properties MUST be private.
+	/** @private @type {import('../core/HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('../core/ManifestPluginSystem.js').default|undefined} */
+	#pluginSystem;
+	/** @private @type {import('./EmbeddingManager.js').default|undefined} */
+	#embeddingManager;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|undefined} */
+	#metrics;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers;
+	/** @private @type {import('../utils/caching/LRUCache.js').LRUCache|undefined} */
+	#cache;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorBoundary|undefined} */
+	#errorBoundary;
+
 	/**
 	 * Creates an instance of QueryService.
 	 * @param {object} dependencies - The dependencies for the service.
 	 * @param {import('../core/HybridStateManager.js').default} dependencies.stateManager - The main state manager, providing access to all other managers.
 	 */
 	constructor({ stateManager }) {
-		/** @type {import('../core/HybridStateManager.js').default} */
-		this.stateManager = stateManager;
+		this.#stateManager = stateManager;
 		const managers = stateManager.managers;
 
-		/** @type {import('../core/ManifestPluginSystem.js').default|undefined} */
-		this.pluginSystem = managers.pluginSystem;
-		/** @type {import('./EmbeddingManager.js').default|undefined} */
-		this.embeddingManager = managers.embeddingManager;
-		/** @type {import('../utils/MetricsRegistry.js').MetricsRegistry|undefined} */
-		this.metrics = managers.metricsRegistry?.namespace("query");
-		/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+		this.#pluginSystem = managers.pluginSystem;
+		this.#embeddingManager = managers.embeddingManager;
+		this.#metrics = managers.metricsRegistry?.namespace("query");
 		this.#errorHelpers = managers.errorHelpers;
 
 		// Use the central cache manager for integrated caching
-		this.cache = managers.cacheManager?.getCache("queries", 200, {
+		this.#cache = managers.cacheManager?.getCache("queries", 200, {
 			ttl: 60000,
 		}); // 1 min TTL
+
 		// Create a dedicated error boundary for this service
-		this.errorBoundary = this.#errorHelpers?.createErrorBoundary(
+		this.#errorBoundary = this.#errorHelpers?.createErrorBoundary(
 			{
-				eventFlow: this.stateManager?.eventFlow,
-				managers: this.stateManager?.managers,
+				eventFlow: this.#stateManager?.eventFlow,
+				managers: this.#stateManager?.managers,
 			},
 			"QueryService"
 		);
-	}
 
-	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
-	#errorHelpers;
+		// V8.0 Parity: Mandate 4.3 - Apply metrics decorator to critical methods.
+		if (this.#metrics?.measure) {
+			this.search = this.#metrics.measure("search.duration")(
+				this.search.bind(this)
+			);
+		}
+	}
 
 	/**
 	 * Executes a search across local state, plugins, and AI embeddings, then ranks and returns the results.
@@ -57,64 +74,63 @@ export class QueryService {
 	 * @returns {Promise<any[]>} A promise that resolves with a sorted list of search results.
 	 */
 	async search(query, options = {}) {
-		return this.metrics?.timerAsync("search.duration", async () => {
-			if (!query || typeof query !== "string") return [];
+		if (!query || typeof query !== "string") return [];
 
-			const cacheKey = `${query}:${JSON.stringify(options)}`;
-			const cached = this.cache?.get(cacheKey);
-			if (cached) {
-				this.metrics?.increment("cache_hit");
-				return cached;
-			}
+		const cacheKey = `${query}:${JSON.stringify(options)}`;
+		const cached = this.#cache?.get(cacheKey);
+		if (cached) {
+			this.#metrics?.increment("cache_hit");
+			return cached;
+		}
 
-			this.metrics?.increment("cache_miss");
-			const results = [];
-			const { domains = [], limit = 50, includeAI = true } = options;
+		this.#metrics?.increment("cache_miss");
+		const results = [];
+		const { domains = [], limit = 50, includeAI = true } = options;
 
-			// 1️⃣ Local entities from HybridStateManager
-			const localResults = await this.searchLocalEntities(query, domains);
-			results.push(...localResults);
+		// 1️⃣ Local entities from HybridStateManager
+		const localResults = await this.#searchLocalEntities(query, domains);
+		results.push(...localResults);
 
-			// 2️⃣ Plugin results
-			const pluginResults = await this.searchPlugins(query, domains);
-			results.push(...pluginResults);
+		// 2️⃣ Plugin results
+		const pluginResults = await this.#searchPlugins(query, domains);
+		results.push(...pluginResults);
 
-			// 3️⃣ AI Embeddings (if enabled and available)
-			if (includeAI && this.embeddingManager) {
-				const aiResults = await this.searchEmbeddings(query, { limit });
-				results.push(...aiResults);
-			}
+		// 3️⃣ AI Embeddings (if enabled and available)
+		if (includeAI && this.#embeddingManager) {
+			const aiResults = await this.#searchEmbeddings(query, { limit });
+			results.push(...aiResults);
+		}
 
-			// Rank and limit results
-			const rankedResults = this.rankResults(results).slice(0, limit);
+		// Rank and limit results
+		const rankedResults = this.#rankResults(results).slice(0, limit);
 
-			// Cache the results
-			this.cache?.set(cacheKey, rankedResults);
+		// Cache the results
+		this.#cache?.set(cacheKey, rankedResults);
 
-			return rankedResults;
-		});
+		return rankedResults;
 	}
 
 	/**
 	 * Searches for entities within the local `HybridStateManager`.
 	 * @private
 	 * @param {string} query - The search query.
-	 * @param {string[]} [domains=[]] - An array of domains to filter the results by.
+	 * @param {string[]} domains - An array of domains to filter the results by.
 	 * @returns {Promise<any[]>} A promise that resolves with an array of local search results.
 	 */
-	async searchLocalEntities(query, domains = []) {
-		return this.errorBoundary.tryAsync(async () => {
-			if (!this.stateManager?.queryLocalEntities) {
+	async #searchLocalEntities(query, domains) {
+		return this.#errorBoundary.tryAsync(async () => {
+			if (!this.#stateManager?.queryLocalEntities) {
 				return [];
 			}
-			const results = await this.stateManager.queryLocalEntities(query);
+			const results = await this.#stateManager.queryLocalEntities(query);
 
 			// Filter by domains if specified
 			if (domains.length > 0) {
 				return (results || []).filter(
 					(result) =>
 						domains.includes(result.domain) ||
-						domains.includes(result.type)
+						domains.includes(result.type) ||
+						!result.domain // Include if domain is not specified
 				);
 			}
 
@@ -129,21 +145,21 @@ export class QueryService {
 	 * @param {string[]} domains - The domains to search within.
 	 * @returns {Promise<any[]>} A promise that resolves with an array of results from plugins.
 	 */
-	async searchPlugins(query, domains) {
-		return this.errorBoundary.tryAsync(async () => {
-			if (!this.pluginSystem?.activePlugins) {
+	async #searchPlugins(query, domains) {
+		return this.#errorBoundary.tryAsync(async () => {
+			if (!this.#pluginSystem?.activePlugins) {
 				return [];
 			}
 
 			const searchPromises = [];
 
-			for (const plugin of this.pluginSystem.activePlugins) {
+			for (const plugin of this.#pluginSystem.activePlugins) {
 				if (typeof plugin.search === "function") {
 					// Wrap each plugin search in its own error boundary to prevent one failing plugin from stopping others
 					const pluginSearch = this.#errorHelpers
 						?.captureAsync(
 							() => plugin.search(query, { domains }),
-							this.stateManager?.eventFlow,
+							this.#stateManager?.eventFlow,
 							{ component: `Plugin.${plugin.id}` }
 						)
 						.then((pluginResults) => {
@@ -172,12 +188,12 @@ export class QueryService {
 	 * @param {object} options - The search options.
 	 * @returns {Promise<any[]>} A promise that resolves with an array of AI-powered search results.
 	 */
-	async searchEmbeddings(query, options) {
-		return this.errorBoundary.tryAsync(async () => {
-			if (!this.embeddingManager?.semanticSearch) {
+	async #searchEmbeddings(query, options) {
+		return this.#errorBoundary.tryAsync(async () => {
+			if (!this.#embeddingManager?.semanticSearch) {
 				return [];
 			}
-			const aiResults = await this.embeddingManager.semanticSearch(
+			const aiResults = await this.#embeddingManager.semanticSearch(
 				query,
 				{
 					topK: options.limit || 10,
@@ -202,7 +218,7 @@ export class QueryService {
 	 * @param {any[]} results - The array of search results to rank.
 	 * @returns {any[]} The sorted array of results.
 	 */
-	rankResults(results) {
+	#rankResults(results) {
 		return results.sort((a, b) => {
 			// Primary sort by relevance score
 			const relevanceA = a.relevance || 0;
@@ -237,7 +253,7 @@ export class QueryService {
 	 * @returns {Promise<string[]>} A promise that resolves with an array of suggestion strings.
 	 */
 	async getSuggestions(partialQuery, limit = 5) {
-		return this.errorBoundary.tryAsync(async () => {
+		return this.#errorBoundary.tryAsync(async () => {
 			if (!partialQuery || partialQuery.length < 2) return [];
 			const results = await this.search(partialQuery, {
 				limit: limit * 2,
@@ -270,7 +286,7 @@ export class QueryService {
 	 * @public
 	 */
 	clearCache() {
-		this.cache.clear();
+		this.#cache.clear();
 	}
 
 	/**
@@ -281,10 +297,10 @@ export class QueryService {
 	 */
 	getStats() {
 		return {
-			cache: this.cache?.getMetrics(),
-			localSearchAvailable: !!this.stateManager?.queryLocalEntities,
-			pluginSearchAvailable: !!this.pluginSystem?.activePlugins?.length,
-			aiSearchAvailable: !!this.embeddingManager?.semanticSearch,
+			cache: this.#cache?.getMetrics(),
+			localSearchAvailable: !!this.#stateManager?.queryLocalEntities,
+			pluginSearchAvailable: !!this.#pluginSystem?.activePlugins?.length,
+			aiSearchAvailable: !!this.#embeddingManager?.semanticSearch,
 		};
 	}
 }

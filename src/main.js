@@ -1,5 +1,4 @@
 import { SystemBootstrap } from "@core/SystemBootstrap.js";
-import { initializeCompleteGridSystem } from "@grid/CompleteGridSystem.js";
 import { DeveloperDashboard } from "/dev/DeveloperDashboard.js";
 
 import { AppConfig } from "../environment.config.js";
@@ -49,17 +48,18 @@ const bootstrap = async () => {
 	};
 	window.appViewModel = appViewModel;
 
-	// 4. Initialize the fully integrated grid system
-	await initializeCompleteGridSystem(appViewModel, {
-		gridContainer: document.getElementById("app"), // Pass the correct root element
-	});
+	// 4. V8.0 Parity: Initialize the fully integrated grid system via the state manager.
+	// The service is already instantiated by the ServiceRegistry. We just need to initialize it.
+	const gridSystem = stateManager.managers.completeGridSystem;
+	// The appViewModel and gridContainer are now passed during the service's own initialization.
+	await gridSystem.initialize();
 
 	console.log("✅ Complete Grid System Initialized. Application is ready.");
 
 	// 5. V8.0 Parity: Initialize the developer dashboard for real-time metrics.
 	// Pass the stateManager directly, which provides access to all necessary managers and the event bus.
 	new DeveloperDashboard(document.body, {
-		stateManager: stateManager,
+		stateManager,
 	});
 };
 

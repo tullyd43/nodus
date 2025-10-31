@@ -102,11 +102,11 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<IDBValidKey>} A promise that resolves with the key of the stored item.
 	 */
 	async put(storeName, item) {
-		return this.#measure("put", "writes", async () => {
-			return this.#performTransaction(storeName, "readwrite", (store) =>
+		return this.#measure("put", "writes", () =>
+			this.#performTransaction(storeName, "readwrite", (store) =>
 				store.put(item)
-			);
-		});
+			)
+		);
 	}
 
 	/**
@@ -119,17 +119,12 @@ export default class IndexedDBAdapter {
 		return this.#measure(
 			"putBulk",
 			"writes",
-			async () => {
-				return this.#performTransaction(
-					storeName,
-					"readwrite",
-					(store) => {
-						for (const item of items) {
-							store.put(item);
-						}
+			() =>
+				this.#performTransaction(storeName, "readwrite", (store) => {
+					for (const item of items) {
+						store.put(item);
 					}
-				);
-			},
+				}),
 			items.length
 		);
 	}
@@ -141,11 +136,11 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<object|undefined>} A promise that resolves with the retrieved item, or undefined if not found.
 	 */
 	async get(storeName, key) {
-		return this.#measure("get", "reads", async () => {
-			return this.#performTransaction(storeName, "readonly", (store) =>
+		return this.#measure("get", "reads", () =>
+			this.#performTransaction(storeName, "readonly", (store) =>
 				store.get(key)
-			);
-		});
+			)
+		);
 	}
 
 	/**
@@ -264,11 +259,11 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<void>} A promise that resolves when the deletion is complete.
 	 */
 	async delete(storeName, key) {
-		return this.#measure("delete", "deletes", async () => {
-			return this.#performTransaction(storeName, "readwrite", (store) =>
+		return this.#measure("delete", "deletes", () =>
+			this.#performTransaction(storeName, "readwrite", (store) =>
 				store.delete(key)
-			);
-		});
+			)
+		);
 	}
 
 	/**
@@ -281,17 +276,12 @@ export default class IndexedDBAdapter {
 		return this.#measure(
 			"deleteBulk",
 			"deletes",
-			async () => {
-				return this.#performTransaction(
-					storeName,
-					"readwrite",
-					(store) => {
-						for (const key of keys) {
-							store.delete(key);
-						}
+			() =>
+				this.#performTransaction(storeName, "readwrite", (store) => {
+					for (const key of keys) {
+						store.delete(key);
 					}
-				);
-			},
+				}),
 			keys.length
 		);
 	}
@@ -317,11 +307,11 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<number>} A promise that resolves with the total number of items.
 	 */
 	async count(storeName, query = null) {
-		return this.#measure("count", "reads", async () => {
-			return this.#performTransaction(storeName, "readonly", (store) =>
+		return this.#measure("count", "reads", () =>
+			this.#performTransaction(storeName, "readonly", (store) =>
 				store.count(query)
-			);
-		});
+			)
+		);
 	}
 
 	/**

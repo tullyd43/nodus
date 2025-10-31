@@ -2,76 +2,110 @@
 // Composable performance monitoring building block
 
 /**
- * @function PerformanceOverlayBlock
- * @description A composable BuildingBlock that renders a real-time performance monitoring overlay or panel.
- * It visualizes key metrics from various system components like the state manager, database, and renderer.
- * @param {object} params - The parameters for rendering the block.
- * @param {import('../../core/RenderContext.js').RenderContext} params.context - The rendering context, providing access to system metrics.
- * @param {object} [params.config={}] - Configuration options for the block, such as title, refresh rate, and positioning.
- * @returns {HTMLElement} The rendered HTML element for the performance overlay.
- */
-/**
  * Performance Overlay BuildingBlock
  * Real-time metrics visualization as a composable component
+ * @class PerformanceOverlayBlock
+ * @description A class-based BuildingBlock that renders a real-time performance monitoring overlay.
+ * It visualizes key metrics from various system components like the state manager, database, and renderer.
+ * This class adheres to the project's private field and encapsulation mandates.
+ * @privateFields {#context, #config, #theme, #container, #titleElement, #metricsContainer, #updateInterval, #isActive, #metrics}
  */
-export function PerformanceOverlayBlock({ context, config = {} }) {
-	const container = document.createElement("div");
-	container.className = "performance-overlay-block";
+class PerformanceOverlayBlock_V2 {
+	#context;
+	#config;
+	#theme;
+	#container;
+	#titleElement;
+	#metricsContainer;
+	#updateInterval = null;
+	#isActive = true;
+	#metrics;
 
-	// Apply theme-aware styling
-	const theme = context.getThemeVariables();
-	container.style.cssText = `
-    padding: ${config.padding || "1rem"};
-    border-radius: ${config.borderRadius || "8px"};
-    background: ${config.background || theme["--surface-elevated"]};
-    color: ${config.color || theme["--text"]};
-    font-family: 'Courier New', monospace;
-    font-size: ${config.fontSize || "12px"};
-    border: 1px solid ${theme["--border"]};
-    min-width: ${config.minWidth || "250px"};
-    max-height: ${config.maxHeight || "400px"};
-    overflow-y: auto;
-    position: ${config.position || "relative"};
-  `;
+	/**
+	 * @constructor
+	 * @param {object} params - The parameters for rendering the block.
+	 * @param {import('../../core/RenderContext.js').RenderContext} params.context - The rendering context.
+	 * @param {object} [params.config={}] - Configuration options for the block.
+	 */
+	constructor({ context, config = {} }) {
+		this.#context = context;
+		this.#config = config;
+		this.#theme = this.#context.getThemeVariables();
+		this.#metrics = this.#context.metricsRegistry;
 
-	// Fixed positioning for overlay mode
-	if (config.overlay) {
-		container.style.position = "fixed";
-		container.style.bottom = config.bottom || "10px";
-		container.style.right = config.right || "10px";
-		container.style.zIndex = config.zIndex || "9999";
-		container.style.background =
-			config.overlayBackground || "rgba(0,0,0,0.85)";
+		this.#container = document.createElement("div");
+		this.#container.className = "performance-overlay-block";
+
+		this.#applyStyling();
+		this.#createDOM();
+
+		this.#setupEventListeners();
+		this.#setupCleanupObserver();
+
+		if (this.#config.autoStart !== false) {
+			requestAnimationFrame(() => this.start());
+		}
 	}
 
-	// Create title
-	const title = document.createElement("h4");
-	title.textContent = config.title || "System Performance";
-	title.style.cssText = `
+	/**
+	 * Applies CSS styling to the main container element.
+	 * @private
+	 */
+	#applyStyling() {
+		this.#container.style.cssText = `
+    padding: ${this.#config.padding || "1rem"};
+    border-radius: ${this.#config.borderRadius || "8px"};
+    background: ${this.#config.background || this.#theme["--surface-elevated"]};
+    color: ${this.#config.color || this.#theme["--text"]};
+    font-family: 'Courier New', monospace;
+    font-size: ${this.#config.fontSize || "12px"};
+    border: 1px solid ${this.#theme["--border"]};
+    min-width: ${this.#config.minWidth || "250px"};
+    max-height: ${this.#config.maxHeight || "400px"};
+    overflow-y: auto;
+    position: ${this.#config.position || "relative"};
+    transition: opacity 0.3s ease-in-out;
+  `;
+
+		if (this.#config.overlay) {
+			this.#container.style.position = "fixed";
+			this.#container.style.bottom = this.#config.bottom || "10px";
+			this.#container.style.right = this.#config.right || "10px";
+			this.#container.style.zIndex = this.#config.zIndex || "9999";
+			this.#container.style.background =
+				this.#config.overlayBackground || "rgba(0,0,0,0.85)";
+		}
+	}
+
+	/**
+	 * Creates the initial DOM structure for the block.
+	 * @private
+	 */
+	#createDOM() {
+		this.#titleElement = document.createElement("h4");
+		this.#titleElement.textContent =
+			this.#config.title || "System Performance";
+		this.#titleElement.style.cssText = `
     margin: 0 0 0.75rem 0;
-    color: ${theme["--primary"]};
+    color: ${this.#theme["--primary"]};
     font-size: 14px;
     font-weight: bold;
   `;
-	container.appendChild(title);
+		this.#container.appendChild(this.#titleElement);
 
-	// Create metrics container
-	const metricsContainer = document.createElement("div");
-	metricsContainer.className = "metrics-container";
-	container.appendChild(metricsContainer);
-
-	// Performance data state
-	let updateInterval = null;
-	let isActive = true;
+		this.#metricsContainer = document.createElement("div");
+		this.#metricsContainer.className = "metrics-container";
+		this.#container.appendChild(this.#metricsContainer);
+	}
 
 	/**
 	 * @function formatMetrics
 	 * @description Formats a raw metrics object into a structured array of sections suitable for display.
 	 * @private
 	 * @param {object} metrics - The raw metrics object gathered from various system components.
-	 * @returns {Array<object>} An array of formatted metric sections.
+	 * @returns {Array<{title: string, items: Array<{label: string, value: any, unit: string}>}>} An array of formatted metric sections.
 	 */
-	function formatMetrics(metrics) {
+	#formatMetrics(metrics) {
 		const sections = [];
 
 		// System Load Section
@@ -86,7 +120,9 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 					},
 					{
 						label: "Memory",
-						value: formatBytes(metrics.system.memoryUsage || 0),
+						value: this.#formatBytes(
+							metrics.system.memoryUsage || 0
+						),
 						unit: "",
 					},
 					{
@@ -186,7 +222,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 					},
 					{
 						label: "Connection",
-						value: metrics.network.type || "unknown",
+						value: metrics.network.type || "N/A",
 						unit: "",
 					},
 					{
@@ -208,7 +244,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 	 * @param {number} bytes - The number of bytes to format.
 	 * @returns {string} The formatted string.
 	 */
-	function formatBytes(bytes) {
+	#formatBytes(bytes) {
 		if (bytes === 0) return "0 B";
 		const k = 1024;
 		const sizes = ["B", "KB", "MB", "GB"];
@@ -223,13 +259,13 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 	 * @param {object} section - A formatted metric section object from `formatMetrics`.
 	 * @returns {HTMLElement} The DOM element for the metric section.
 	 */
-	function createMetricSection(section) {
+	#createMetricSection(section) {
 		const sectionDiv = document.createElement("div");
 		sectionDiv.className = "metric-section";
 		sectionDiv.style.cssText = `
       margin-bottom: 1rem;
       padding-bottom: 0.5rem;
-      border-bottom: 1px solid ${theme["--border"]};
+      border-bottom: 1px solid ${this.#theme["--border"]};
     `;
 
 		// Section title
@@ -237,7 +273,7 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 		sectionTitle.textContent = section.title;
 		sectionTitle.style.cssText = `
       font-weight: bold;
-      color: ${theme["--text"]};
+      color: ${this.#theme["--text"]};
       margin-bottom: 0.25rem;
       font-size: 11px;
       text-transform: uppercase;
@@ -257,12 +293,12 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 
 			const label = document.createElement("span");
 			label.textContent = item.label + ":";
-			label.style.color = theme["--text-muted"];
+			label.style.color = this.#theme["--text-muted"];
 
 			const value = document.createElement("span");
 			value.textContent = item.value + (item.unit || "");
 			value.style.cssText = `
-        color: ${getValueColor(item.label, item.value)};
+        color: ${this.#getValueColor(item.label, item.value)};
         font-weight: bold;
       `;
 
@@ -283,47 +319,54 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 	 * @param {string|number} value - The value of the metric.
 	 * @returns {string} A CSS color string.
 	 */
-	function getValueColor(label, value) {
+	#getValueColor(label, value) {
 		const numValue = parseFloat(value);
 
 		if (label.includes("Error") || label.includes("Failed")) {
-			return numValue > 0 ? theme["--error"] : theme["--success"];
+			return numValue > 0
+				? this.#theme["--error"]
+				: this.#theme["--success"];
 		}
 
 		if (label.includes("Time") || label.includes("Latency")) {
-			if (numValue > 100) return theme["--error"];
-			if (numValue > 50) return theme["--warning"];
-			return theme["--success"];
+			if (numValue > 100) return this.#theme["--error"];
+			if (numValue > 50) return this.#theme["--warning"];
+			return this.#theme["--success"];
 		}
 
 		if (label.includes("Hit Rate") || label.includes("Score")) {
-			if (numValue > 80) return theme["--success"];
-			if (numValue > 60) return theme["--warning"];
-			return theme["--error"];
+			if (numValue > 80) return this.#theme["--success"];
+			if (numValue > 60) return this.#theme["--warning"];
+			return this.#theme["--error"];
 		}
 
-		return theme["--text"];
+		return this.#theme["--text"];
 	}
 
 	/**
 	 * @function updateMetrics
 	 * @description Gathers the latest metrics from all available sources and re-renders the block's content.
 	 * @private
+	 * @returns {void}
 	 */
-	function updateMetrics() {
-		if (!isActive) return;
+	#updateMetrics() {
+		if (!this.#isActive) return;
+
+		const startTime = performance.now();
 
 		try {
 			// Get metrics from various sources
-			const metrics = gatherMetrics();
+			const metrics = this.#gatherMetrics();
 
 			// Clear previous content
-			metricsContainer.innerHTML = "";
+			this.#metricsContainer.textContent = "";
 
 			// Format and display metrics
-			const sections = formatMetrics(metrics);
+			const sections = this.#formatMetrics(metrics);
 			sections.forEach((section) => {
-				metricsContainer.appendChild(createMetricSection(section));
+				this.#metricsContainer.appendChild(
+					this.#createMetricSection(section)
+				);
 			});
 
 			// Add timestamp
@@ -331,21 +374,25 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 			timestamp.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
 			timestamp.style.cssText = `
         font-size: 10px;
-        color: ${theme["--text-muted"]};
+        color: ${this.#theme["--text-muted"]};
         text-align: right;
         margin-top: 0.5rem;
         opacity: 0.7;
       `;
-			metricsContainer.appendChild(timestamp);
+			this.#metricsContainer.appendChild(timestamp);
+
+			// Mandate 4.3: Report metrics on the overlay's own performance
+			const duration = performance.now() - startTime;
+			this.#metrics?.timer("performance_overlay.render", duration);
 		} catch (error) {
 			console.error("PerformanceOverlayBlock: Update error:", error);
 
 			// Show error state
-			metricsContainer.innerHTML = `
-        <div style="color: ${theme["--error"]}; font-size: 11px;">
-          ⚠️ Error loading metrics: ${error.message}
-        </div>
-      `;
+			this.#metricsContainer.textContent = "";
+			const errorDiv = document.createElement("div");
+			errorDiv.style.cssText = `color: ${this.#theme["--error"]}; font-size: 11px;`;
+			errorDiv.textContent = `⚠️ Error loading metrics: ${error.message}`;
+			this.#metricsContainer.appendChild(errorDiv);
 		}
 	}
 
@@ -355,15 +402,17 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 	 * @private
 	 * @returns {object} A comprehensive metrics object.
 	 */
-	function gatherMetrics() {
+	#gatherMetrics() {
 		const metrics = {};
 
 		// State Manager metrics
 		if (
-			context.stateManager &&
-			typeof context.stateManager.getPerformanceMetrics === "function"
+			this.#context.stateManager &&
+			typeof this.#context.stateManager.getPerformanceMetrics ===
+				"function"
 		) {
-			const stateMetrics = context.stateManager.getPerformanceMetrics();
+			const stateMetrics =
+				this.#context.stateManager.getPerformanceMetrics();
 			metrics.system = {
 				entityCount: stateMetrics.entityCount || 0,
 				memoryUsage: stateMetrics.memoryUsage || 0,
@@ -379,19 +428,19 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 
 		// Database metrics (if available)
 		if (
-			context.databaseOptimizer &&
-			typeof context.databaseOptimizer.getPerformanceMetrics ===
+			this.#context.databaseOptimizer &&
+			typeof this.#context.databaseOptimizer.getPerformanceMetrics ===
 				"function"
 		) {
 			metrics.database =
-				context.databaseOptimizer.getPerformanceMetrics();
+				this.#context.databaseOptimizer.getPerformanceMetrics();
 		}
 
 		// Network metrics
 		metrics.network = {
 			online: navigator.onLine,
-			type: navigator.connection?.effectiveType || "unknown",
-			latency: context.networkLatency || 0,
+			type: navigator.connection?.effectiveType,
+			latency: this.#context.networkLatency || 0,
 		};
 
 		// Browser performance metrics
@@ -407,91 +456,133 @@ export function PerformanceOverlayBlock({ context, config = {} }) {
 	}
 
 	/**
-	 * @function startMonitoring
 	 * @description Starts the periodic interval for updating the metrics display.
-	 * @private
+	 * @public
 	 */
-	function startMonitoring() {
-		if (updateInterval) return;
+	start() {
+		if (this.#updateInterval) return;
+		this.#isActive = true;
 
-		const refreshRate = config.refreshRate || 2000; // Default 2 seconds
-		updateInterval = setInterval(updateMetrics, refreshRate);
+		const refreshRate = this.#config.refreshRate || 2000; // Default 2 seconds
+		this.#updateInterval = setInterval(
+			() => this.#updateMetrics(),
+			refreshRate
+		);
+		this.#container.style.opacity = "1";
+		this.#titleElement.textContent = `${this.#config.title || "System Performance"}`;
 
 		// Initial update
-		updateMetrics();
+		this.#updateMetrics();
 	}
 
 	/**
-	 * @function stopMonitoring
 	 * @description Stops the periodic interval for updating metrics.
-	 * @private
+	 * @public
 	 */
-	function stopMonitoring() {
-		if (updateInterval) {
-			clearInterval(updateInterval);
-			updateInterval = null;
+	stop() {
+		if (this.#updateInterval) {
+			clearInterval(this.#updateInterval);
+			this.#updateInterval = null;
+		}
+		this.#isActive = false;
+		this.#container.style.opacity = "0.5";
+		this.#titleElement.textContent = `${this.#config.title || "System Performance"} (Paused)`;
+	}
+
+	/**
+	 * @description Toggles the active state of the monitoring, pausing or resuming updates.
+	 * @public
+	 */
+	toggle() {
+		if (this.#isActive) {
+			this.stop();
+		} else {
+			this.start();
 		}
 	}
 
 	/**
-	 * @function toggleMonitoring
-	 * @description Toggles the active state of the monitoring, pausing or resuming updates.
+	 * Sets up event listeners for the component.
 	 * @private
 	 */
-	function toggleMonitoring() {
-		isActive = !isActive;
-
-		if (isActive) {
-			startMonitoring();
-			container.style.opacity = "1";
-		} else {
-			stopMonitoring();
-			container.style.opacity = "0.5";
+	#setupEventListeners() {
+		if (this.#config.clickToToggle !== false) {
+			this.#titleElement.style.cursor = "pointer";
+			this.#titleElement.title = "Click to pause/resume monitoring";
+			this.#titleElement.addEventListener("click", () => this.toggle());
 		}
-
-		// Update title to show state
-		title.textContent = `${config.title || "System Performance"} ${isActive ? "" : "(Paused)"}`;
 	}
 
-	// Add click to toggle (if enabled)
-	if (config.clickToToggle !== false) {
-		title.style.cursor = "pointer";
-		title.addEventListener("click", toggleMonitoring);
-		title.title = "Click to pause/resume monitoring";
-	}
-
-	// Cleanup on removal
-	const observer = new MutationObserver((mutations) => {
-		mutations.forEach((mutation) => {
-			mutation.removedNodes.forEach((node) => {
-				if (node === container) {
-					stopMonitoring();
-					observer.disconnect();
+	/**
+	 * Sets up a MutationObserver to clean up resources when the element is removed from the DOM.
+	 * @private
+	 */
+	#setupCleanupObserver() {
+		const observer = new MutationObserver((mutations, obs) => {
+			for (const mutation of mutations) {
+				for (const node of mutation.removedNodes) {
+					if (node === this.#container) {
+						this.stop();
+						obs.disconnect();
+						return;
+					}
 				}
-			});
+			}
 		});
+
+		// The observer must be attached to the PARENT node.
+		// We can't know the parent until this element is added to the DOM.
+		// A second observer on the element itself detects when it's attached.
+		const parentObserver = new MutationObserver(() => {
+			if (this.#container.parentNode) {
+				observer.observe(this.#container.parentNode, {
+					childList: true,
+				});
+				parentObserver.disconnect();
+			}
+		});
+		parentObserver.observe(document.body, {
+			childList: true,
+			subtree: true,
+		});
+	}
+
+	/**
+	 * Returns the main DOM element for the block.
+	 * @public
+	 * @returns {HTMLElement}
+	 */
+	render() {
+		return this.#container;
+	}
+}
+
+/**
+ * @function PerformanceOverlayBlock
+ * @description A factory function that creates and returns the DOM element for the performance overlay.
+ * This maintains compatibility with the original functional block signature.
+ * @param {object} params - The parameters for rendering the block.
+ * @param {import('../../core/RenderContext.js').RenderContext} params.context - The rendering context.
+ * @param {object} [params.config={}] - Configuration options for the block.
+ * @returns {HTMLElement} The rendered HTML element for the performance overlay.
+ */
+export function PerformanceOverlayBlock({ context, config = {} }) {
+	const block = new PerformanceOverlayBlock_V2({
+		context,
+		config,
 	});
+	const element = block.render();
 
-	if (container.parentNode) {
-		observer.observe(container.parentNode, { childList: true });
-	}
-
-	// Start monitoring if autoStart is enabled (default)
-	if (config.autoStart !== false) {
-		// Use requestAnimationFrame to start after render
-		requestAnimationFrame(() => startMonitoring());
-	}
-
-	// Expose control methods for external access
-	container._performanceOverlay = {
-		start: startMonitoring,
-		stop: stopMonitoring,
-		toggle: toggleMonitoring,
-		update: updateMetrics,
-		isActive: () => isActive,
+	// Expose control methods for external access, adhering to a cleaner pattern
+	element.performanceOverlay = {
+		start: () => block.start(),
+		stop: () => block.stop(),
+		toggle: () => block.toggle(),
+		update: () => block.update(),
+		isActive: () => block.isActive(),
 	};
 
-	return container;
+	return element;
 }
 
 /**
@@ -513,7 +604,7 @@ export function registerPerformanceOverlayBlock(renderer) {
 			fontSize: "12px",
 			padding: "1rem",
 		},
-		dependencies: ["stateManager"],
+		dependencies: ["stateManager", "metricsRegistry"],
 	});
 }
 

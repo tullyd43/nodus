@@ -17,18 +17,22 @@ import { EventFlowEngine } from "./EventFlowEngine.js";
 import { ExtensionManager } from "./ExtensionManager.js";
 import { ForensicLogger } from "./ForensicLogger.js";
 import { ManifestPluginSystem } from "./ManifestPluginSystem.js";
+import { OptimizationAccessControl } from "./OptimizationAccessControl.js";
 import { CrossDomainSolution } from "./security/cds.js";
+import { NonRepudiation } from "./security/NonRepudiation.js";
+import GridPolicyService from "../grid/GridPolicyIntegration.js";
 import { SecurityManager } from "./security/SecurityManager.js";
 import { ValidationLayer } from "./storage/ValidationLayer.js";
 import { SystemPolicies } from "./SystemPolicies_Cached.js";
-import { EmbeddingManager } from "../state/EmbeddingManager.js";
-import { QueryService } from "../state/QueryService.js";
+import { CompleteGridSystem } from "../grid/CompleteGridSystem.js";
+import { EnhancedGridRenderer } from "../grid/EnhancedGridRenderer.js";
 import { CacheManager } from "../managers/CacheManager.js";
 import { IdManager } from "../managers/IdManager.js";
+import { EmbeddingManager } from "../state/EmbeddingManager.js";
+import { QueryService } from "../state/QueryService.js";
 import { ErrorHelpers } from "../utils/ErrorHelpers.js";
 import { MetricsRegistry } from "../utils/MetricsRegistry.js";
 import { MetricsReporter } from "../utils/MetricsReporter.js";
-import { OptimizationAccessControl } from "./OptimizationAccessControl.js";
 
 /**
  * @description Defines foundational services with no dependencies on other managers.
@@ -41,6 +45,7 @@ const FOUNDATIONAL_SERVICES = {
 	idManager: IdManager,
 	cacheManager: CacheManager,
 	securityManager: SecurityManager,
+	nonRepudiation: NonRepudiation, // For signing
 };
 
 /**
@@ -49,11 +54,12 @@ const FOUNDATIONAL_SERVICES = {
  */
 const CORE_LOGIC_SERVICES = {
 	forensicLogger: ForensicLogger,
-	policies: SystemPolicies,
 	conditionRegistry: ConditionRegistry,
 	actionHandler: ActionHandlerRegistry,
 	componentRegistry: ComponentDefinitionRegistry,
 	eventFlowEngine: EventFlowEngine,
+	policies: SystemPolicies,
+	validationLayer: ValidationLayer,
 };
 
 /**
@@ -61,13 +67,15 @@ const CORE_LOGIC_SERVICES = {
  * @private
  */
 const APPLICATION_SERVICES = {
-	validationLayer: ValidationLayer,
 	plugin: ManifestPluginSystem,
 	embeddingManager: EmbeddingManager,
 	queryService: QueryService,
 	adaptiveRenderer: AdaptiveRenderer,
 	buildingBlockRenderer: BuildingBlockRenderer,
 	extensionManager: ExtensionManager,
+	enhancedGridRenderer: EnhancedGridRenderer,
+	completeGridSystem: CompleteGridSystem,
+	gridPolicyService: GridPolicyService,
 };
 
 /**
@@ -125,24 +133,29 @@ export class ServiceRegistry {
 			"idManager",
 			"cacheManager",
 			"securityManager",
+			"nonRepudiation",
 			// 2. Core Logic: Depends on foundational services.
 			"forensicLogger",
-			"policies",
 			"conditionRegistry",
 			"actionHandler",
 			"componentRegistry",
 			"eventFlowEngine",
-			// 3. Application Services: Depends on core logic.
+			"policies", // Policies can depend on other core services for validation context.
 			"validationLayer",
+			// 3. Application Services: Depends on core logic.
 			"buildingBlockRenderer",
 			"adaptiveRenderer",
-			"plugin", // Plugins can register components, so load after registries.
 			"extensionManager",
+			"enhancedGridRenderer", // CompleteGridSystem depends on EnhancedGridRenderer
+			"completeGridSystem", // Depends on other grid services being available.
+			"gridPolicyService",
 		];
 
 		for (const serviceName of INITIALIZATION_ORDER) {
 			await this.get(serviceName);
 		}
+		// Load plugins last, after all core registries are available.
+		await this.get("plugin");
 		console.log("[ServiceRegistry] All core services initialized.");
 	}
 
@@ -194,6 +207,39 @@ export class ServiceRegistry {
 			// Ensure a failed service doesn't remain in the managers object.
 			delete this.#stateManager.managers[serviceName];
 			throw error; // Re-throw to halt bootstrap if a critical service fails.
+		}
+	}
+
+	/**
+	 * Creates a new, non-singleton instance of a service for a specific use case,
+	 * such as a namespaced MetricsRegistry. This is an exception to the singleton
+	 * pattern and should be used sparingly.
+	 * @param {string} serviceName - The name of the service to instantiate.
+	 * @param {object} options - The constructor options for the new instance.
+	 * @returns {object|null} The newly created service instance.
+	 */
+	createNamespacedInstance(serviceName, options) {
+		const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
+		if (!ServiceClass) {
+			console.error(
+				`[ServiceRegistry] Cannot create namespaced instance. Unknown service: ${serviceName}`
+			);
+			return null;
+		}
+
+		try {
+			// The context is merged with the specific options for this instance.
+			const instance = new ServiceClass({
+				stateManager: this.#stateManager,
+				...options,
+			});
+			return instance;
+		} catch (error) {
+			console.error(
+				`[ServiceRegistry] Failed to create namespaced instance of '${serviceName}':`,
+				error
+			);
+			return null;
 		}
 	}
 }
