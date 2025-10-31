@@ -14,38 +14,25 @@
  * @classdesc Orchestrates the synchronization of data between the local offline storage and a remote server.
  * It implements strategies for conflict resolution, handles network interruptions with retry logic,
  * and uses batching to efficiently process large numbers of changes.
+ * @privateFields {#syncQueue, #isResyncNeeded, #conflictQueue, #syncInProgress, #autoSyncInterval, #retryTimeouts, #stateManager, #config, #ready, #forensicLogger, #securityManager, #metrics, #errorHelpers, #cacheManager, #debouncedSync}
  */
 export class SyncLayer {
-	/**
-	 * @private
-	 * @type {Array<object>}
-	 */
+	/** @private @type {Array<object>} */
 	#syncQueue = [];
-	/**
-	 * @private
-	 * @type {boolean}
-	 */
-	#isResyncNeeded = false;
-	/**
-	 * @private
-	 * @type {Array<object>}
-	 */
+	/** @private @type {Array<object>} */
 	#conflictQueue = [];
-	/**
-	 * @private
-	 * @type {boolean}
-	 */
+	/** @private @type {boolean} */
+	#isResyncNeeded = false;
+	/** @private @type {boolean} */
 	#syncInProgress = false;
-	/**
-	 * @private
-	 * @type {number|null}
-	 */
+	/** @private @type {number|null} */
 	#autoSyncInterval = null;
 	/**
 	 * @private
-	 * @type {Map<string, number>}
+	 * @description V8.0 Parity: Mandate 4.1 - Use a bounded cache for retry timeouts.
+	 * @type {import('../../utils/LRUCache.js').LRUCache|null}
 	 */
-	#retryTimeouts = new Map();
+	#retryTimeouts = null;
 	/**
 	 * @private @type {import('../HybridStateManager.js').default}
 	 */
@@ -58,6 +45,22 @@ export class SyncLayer {
 	 * @private @type {boolean}
 	 */
 	#ready = false;
+	/** @private @type {import('../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../security/SecurityManager.js').default|null} */
+	#securityManager = null;
+	/** @private @type {import('../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+	/** @private @type {import('../managers/CacheManager.js').default|null} */
+	#cacheManager = null;
+	/**
+	 * A debounced function to trigger synchronization.
+	 * @private
+	 * @type {Function}
+	 */
+	#debouncedSync;
 
 	/**
 	 * Creates an instance of SyncLayer.
@@ -80,6 +83,11 @@ export class SyncLayer {
 			enableAutoSync: options.enableAutoSync !== false,
 			...options,
 		};
+
+		// Mandate 3.1: Private methods should be bound if needed, not defined as properties.
+		this.#debouncedSync = this.#debounce(() => {
+			this.performSync().catch(console.warn);
+		}, this.#config.debounceInterval);
 	}
 
 	/**
@@ -89,6 +97,19 @@ export class SyncLayer {
 	 */
 	async init() {
 		if (this.#ready) return this;
+
+		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
+		const managers = this.#stateManager.managers;
+		this.#forensicLogger = managers?.forensicLogger ?? null;
+		this.#securityManager = managers?.securityManager ?? null;
+		this.#errorHelpers = managers?.errorHelpers ?? null;
+		this.#cacheManager = managers?.cacheManager ?? null;
+		this.#metrics = this.#stateManager.metricsRegistry?.namespace("sync");
+
+		// V8.0 Parity: Mandate 4.1 - Use the central CacheManager for bounded caches.
+		this.#retryTimeouts = this.#cacheManager?.getCache("syncRetries", {
+			ttl: 24 * 60 * 60 * 1000, // 24 hours for a retry timeout
+		});
 
 		this.#audit("sync_layer_initialized", {
 			autoSync: this.#config.enableAutoSync,
@@ -103,6 +124,18 @@ export class SyncLayer {
 		// Setup network change listeners
 		this.#setupNetworkListeners();
 
+		// Mandate 4.3: Apply metrics decorator to performance-critical methods.
+		const measure =
+			this.#stateManager.managers.metricsRegistry?.measure.bind(
+				this.#stateManager.managers.metricsRegistry
+			);
+		if (measure) {
+			// Wrap the core sync method for performance tracking.
+			this.performSync = measure("sync.performSync", {
+				source: "SyncLayer",
+			})(this.performSync.bind(this));
+		}
+
 		this.#ready = true;
 		console.log("[SyncLayer] Ready with bidirectional sync.");
 		return this;
@@ -116,68 +149,65 @@ export class SyncLayer {
 	 * @returns {Promise<{up: object|null, down: object|null, conflicts: object[]}>} A promise that resolves with a summary of the sync operation.
 	 */
 	async performSync(options = {}) {
-		if (!this.#ready) throw new Error("SyncLayer not initialized");
-
-		if (this.#syncInProgress) {
+		if (!this.#ready) throw new Error("SyncLayer not initialized.");
+		if (this.#syncInProgress && !options?.force) {
 			console.log(
 				"[SyncLayer] Sync already in progress, queuing request."
 			);
-			this.#isResyncNeeded = true;
+			this.#isResyncNeeded = true; // Flag that a sync is wanted after the current one.
 			return; // Exit and let the current sync loop handle the next run.
 		}
 
 		this.#syncInProgress = true;
-		const startTime = performance.now();
+
+		const syncOptions = {
+			direction: "bidirectional",
+			conflictResolution: this.#config.conflictResolution,
+			batchSize: this.#config.batchSize,
+			...options,
+		};
+
+		const result = { up: null, down: null, conflicts: [] };
 
 		try {
-			const {
-				direction = "bidirectional",
-				conflictResolution = this.#config.conflictResolution,
-				batchSize = this.#config.batchSize,
-				force = false,
-			} = options;
+			const startTime = performance.now();
+			const capturedSync = async () => {
+				// Upload changes to server
+				if (
+					syncOptions.direction === "up" ||
+					syncOptions.direction === "bidirectional"
+				) {
+					result.up = await this.#syncUp(syncOptions.batchSize);
+				}
 
-			const result = { up: null, down: null, conflicts: [] };
+				// Download changes from server
+				if (
+					syncOptions.direction === "down" ||
+					syncOptions.direction === "bidirectional"
+				) {
+					result.down = await this.#syncDown(syncOptions.batchSize);
+				}
+				return result;
+			};
 
-			// Upload changes to server
-			if (direction === "up" || direction === "bidirectional") {
-				result.up = await this.#syncUp(batchSize, force);
-			}
-
-			// Download changes from server
-			if (direction === "down" || direction === "bidirectional") {
-				result.down = await this.#syncDown(batchSize, force);
-			}
-
-			// Handle conflicts
-			if (
-				result.up?.conflicts?.length > 0 ||
-				result.down?.conflicts?.length > 0
-			) {
-				const allConflicts = [
-					...(result.up?.conflicts || []),
-					...(result.down?.conflicts || []),
-				];
-				result.conflicts = await this.#resolveConflicts(
-					allConflicts,
-					conflictResolution
-				);
-			}
-
+			await this.#errorHelpers?.captureAsync(capturedSync, {
+				component: "SyncLayer.performSync",
+				operation: "performSync",
+			});
 			const latency = performance.now() - startTime;
 			this.#recordSync(true, latency, result);
-
-			this.#stateManager.emit("syncCompleted", result);
 
 			console.log(
 				`[SyncLayer] Sync completed in ${latency.toFixed(2)}ms.`
 			);
+			this.#stateManager.emit("syncCompleted", result);
+
 			return result;
 		} catch (error) {
-			const latency = performance.now() - startTime;
-			this.#recordSync(false, latency, null, error);
+			// Latency is not meaningful on failure, but we log the attempt.
+			this.#recordSync(false, 0, null, error);
 			this.#audit("sync_failed", {
-				error: error.message,
+				error: error?.message,
 				stack: error.stack,
 			});
 			this.#stateManager.emit("syncError", error);
@@ -210,7 +240,7 @@ export class SyncLayer {
 		};
 
 		this.#syncQueue.push(queueItem);
-		this.#getMetrics()?.set("queue_size", this.#syncQueue.length);
+		this.#metrics?.set("queue_size", this.#syncQueue.length);
 		this.#audit("entity_queued_for_sync", {
 			entityId: entity.id,
 			entityType: entity.entity_type,
@@ -299,10 +329,7 @@ export class SyncLayer {
 
 		// Remove from conflict queue
 		this.#conflictQueue.splice(conflictIndex, 1);
-		this.#getMetrics()?.set(
-			"conflict_queue_size",
-			this.#conflictQueue.length
-		);
+		this.#metrics?.set("conflict_queue_size", this.#conflictQueue.length);
 
 		this.#audit("conflict_resolved", {
 			conflictId,
@@ -324,7 +351,7 @@ export class SyncLayer {
 	 */
 	get stats() {
 		return {
-			...this.#getMetrics()?.getAllAsObject(),
+			...this.#metrics?.getAllAsObject(),
 			queueSize: this.#syncQueue.length,
 			conflictQueueSize: this.#conflictQueue.length,
 			isReady: this.#ready,
@@ -341,12 +368,16 @@ export class SyncLayer {
 			clearInterval(this.#autoSyncInterval);
 		}
 
-		// Clear retry timeouts
-		for (const timeout of this.#retryTimeouts.values()) {
-			clearTimeout(timeout);
-		}
-		this.#audit("sync_layer_cleanup", {});
-		this.#retryTimeouts.clear();
+		// Clear retry timeouts from the LRUCache
+		// The LRUCache's `onEvict` would be the ideal place, but a manual clear is also fine.
+		this.#retryTimeouts?.forEach((timeout) => {
+			clearTimeout(timeout.value);
+		});
+
+		this.#audit("sync_layer_cleanup", {
+			clearedRetries: this.#retryTimeouts?.size ?? 0,
+		});
+		this.#retryTimeouts?.clear();
 
 		this.#ready = false;
 	}
@@ -357,11 +388,10 @@ export class SyncLayer {
 	 * Pushes a batch of local changes from the sync queue to the server.
 	 * @private
 	 * @param {number} batchSize - The number of items to include in the batch.
-	 * @param {boolean} force - If true, syncs even if the queue is empty.
 	 * @returns {Promise<{synced: number, conflicts: object[], errors: object[]}>} A summary of the upload operation.
 	 */
-	async #syncUp(batchSize, force) {
-		if (this.#syncQueue.length === 0 && !force) {
+	async #syncUp(batchSize) {
+		if (this.#syncQueue.length === 0) {
 			return { synced: 0, conflicts: [], errors: [] };
 		}
 
@@ -413,7 +443,7 @@ export class SyncLayer {
 			}
 		}
 
-		this.#getMetrics()?.set("queue_size", this.#syncQueue.length);
+		this.#metrics?.set("queue_size", this.#syncQueue.length);
 		return { synced, conflicts, errors };
 	}
 
@@ -421,20 +451,22 @@ export class SyncLayer {
 	 * Pulls a batch of remote changes from the server since the last sync.
 	 * @private
 	 * @param {number} batchSize - The number of items to request from the server.
-	 * @param {boolean} force - If true, performs the pull even if not strictly necessary.
 	 * @returns {Promise<{synced: number, conflicts: object[], errors: object[]}>} A summary of the download operation.
 	 */
-	async #syncDown(batchSize, force) {
+	async #syncDown(batchSize) {
 		try {
-			const metrics = this.#getMetrics();
-			const lastSyncTimestamp =
-				metrics?.get("last_sync")?.value || new Date(0).toISOString();
+			const lastSyncTimestampISO =
+				this.#metrics?.get("last_sync")?.value ||
+				new Date(0).toISOString();
 
-			const response = await this.#fetchFromServer({
-				since: lastSyncTimestamp,
+			// Mandate 4.2: Pre-parse the date outside the loop.
+			const lastSyncTime = new Date(lastSyncTimestampISO).getTime();
+
+			const response = (await this.#fetchFromServer({
+				since: lastSyncTimestampISO,
 				limit: batchSize,
 				organizationId: this.#stateManager.config.organizationId,
-			});
+			})) ?? { entities: [] };
 
 			const conflicts = [];
 			const errors = [];
@@ -451,14 +483,18 @@ export class SyncLayer {
 							: remoteEntity.id;
 
 					const localEntity =
-						await this.#stateManager.storage.instance.get(
+						await this.#stateManager.storage.instance?.get(
 							storeName,
 							entityId
 						);
 
 					if (
 						localEntity &&
-						this.#hasConflict(localEntity, remoteEntity)
+						this.#hasConflict(
+							localEntity,
+							remoteEntity,
+							lastSyncTime
+						)
 					) {
 						const newConflict = {
 							id: crypto.randomUUID(),
@@ -475,10 +511,7 @@ export class SyncLayer {
 						});
 					} else {
 						// No conflict, apply remote changes
-						await this.#stateManager.storage.instance.put(
-							storeName,
-							remoteEntity
-						);
+						await this.#applyRemoteChange(storeName, remoteEntity);
 						synced++;
 					}
 				} catch (error) {
@@ -501,94 +534,26 @@ export class SyncLayer {
 	}
 
 	/**
-	 * Orchestrates the resolution of a list of conflicts based on the specified strategy.
-	 * @private
-	 * @param {object[]} conflicts - An array of conflict objects to resolve.
-	 * @param {string} strategy - The conflict resolution strategy to apply.
-	 * @returns {Promise<{resolved: object[], unresolved: object[]}>} An object containing arrays of resolved and unresolved conflicts.
-	 */
-	async #resolveConflicts(conflicts, strategy) {
-		const resolved = [];
-		const unresolved = [];
-
-		for (const conflict of conflicts) {
-			try {
-				let resolution;
-
-				switch (strategy) {
-					case "last_write_wins":
-						resolution = this.#resolveLastWriteWins(conflict);
-						break;
-					case "first_write_wins":
-						resolution = this.#resolveFirstWriteWins(conflict);
-						break;
-					case "auto_merge":
-						resolution = this.#autoMergeEntities(
-							conflict.localEntity,
-							conflict.remoteEntity
-						);
-						break;
-					case "user_guided":
-						// Add to conflict queue for user resolution
-						this.#conflictQueue.push(conflict);
-						unresolved.push(conflict);
-						continue;
-					default:
-						throw new Error(
-							`Unknown conflict resolution strategy: ${strategy}`
-						);
-				}
-
-				if (resolution) {
-					const storeName = resolution.classification_level
-						? "objects_polyinstantiated"
-						: "objects";
-					// V8.0 Parity: Use stateManager's storage instance.
-					await this.#stateManager.storage.instance.put(
-						storeName,
-						resolution
-					);
-
-					resolved.push({
-						conflictId: conflict.id,
-						strategy,
-						entity: resolution,
-					});
-				}
-			} catch (error) {
-				console.warn(
-					`Failed to resolve conflict ${conflict.id}:`,
-					error
-				);
-				unresolved.push(conflict);
-			}
-		}
-
-		const metrics = this.#getMetrics();
-		metrics?.increment("conflict_count", conflicts.length);
-		metrics?.set("conflict_queue_size", this.#conflictQueue.length);
-		this.#audit("conflict_resolution_completed", {
-			resolvedCount: resolved.length,
-			unresolvedCount: unresolved.length,
-			strategy,
-		});
-
-		return { resolved, unresolved };
-	}
-
-	/**
 	 * Detects if a conflict exists between a local and remote entity based on their update timestamps.
 	 * @private
 	 * @param {object} localEntity - The local version of the entity.
 	 * @param {object} remoteEntity - The remote version of the entity.
+	 * @param {number} lastSyncTime - The timestamp of the last successful sync.
 	 * @returns {boolean} True if a conflict is detected.
 	 */
-	#hasConflict(localEntity, remoteEntity) {
-		// Simple timestamp-based conflict detection
-		const localTime = new Date(localEntity.updated_at).getTime(); // If both have been updated since last sync, it's a conflict
+	#hasConflict(localEntity, remoteEntity, lastSyncTime) {
+		// Mandate 3: Robustness. A conflict exists if the local entity has changed since the last sync,
+		// and the remote entity's timestamp doesn't match the local one.
+		// Mandate 4.2: Pre-parse dates to avoid parsing in a hot path.
+		const localTime = new Date(localEntity.updated_at).getTime();
 		const remoteTime = new Date(remoteEntity.updated_at).getTime();
 
-		return localTime !== remoteTime;
+		const localHasChangedSinceSync = localTime > lastSyncTime;
+		const timestampsDiffer = localTime !== remoteTime;
+
+		// It's a conflict if the local version has been modified since we last synced,
+		// and the remote version is different.
+		return localHasChangedSinceSync && timestampsDiffer;
 	}
 
 	/**
@@ -626,36 +591,6 @@ export class SyncLayer {
 		merged.updated_at = new Date().toISOString();
 
 		return merged;
-	}
-
-	/**
-	 * Resolves a conflict by choosing the entity with the most recent `updated_at` timestamp.
-	 * @private
-	 * @param {object} conflict - The conflict object.
-	 * @returns {object} The winning entity.
-	 */
-	#resolveLastWriteWins(conflict) {
-		const localTime = new Date(conflict.localEntity.updated_at).getTime();
-		const remoteTime = new Date(conflict.remoteEntity.updated_at).getTime();
-
-		return remoteTime > localTime
-			? conflict.remoteEntity
-			: conflict.localEntity;
-	}
-
-	/**
-	 * Resolves a conflict by choosing the entity with the oldest `updated_at` timestamp.
-	 * @private
-	 * @param {object} conflict - The conflict object.
-	 * @returns {object} The winning entity.
-	 */
-	#resolveFirstWriteWins(conflict) {
-		const localTime = new Date(conflict.localEntity.updated_at).getTime();
-		const remoteTime = new Date(conflict.remoteEntity.updated_at).getTime();
-
-		return localTime < remoteTime
-			? conflict.localEntity
-			: conflict.remoteEntity;
 	}
 
 	/**
@@ -726,10 +661,7 @@ export class SyncLayer {
 	 */
 	#getAuthToken() {
 		// This would come from your auth system
-		return (
-			this.#stateManager?.managers?.securityManager?.getAuthToken() ||
-			"demo-token"
-		);
+		return this.#securityManager?.getAuthToken() || "demo-token";
 	}
 
 	/**
@@ -772,28 +704,48 @@ export class SyncLayer {
 	}
 
 	/**
-	 * Triggers a sync operation after a short delay to debounce multiple rapid requests.
+	 * Wraps the storage `put` operation to handle security errors during sync-down.
 	 * @private
+	 * @param {string} storeName - The name of the object store.
+	 * @param {object} entity - The entity to save.
+	 * @returns {Promise<void>}
+	 * @throws {Error} Throws an error if the write operation fails for non-security reasons.
 	 */
-	#debouncedSync = this.#debounce(() => {
-		this.performSync().catch(console.warn);
-	}, this.#config.debounceInterval);
+	async #applyRemoteChange(storeName, entity) {
+		try {
+			// Mandate 2.3: All data access MUST be filtered. The `put` method enforces MAC.
+			await this.#stateManager.storage.instance?.put(storeName, entity);
+		} catch (error) {
+			// If the error is a MAC violation, it's a sync issue, not a critical failure.
+			// This prevents the sync loop from crashing on a permissions error.
+			if (error.message.includes("MAC_WRITE_DENIED")) {
+				this.#audit("sync_down_mac_denied", {
+					entityId: entity.id,
+					entityType: entity.entity_type,
+				});
+				// Re-throw as a specific, catchable error for the sync-down loop.
+				throw new Error(
+					`MAC policy denied applying remote change for entity ${entity.id}.`
+				);
+			}
+			// For other errors, re-throw to let the main error handler catch it.
+			throw error;
+		}
+	}
 
 	/**
-	 * Schedules a failed sync item to be re-added to the queue after an exponential backoff delay.
+	 * Triggers a sync operation after a short delay to debounce multiple rapid requests.
 	 * @private
-	 * @param {object} item - The failed sync queue item.
 	 */
 	#scheduleRetry(item) {
 		const delay = this.#config.retryDelay * Math.pow(2, item.retries - 1); // Exponential backoff
 
 		const timeout = setTimeout(() => {
-			this.#syncQueue.push(item);
-			this.#getMetrics()?.set("queue_size", this.#syncQueue.length);
-			this.#retryTimeouts.delete(item.entity.id);
+			this.queueEntityForSync(item.entity, item.operation); // Re-queue it
+			this.#retryTimeouts?.delete(item.entity.id);
 		}, delay);
 
-		this.#retryTimeouts.set(item.entity.id, timeout);
+		this.#retryTimeouts?.set(item.entity.id, timeout); // This will now use the LRUCache
 	}
 
 	/**
@@ -805,16 +757,15 @@ export class SyncLayer {
 	 * @param {Error|null} [error=null] - Any error that occurred.
 	 */
 	#recordSync(success, latency, result, error = null) {
-		const metrics = this.#getMetrics();
-		metrics?.increment("sync_count");
+		this.#metrics?.increment("sync_count");
 		const timestamp = new Date().toISOString();
-		metrics?.set("last_sync", timestamp);
+		this.#metrics?.set("last_sync", timestamp);
 
 		if (!success) {
-			metrics?.increment("error_count");
-			metrics?.set("last_sync_error", timestamp);
+			this.#metrics?.increment("error_count");
+			this.#metrics?.set("last_sync_error", timestamp);
 		}
-		metrics?.updateAverage("average_latency", latency);
+		this.#metrics?.updateAverage("average_latency", latency);
 	}
 
 	/**
@@ -824,22 +775,11 @@ export class SyncLayer {
 	 * @param {object} data - The data associated with the event.
 	 */
 	#audit(eventType, data) {
-		this.#stateManager?.managers?.forensicLogger?.logAuditEvent(
-			eventType,
-			data,
-			{
-				component: "SyncLayer",
-			}
-		);
-	}
-
-	/**
-	 * Gets the namespaced metrics registry instance.
-	 * @private
-	 * @returns {import('../../utils/MetricsRegistry.js').MetricsRegistry|null}
-	 */
-	#getMetrics() {
-		return this.#stateManager?.metricsRegistry?.namespace("sync");
+		this.#forensicLogger?.logAuditEvent(eventType, data, {
+			component: "SyncLayer",
+			// Mandate 2.4: Pass the full user context for attribution.
+			userContext: this.#securityManager?.getSubject(),
+		});
 	}
 
 	/**

@@ -1,5 +1,7 @@
 // src/core/storage/modules/basic-security.js
 
+import { AppError } from "../../../utils/ErrorHelpers.js";
+
 /**
  * @description
  * A basic security module providing placeholder implementations for security checks and cryptography.
@@ -9,12 +11,18 @@
  * @warning This module is **NOT SECURE**. It provides no real access control or encryption
  * and should never be used in a production environment.
  * @module BasicSecurity
+ *
+ * @privateFields {#config, #stateManager, #metrics, #forensicLogger, #errorHelpers}
  */
 export default class BasicSecurity {
-	/** @private @type {object} */
-	#config;
 	/** @private @type {import('../../HybridStateManager.js').default} */
 	#stateManager;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
 
 	/**
 	 * Creates an instance of BasicSecurity.
@@ -24,8 +32,12 @@ export default class BasicSecurity {
 	 */
 	constructor({ stateManager, options = {} }) {
 		this.#stateManager = stateManager;
-		this.#config = options;
-		console.log("[BasicSecurity] Loaded with config:", this.#config);
+
+		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("basicSecurity");
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
 	}
 
 	/**
@@ -41,18 +53,20 @@ export default class BasicSecurity {
 	 * @returns {Promise<boolean>} A promise that always resolves to `true`.
 	 */
 	async checkPermission(user, action, resource) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("basicSecurity");
 		const startTime = performance.now();
 		try {
-			console.log(
-				`[BasicSecurity] Checking permission for user ${user} to ${action} ${resource}`
-			);
+			// Mandate 2.4: All auditable events MUST use a unified envelope.
+			this.#forensicLogger?.logAuditEvent("BASIC_PERMISSION_CHECK", {
+				user,
+				action,
+				resource,
+				result: "allowed_by_default",
+			});
 			return true; // Always allow for demonstration purposes
 		} finally {
 			const duration = performance.now() - startTime;
-			metrics?.increment("permissionChecks");
-			metrics?.updateAverage("permissionCheckTime", duration);
+			this.#metrics?.increment("permissionChecks");
+			this.#metrics?.updateAverage("permissionCheckTime", duration);
 		}
 	}
 
@@ -66,16 +80,13 @@ export default class BasicSecurity {
 	 * @returns {Promise<string>} A string representing the "encrypted" data.
 	 */
 	async encrypt(data) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("basicSecurity");
 		const startTime = performance.now();
 		try {
-			console.log("[BasicSecurity] Encrypting data (basic):", data);
 			return `basic_encrypted(${JSON.stringify(data)})`;
 		} finally {
 			const duration = performance.now() - startTime;
-			metrics?.increment("encryptionCount");
-			metrics?.updateAverage("encryptionTime", duration);
+			this.#metrics?.increment("encryptionCount");
+			this.#metrics?.updateAverage("encryptionTime", duration);
 		}
 	}
 
@@ -89,23 +100,29 @@ export default class BasicSecurity {
 	 * @returns {Promise<*>} The original data.
 	 */
 	async decrypt(encryptedData) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("basicSecurity");
 		const startTime = performance.now();
 		try {
-			console.log(
-				"[BasicSecurity] Decrypting data (basic):",
-				encryptedData
-			);
+			if (
+				typeof encryptedData !== "string" ||
+				!encryptedData.startsWith("basic_encrypted(")
+			) {
+				throw new AppError("Invalid payload for basic decryption.");
+			}
 			const match = encryptedData.match(/^basic_encrypted\((.*)\)$/);
 			if (match && match[1]) {
 				return JSON.parse(match[1]);
 			}
 			return encryptedData;
+		} catch (error) {
+			const appError = new AppError("Basic decryption failed.", {
+				cause: error,
+			});
+			this.#errorHelpers?.handleError(appError);
+			throw appError;
 		} finally {
 			const duration = performance.now() - startTime;
-			metrics?.increment("decryptionCount");
-			metrics?.updateAverage("decryptionTime", duration);
+			this.#metrics?.increment("decryptionCount");
+			this.#metrics?.updateAverage("decryptionTime", duration);
 		}
 	}
 }

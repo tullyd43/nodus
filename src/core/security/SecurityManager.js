@@ -1,20 +1,27 @@
 // src/core/security/SecurityManager.js
 // Centralizes user context, security policies, and MAC enforcement.
 
-import { MACEngine } from "./MACEngine.js";
-
+/**
+ * @privateFields {#stateManager, #context, #mac, #isReady, #ttlCheckInterval, #errorHelpers, #forensicLogger, #metrics}
+ */
 /**
  * @description Manages the application's security context, including user identity,
  * clearance levels, and the enforcement of Mandatory Access Control (MAC) policies.
  * It serves as the single source of truth for the current subject's security profile.
  */
 export class SecurityManager {
-	/** @private @type {import('../HybridStateManager.js').HybridStateManager|null} */
+	/** @private @type {import('../HybridStateManager.js').default} */
 	#stateManager;
 	/** @private @type {object|null} The current user's security context. */
 	#context = null;
-	/** @private @type {MACEngine|null} The Mandatory Access Control engine. */
+	/** @private @type {import('./MACEngine.js').MACEngine|null} The Mandatory Access Control engine. */
 	#mac = null;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+	/** @private @type {import('./ForensicLogger.js').ForensicLogger|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
 	/** @private @type {boolean} */
 	#isReady = false;
 	/** @private @type {ReturnType<typeof setInterval>|null} */
@@ -42,9 +49,14 @@ export class SecurityManager {
 	async initialize() {
 		if (this.#isReady) return this;
 
-		// V8.0 Parity: Instantiate the MACEngine by passing the stateManager.
-		// The MACEngine will then derive its own dependencies (like this SecurityManager) from it.
-		this.#mac = new MACEngine({ stateManager: this.#stateManager });
+		// V8.0 Parity: Mandate 1.2 - Derive core services from the stateManager.
+		// The MACEngine is now initialized by the ServiceRegistry.
+		const managers = this.#stateManager.managers;
+		this.#mac = managers.macEngine;
+		this.#errorHelpers = managers.errorHelpers;
+		this.#forensicLogger = managers.forensicLogger;
+		this.#metrics =
+			this.#stateManager.metricsRegistry?.namespace("securityManager");
 
 		// Start periodic check for context expiration
 		if (this.#ttlCheckInterval) clearInterval(this.#ttlCheckInterval);
@@ -65,39 +77,65 @@ export class SecurityManager {
 	 * @param {string[]} [compartments=[]] - An array of security compartments.
 	 * @param {number} [ttl=14400000] - Time-to-live for the context in ms (default: 4 hours).
 	 */
-	setUserContext(
+	async setUserContext(
 		userId,
 		clearanceLevel,
 		compartments = [],
 		ttl = 4 * 3600000
 	) {
-		if (!userId || !clearanceLevel) {
-			throw new Error(
-				"User ID and clearance level are required to set security context."
-			);
-		}
+		return this.#errorHelpers?.tryAsync(
+			async () => {
+				if (!userId || !clearanceLevel) {
+					throw new Error(
+						"User ID and clearance level are required to set security context."
+					);
+				}
 
-		this.#context = {
-			userId,
-			level: clearanceLevel,
-			compartments: new Set(compartments || []),
-			expires: Date.now() + ttl,
-		};
+				this.#context = {
+					userId,
+					level: clearanceLevel,
+					compartments: new Set(compartments || []),
+					expires: Date.now() + ttl,
+				};
 
-		console.log(
-			`[SecurityManager] User context set for ${userId} at level ${clearanceLevel}.`
+				// Mandate 2.4: All auditable events MUST use a unified envelope.
+				await this.#forensicLogger?.logAuditEvent(
+					"SECURITY_CONTEXT_SET",
+					{ userId, level: clearanceLevel },
+					this.#context
+				);
+
+				console.log(
+					`[SecurityManager] User context set for ${userId} at level ${clearanceLevel}.`
+				);
+				this.#stateManager?.emit?.("securityContextSet", {
+					...this.#context,
+				});
+			},
+			{ component: "SecurityManager", operation: "setUserContext" }
 		);
-		this.#stateManager?.emit?.("securityContextSet", { ...this.#context });
 	}
 
 	/**
 	 * Clears the current security context (e.g., on logout).
 	 */
-	clearUserContext() {
-		if (!this.#context) return; // No-op if already cleared
-		this.#context = null;
-		console.log("[SecurityManager] User context cleared.");
-		this.#stateManager?.emit?.("securityContextCleared");
+	async clearUserContext() {
+		return this.#errorHelpers?.tryAsync(
+			async () => {
+				if (!this.#context) return; // No-op if already cleared
+
+				// Mandate 2.4: Log the context clearance as an audit event.
+				await this.#forensicLogger?.logAuditEvent(
+					"SECURITY_CONTEXT_CLEARED",
+					{ userId: this.#context.userId },
+					this.#context
+				);
+				this.#context = null;
+				console.log("[SecurityManager] User context cleared.");
+				this.#stateManager?.emit?.("securityContextCleared");
+			},
+			{ component: "SecurityManager", operation: "clearUserContext" }
+		);
 	}
 
 	/**
@@ -112,12 +150,13 @@ export class SecurityManager {
 	 * Periodically checks if the context has expired and clears it if necessary.
 	 * @private
 	 */
-	#checkContextTTL() {
+	async #checkContextTTL() {
 		if (this.#context && !this.hasValidContext()) {
 			console.warn(
 				`[SecurityManager] Security context for user ${this.#context.userId} has expired. Clearing context.`
 			);
-			this.clearUserContext();
+			this.#metrics?.increment("context.expired");
+			await this.clearUserContext();
 		}
 	}
 
@@ -145,12 +184,14 @@ export class SecurityManager {
 	getLabel(obj, context = {}) {
 		if (!obj) return { level: "public", compartments: new Set() };
 
+		// V8.0 Parity: Robustly check for polyinstantiation markers.
 		const isPoly =
 			context?.storeName === "objects_polyinstantiated" ||
-			"classification_level" in obj;
+			Object.hasOwn(obj, "classification_level");
+
 		const level =
 			(isPoly ? obj.classification_level : obj.classification) ||
-			"public";
+			"internal"; // Default to 'internal' for objects that exist but lack a label.
 		const compartments = new Set(obj.compartments || []);
 
 		return { level, compartments };

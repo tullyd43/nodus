@@ -8,13 +8,17 @@
  * and managing performance features like caching and history tracking. It embodies the **Composability** pillar.
  *
  * @module ValidationStack
+ * @privateFields {#validators, #validationCache, #validationHistory, #config, #stateManager, #metrics, #forensicLogger, #errorHelpers}
  */
 export default class ValidationStack {
 	/** @private @type {Array<object>} */
 	#validators = [];
 	/** @private @type {import('../../../utils/LRUCache.js').LRUCache|null} */
 	#validationCache = null;
-	/** @private @type {Array<object>} */
+	/**
+	 * @private
+	 * @type {Array<object>}
+	 */
 	#validationHistory = [];
 	/** @private @type {object} */
 	#config;
@@ -22,6 +26,10 @@ export default class ValidationStack {
 	#stateManager = null;
 	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics = null;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').default|null} */
+	#errorHelpers = null;
 
 	/**
 	 * Creates an instance of ValidationStack.
@@ -34,6 +42,8 @@ export default class ValidationStack {
 		this.#stateManager = stateManager;
 		this.#metrics =
 			this.#stateManager?.metricsRegistry?.namespace("validationStack");
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
 
 		// V8.0 Parity: Pass stateManager to each validator's constructor.
 		this.#validators = validators.map((ValidatorClass) => {
@@ -143,6 +153,12 @@ export default class ValidationStack {
 				entity,
 				errors: result.errors || [],
 			});
+			this.#forensicLogger?.logAuditEvent("VALIDATION_FAILURE", {
+				entityId: entity.id,
+				entityType: entity.entity_type,
+				errors: result.errors,
+				validator: "ValidationStack",
+			});
 		}
 
 		return result;
@@ -159,31 +175,34 @@ export default class ValidationStack {
 		const errors = [];
 		const warnings = [];
 
-		for (const validator of applicableValidators) {
-			try {
-				const result = await validator.validateField(
-					entityType,
-					fieldName,
-					value,
-					context
-				);
+		await this.#errorHelpers?.tryAsync(
+			async () => {
+				for (const validator of applicableValidators) {
+					const result = await validator.validateField(
+						entityType,
+						fieldName,
+						value,
+						context
+					);
 
-				if (!result.valid) {
-					errors.push(...(result.errors || []));
-					warnings.push(...(result.warnings || []));
+					if (!result.valid) {
+						errors.push(...(result.errors || []));
+						warnings.push(...(result.warnings || []));
 
-					if (this.#config.failFast) {
-						break;
+						if (this.#config.failFast) {
+							break;
+						}
 					}
 				}
-			} catch (error) {
-				errors.push(`Validator error: ${error.message}`);
-
-				if (this.#config.failFast) {
-					break;
-				}
+			},
+			{
+				component: "ValidationStack",
+				operation: "validateField",
+				onError: (error) => {
+					errors.push(`Validator error: ${error.message}`);
+				},
 			}
-		}
+		);
 
 		return {
 			valid: errors.length === 0,
@@ -203,7 +222,7 @@ export default class ValidationStack {
 		return {
 			...this.#metrics?.getAllAsObject(),
 			validatorsLoaded: this.#validators.length,
-			cacheSize: this.#validationCache.size,
+			cacheSize: this.#validationCache?.size || 0,
 			historySize: this.#validationHistory.length,
 		};
 	}
@@ -219,7 +238,7 @@ export default class ValidationStack {
 	 * Clear validation cache
 	 */
 	clearCache() {
-		this.#validationCache.clear();
+		this.#validationCache?.clear();
 		console.log("[ValidationStack] Validation result cache cleared.");
 	}
 
@@ -247,40 +266,44 @@ export default class ValidationStack {
 		const warnings = [];
 		const validationResults = [];
 
-		for (const validator of this.#validators) {
-			try {
-				// V8.0 Parity: Use isApplicableFor to avoid name collision with 'supports' property.
-				if (typeof validator.isApplicableFor === "function") {
-					if (!validator.isApplicableFor(entity, context)) continue;
-				} else if (validator.supports) {
-					// Fallback for older validators
-					continue;
-				}
+		await this.#errorHelpers?.tryAsync(
+			async () => {
+				for (const validator of this.#validators) {
+					// V8.0 Parity: Use isApplicableFor to avoid name collision with 'supports' property.
+					if (typeof validator.isApplicableFor === "function") {
+						if (!validator.isApplicableFor(entity, context))
+							continue;
+					} else if (validator.supports) {
+						// Fallback for older validators
+						continue;
+					}
 
-				const result = await validator.validate(entity, context);
-				validationResults.push({
-					validator: validator.name || validator.constructor.name,
-					result,
-				});
+					const result = await validator.validate(entity, context);
+					validationResults.push({
+						validator: validator.name || validator.constructor.name,
+						result,
+					});
 
-				if (!result.valid) {
-					errors.push(...(result.errors || []));
-					warnings.push(...(result.warnings || []));
+					if (!result.valid) {
+						errors.push(...(result.errors || []));
+						warnings.push(...(result.warnings || []));
 
-					if (this.#config.failFast) {
-						break;
+						if (this.#config.failFast) {
+							break;
+						}
 					}
 				}
-			} catch (error) {
-				const errorMsg = `Validator ${validator.name || validator.constructor.name} failed: ${error.message}`;
-				errors.push(errorMsg);
-				console.error(`[ValidationStack] ${errorMsg}`);
-
-				if (this.#config.failFast) {
-					break;
-				}
+			},
+			{
+				component: "ValidationStack",
+				operation: "performValidation",
+				onError: (error) => {
+					const errorMsg = `ValidationStack failed during execution: ${error.message}`;
+					errors.push(errorMsg);
+					console.error(`[ValidationStack] ${errorMsg}`);
+				},
 			}
-		}
+		);
 
 		return {
 			valid: errors.length === 0,

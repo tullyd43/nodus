@@ -1,52 +1,93 @@
 /**
  * @file HybridStateManager.js
- * @description The central orchestrator for application state, combining in-memory client state
+ * @description The central orchestrator for application state, providing access to all core services and managing the top-level state structure.
  * with a secure, dynamic, and persistent storage backend. It manages data, security,
  * and various subsystems like validation, auditing, and event processing.
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
-import { EventFlowEngine } from "@core/EventFlowEngine.js";
 import { BoundedStack } from "@utils/BoundedStack.js";
-import { ServiceRegistry } from "./ServiceRegistry.js";
 
-import { MetricsRegistry } from "../utils/MetricsRegistry.js";
-import { NonRepudiation } from "./security/NonRepudiation.js";
-import { StorageLoader } from "./storage/StorageLoader.js";
+import { ServiceRegistry } from "./ServiceRegistry.js";
 
 /**
  * @class HybridStateManager
- * @classdesc Manages the application's state by combining a fast, in-memory client state
- * with a robust, secure, and persistent offline storage layer. This version is specifically
- * designed to integrate with the `StorageLoader` for modern, modular storage capabilities.
+ * @classdesc The single source of truth for the application. It owns all state and provides access to all core services (managers)
+ * via the `ServiceRegistry`. It combines a fast, in-memory client state with a robust, secure, and persistent offline storage layer.
  */
 export class HybridStateManager {
-	// Private fields for core subsystems to enforce encapsulation
-	/**
-	 * The instance for creating non-repudiable signatures for audit events.
-	 * @private @type {NonRepudiation|null}
-	 */
-	#signer;
-	/**
-	 * Public accessor for the NonRepudiation signer.
-	 * @returns {NonRepudiation|null} The signer instance.
-	 */
-	get signer() {
-		return this.#signer;
-	}
+	// V8.0 Parity: Mandate 3.1 & 3.5 - All internal properties MUST be private.
+	/** @privateFields {#config, #clientState, #storage, #schema, #managers, #listeners, #unsubscribeFunctions, #serviceRegistry, #metricsRegistry, #signer, #initialized} */
+
+	/** @private @type {object} */
+	#config;
+	/** @private @type {object} */
+	#clientState;
+	/** @private @type {object} */
+	#storage;
+	/** @private @type {object} */
+	#schema;
+	/** @private @type {object} */
+	#managers;
+	/** @private @type {Map<string, Function[]>} */
+	#listeners;
 	/**
 	 * An array of functions to call to unsubscribe from events.
 	 * @private @type {Function[]}
 	 */
 	#unsubscribeFunctions;
+	/** @private @type {ServiceRegistry} */
+	#serviceRegistry;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metricsRegistry = null;
+	/** @private @type {import('./security/NonRepudiation.js').NonRepudiation|null} */
+	#signer = null;
+	/** @private @type {boolean} */
+	#initialized = false;
+
+	// --- Public Getters for Controlled Access ---
+
+	get config() {
+		return this.#config;
+	}
+	get clientState() {
+		return this.#clientState;
+	}
+	get storage() {
+		return this.#storage;
+	}
+	get schema() {
+		return this.#schema;
+	}
+	get managers() {
+		return this.#managers;
+	}
+	get serviceRegistry() {
+		return this.#serviceRegistry;
+	}
+	get metricsRegistry() {
+		return this.#metricsRegistry;
+	}
+	get signer() {
+		return this.#signer;
+	}
+	get initialized() {
+		return this.#initialized;
+	}
+	/**
+	 * Public setter for initialization status, controlled by SystemBootstrap.
+	 * @param {boolean} value
+	 */
+	set initialized(value) {
+		this.#initialized = !!value;
+	}
 
 	/**
 	 * @param {object} [config={}] - The configuration object for the state manager.
 	 */
 	constructor(config = {}) {
-		this.config = {
+		this.#config = {
 			maxUndoStackSize: config.maxUndoStackSize || 50,
-			maxViewportItems: config.maxViewportItems || 200,
 			performanceMode: config.performanceMode ?? false,
 			offlineEnabled: config.offlineEnabled || true,
 			embeddingEnabled: config.embeddingEnabled || true,
@@ -70,19 +111,18 @@ export class HybridStateManager {
 		 * The in-memory, client-side state for immediate operations and UI responsiveness.
 		 * @type {object}
 		 */
-		this.clientState = {
+		this.#clientState = {
 			entities: new Map(),
 			relationships: new Map(),
-			undoStack: new BoundedStack(this.config.maxUndoStackSize),
-			redoStack: new BoundedStack(this.config.maxUndoStackSize),
+			undoStack: new BoundedStack(this.#config.maxUndoStackSize),
+			redoStack: new BoundedStack(this.#config.maxUndoStackSize),
 			pendingOperations: new BoundedStack(100),
 			errors: [],
 			searchIndex: new Map(),
 
 			// UI state
 			viewport: {
-				entities: new Map(),
-				maxItems: this.config.maxViewportItems,
+				entities: new Map(), // This would be managed by a dedicated UI/viewport manager
 				currentFilter: null,
 			},
 
@@ -93,24 +133,24 @@ export class HybridStateManager {
 			cache: null, // Will be initialized by CacheManager
 		};
 
-		// NEW: Dynamic storage system
+		// Dynamic storage system
 		/**
 		 * Manages the connection to the persistent storage layer.
 		 * @type {{loader: StorageLoader|null, instance: object|null, ready: boolean, config: object|null}}
 		 */
-		this.storage = {
+		this.#storage = {
 			loader: null,
 			instance: null,
 			ready: false,
 			config: null,
 		};
 
-		// NEW: Schema metadata from database
+		// Schema metadata from database
 		/**
 		 * Holds the database schema information once loaded.
 		 * @type {{entities: Map<string, object>, fields: Map<string, object>, relationships: Map<string, object>, classifications: Set<string>, loaded: boolean}}
 		 */
-		this.schema = {
+		this.#schema = {
 			entities: new Map(), // Entity type definitions from database
 			fields: new Map(), // Field definitions from type_definitions table
 			relationships: new Map(), // Relationship type definitions
@@ -118,41 +158,38 @@ export class HybridStateManager {
 			loaded: false,
 		};
 
-		// Type definitions registry (now populated from database)
-		/** @type {Map<string, object>} */
-		this.typeDefinitions = new Map();
+		this.#listeners = new Map();
 
-		// State change listeners (unchanged)
-		this.listeners = new Map();
 		/**
 		 * A collection of specialized managers for different subsystems.
 		 * @type {{
-		 *   offline: object|null, sync: object|null, policies: import('./SystemPolicies_Cached.js').default|null,
-		 *   plugin: import('./ManifestPluginSystem.js').default|null, embeddingManager: import('../state/EmbeddingManager.js').default|null,
-		 *   extension: import('./ExtensionManager.js').default|null, validationLayer: import('./storage/ValidationLayer.js').default|null,
-		 *   securityManager: import('./security/SecurityManager.js').default|null, forensicLogger: import('./ForensicLogger.js').default|null,
-		 *   idManager: import('../managers/IdManager.js').IdManager|null, cacheManager: import('../managers/CacheManager.js').CacheManager|null,
-		 *   databaseOptimizer: import('./DatabaseOptimizer.js').default|null, adaptiveRenderer: import('./AdaptiveRenderer.js').default|null,
-		 *   buildingBlockRenderer: import('./BuildingBlockRenderer.js').default|null, queryService: import('../state/QueryService.js').default|null,
-		 *   eventFlowEngine: import('./EventFlowEngine.js').default|null, componentRegistry: import('./ComponentDefinition.js').ComponentDefinitionRegistry|null,
-		 *   conditionRegistry: import('./ConditionRegistry.js').ConditionRegistry|null, actionHandler: import('./ActionHandlerRegistry.js').default|null,
-		 *   errorHelpers: import('../utils/ErrorHelpers.js').ErrorHelpers|null, cds: import('./security/cds.js').CrossDomainSolution|null
+		 *   errorHelpers: import('../utils/ErrorHelpers.js').ErrorHelpers,
+		 *   metricsRegistry: import('../utils/MetricsRegistry.js').MetricsRegistry,
+		 *   idManager: import('../managers/IdManager.js').IdManager,
+		 *   cacheManager: import('../managers/CacheManager.js').CacheManager,
+		 *   securityManager: import('./security/SecurityManager.js').SecurityManager,
+		 *   forensicLogger: import('./ForensicLogger.js').ForensicLogger,
+		 *   policies: import('./SystemPolicies_Cached.js').SystemPolicies,
+		 *   conditionRegistry: import('./ConditionRegistry.js').ConditionRegistry,
+		 *   actionHandler: import('./ActionHandlerRegistry.js').ActionHandlerRegistry,
+		 *   componentRegistry: import('./ComponentDefinition.js').ComponentDefinitionRegistry,
+		 *   eventFlowEngine: import('./EventFlowEngine.js').EventFlowEngine,
+		 *   validationLayer: import('./storage/ValidationLayer.js').ValidationLayer,
+		 *   plugin: import('./ManifestPluginSystem.js').ManifestPluginSystem,
+		 *   embeddingManager: import('../state/EmbeddingManager.js').EmbeddingManager,
+		 *   queryService: import('../state/QueryService.js').QueryService,
+		 *   adaptiveRenderer: import('./AdaptiveRenderer.js').AdaptiveRenderer,
+		 *   buildingBlockRenderer: import('./BuildingBlockRenderer.js').BuildingBlockRenderer,
+		 *   databaseOptimizer: import('./DatabaseOptimizer.js').DatabaseOptimizer,
+		 *   cds: import('./security/cds.js').CrossDomainSolution,
+		 *   optimizationAccessControl: import('./OptimizationAccessControl.js').OptimizationAccessControl,
+		 *   metricsReporter: import('../utils/MetricsReporter.js').MetricsReporter,
+		 *   extensionManager: import('./ExtensionManager.js').ExtensionManager
 		 * }}
-		 * @property {object|null} sync - Manages data synchronization.
-		 * @property {object|null} plugin - Manages plugins.
-		 * @property {import('../state/EmbeddingManager.js').default|null} embedding - Manages AI embeddings.
-		 * @property {object|null} extension - Manages extensions.
-		 * @property {import('./storage/ValidationLayer.js').default|null} validation - Manages data validation.
-		 * @property {import('./security/SecurityManager.js').default|null} securityManager - Manages user context and security.
-		 * @property {import('./ForensicLogger.js').default|null} forensicLogger - Manages audit logging.
-		 * @property {import('../managers/IdManager.js').IdManager|null} idManager - Manages ID generation.
-		 * @property {import('../managers/CacheManager.js').CacheManager|null} cacheManager - Manages all caches.
-		 * @property {ServiceRegistry|null} serviceRegistry - Manages service instantiation.
 		 */
-		this.managers = {
-			offline: null,
-			sync: null,
-			policies: null, // NEW: System Policies manager
+		this.#managers = {
+			// This object will be populated by the ServiceRegistry.
+			policies: null,
 			plugin: null,
 			embeddingManager: null,
 			extension: null,
@@ -167,49 +204,20 @@ export class HybridStateManager {
 			queryService: null,
 			eventFlowEngine: null,
 			componentRegistry: null, // NEW: Component Definition Registry
-			conditionRegistry: null, // NEW: Condition Registry
-			actionHandler: null, // NEW: Action Handler Registry
-			errorHelpers: null, // NEW: Error Helpers
+			conditionRegistry: null,
+			actionHandler: null,
+			errorHelpers: null,
+			cds: null,
 		};
-		this.managers.cds = null; // NEW: Cross-Domain Solution
-
-		// Initialize metrics registry
-		/** @type {MetricsRegistry} */
-		this.metricsRegistry = new MetricsRegistry(); // This is one of the few direct instantiations allowed, as it's foundational.
 
 		// V8.0 Parity: Mandate 1.3 - Instantiate the ServiceRegistry
-		/**
-		 * Manages the lifecycle of all core services.
-		 * @type {ServiceRegistry}
-		 */
-		this.serviceRegistry = new ServiceRegistry(this);
+		this.#serviceRegistry = new ServiceRegistry(this);
 
 		// Initialize private fields
-		this.#signer = null;
 		this.#unsubscribeFunctions = [];
-
-		/**
-		 * A flag indicating if the state manager has been initialized.
-		 * @type {boolean}
-		 */
-		this.initialized = false;
-	}
-
-	/**
-	 * Initializes the HybridStateManager and its core subsystems, including storage and event processing.
-	 * This is the main entry point after instantiation.
-	 * @deprecated Use SystemBootstrap to start the application.
-	 * @param {object} authContext - The authentication context of the current user.
-	 * @param {string} authContext.userId - The user's unique identifier.
-	 * @param {string} authContext.clearanceLevel - The user's security clearance level.
-	 * @param {string[]} [authContext.compartments] - An array of security compartments the user has access to.
-	 */
-	async initialize() {
-		// The primary initialization logic is now handled by SystemBootstrap.
-		// This method can be used for post-bootstrap setup if needed in the future.
-		console.warn(
-			"[HybridStateManager] initialize() is deprecated. Use SystemBootstrap to start the application."
-		);
+		this.#signer = null;
+		this.#metricsRegistry = null;
+		this.#initialized = false;
 	}
 
 	/**
@@ -218,95 +226,28 @@ export class HybridStateManager {
 	 * @internal
 	 */
 	async bootstrapSubsystems() {
-		// Initialize the event system
-		// V8.0 Parity: EventFlowEngine is now loaded by the ServiceRegistry.
-		await this.serviceRegistry.get("eventFlowEngine");
-		this.#subscribeToCoreEvents();
+		// V8.0 Parity: All services, including foundational ones, are loaded via the registry.
+		this.#metricsRegistry =
+			await this.#serviceRegistry.get("metricsRegistry");
+		await this.#serviceRegistry.get("eventFlowEngine");
+		const nonRepudiationService =
+			await this.#serviceRegistry.get("nonRepudiation");
+		this.#signer = nonRepudiationService;
 
-		// Initialize the Non-Repudiation signer with the crypto instance from storage
-		// This ensures it uses the correct KeyringAdapter (dev or prod)
-		if (this.storage.instance?._crypto) {
-			this.#signer = new NonRepudiation(this.storage.instance._crypto);
-		}
 		console.log("[HybridStateManager] Core subsystems bootstrapped.");
 
 		// Initialize the client-side cache via the manager
-		if (this.managers.cacheManager) {
-			this.clientState.cache =
-				this.managers.cacheManager.getCache("clientState");
+		if (this.#managers.cacheManager) {
+			this.#clientState.cache =
+				this.#managers.cacheManager.getCache("clientState");
 		}
 
 		// V8.0 Parity: Mandate 4.3 - Apply performance measurement decorator to critical methods.
-		if (this.metricsRegistry) {
+		if (this.#metricsRegistry) {
 			this.saveEntity = this.metricsRegistry
 				.namespace("state")
 				.measure("saveEntity")(this.saveEntity.bind(this));
 		}
-	}
-
-	/**
-	 * Initializes the internal event system and subscribes to core events.
-	 * @private
-	 * @returns {void}
-	 */
-	#subscribeToCoreEvents() {
-		// --- Core Event Subscriptions ---
-		this.on("validationError", (data) => this.handleValidationError(data));
-		this.on("syncCompleted", (data) => this.handleSyncCompleted(data));
-		this.on("syncError", (data) => this.handleSyncError(data));
-		this.on("accessDenied", (data) => this.handleAccessDenied(data));
-
-		console.log("[HybridStateManager] Event system initialized");
-	}
-
-	// --- Validation Layer ---
-	/**
-	 * Handles validation error events.
-	 * @private
-	 * @param {object} data - The error data payload from the validation event.
-	 * @returns {void}
-	 */
-	handleValidationError(data) {
-		this.clientState.errors.push(data);
-		this.metricsRegistry.increment("validation_errors");
-		this.recordAuditEvent("VALIDATION_ERROR", data);
-	}
-
-	// --- Sync Layer ---
-	/**
-	 * Handles successful sync completion events.
-	 * @private
-	 * @param {object} data - The data from the sync completion event.
-	 * @returns {void}
-	 */
-	handleSyncCompleted(data) {
-		this.metricsRegistry.increment("sync_completed");
-		this.clientState.lastSync = data.timestamp;
-		this.recordAuditEvent("SYNC_COMPLETED", data);
-	}
-
-	/**
-	 * Handles sync error events.
-	 * @private
-	 * @param {object} data - The data from the sync error event.
-	 * @returns {void}
-	 */
-	handleSyncError(data) {
-		this.metricsRegistry.increment("sync_errors");
-		this.clientState.lastSyncError = data.timestamp;
-		this.recordAuditEvent("SYNC_ERROR", data);
-	}
-
-	// --- Security Layer ---
-	/**
-	 * Handles access denied events.
-	 * @private
-	 * @param {object} data - The data from the access denied event.
-	 * @returns {void}
-	 */
-	handleAccessDenied(data) {
-		this.metricsRegistry.increment("access_denied");
-		this.recordAuditEvent("ACCESS_DENIED", data);
 	}
 
 	/**
@@ -319,7 +260,7 @@ export class HybridStateManager {
 	async recordAuditEvent(type, payload, context = {}) {
 		try {
 			// V8.0 Parity: Delegate audit event creation and logging to the ForensicLogger.
-			const forensicLogger = this.managers.forensicLogger;
+			const forensicLogger = this.#managers.forensicLogger;
 			if (!forensicLogger) {
 				console.warn(
 					"[HybridStateManager] ForensicLogger not available for audit event."
@@ -344,13 +285,13 @@ export class HybridStateManager {
 	 * @returns {Promise<object>} The initialized storage object.
 	 */
 	async initializeStorageSystem(authContext, stateManager) {
-		if (this.storage.ready) {
-			return this.storage;
+		if (this.#storage.ready) {
+			return this.#storage;
 		}
 
 		// Ensure SecurityManager is loaded and set the context
 		const securityManager =
-			await this.serviceRegistry.get("securityManager");
+			await this.#serviceRegistry.get("securityManager");
 		if (authContext?.userId && authContext?.clearanceLevel) {
 			securityManager.setUserContext(
 				authContext.userId,
@@ -359,23 +300,21 @@ export class HybridStateManager {
 			);
 		}
 
-		// Create storage loader (pass mac + demoMode explicitly)
-		this.storage.loader = new StorageLoader({
-			baseURL: "/src/core/storage/modules/", // ensure absolute path works in dev
-			demoMode: Boolean(this.config.demoMode), // <— top-level
-			stateManager, // Pass stateManager to loader
-			mac: securityManager.mac, // <— pass MAC engine from the SecurityManager
-		});
+		// V8.0 Parity: The StorageLoader is now a service managed by the registry.
+		const storageLoader = await this.#serviceRegistry.get("storageLoader");
+		this.#storage.loader = storageLoader;
 
-		await this.storage.loader.init();
+		// The loader is already initialized by the service registry.
 
 		// Create storage instance with user context + demo flag
-		this.storage.instance = await this.storage.loader.createStorage(
+		this.#storage.instance = await this.#storage.loader.createStorage(
 			authContext,
 			{
-				demoMode: Boolean(this.config.demoMode),
-				enableSync: this.config?.sync?.enableSync === true,
-				realtimeSync: this.config?.sync?.realtime === true,
+				demoMode: Boolean(this.#config.demoMode),
+				enableSync: this.#config?.sync?.enableSync === true,
+				realtimeSync: this.#config?.sync?.realtime === true,
+				// Pass the MAC engine from the already-initialized SecurityManager
+				mac: securityManager.mac,
 				stateManager, // Pass stateManager to createStorage
 			}
 		);
@@ -400,369 +339,59 @@ export class HybridStateManager {
 	}
 
 	/**
-	 * Loads the database schema definition. In a real application, this would fetch from the database.
-	 * Here, it's simulated with a hardcoded structure.
-	 * @internal This method is called by SystemBootstrap.
-	 */
-	async loadDatabaseSchema() {
-		try {
-			// In a real implementation, this would query the database
-			// For now, we'll simulate with the schema structure from nodus.sql
-
-			// Load entity types from objects table structure
-			this.schema.entities.set("objects", {
-				tableName: "objects",
-				primaryKey: "id",
-				fields: {
-					id: { type: "uuid", required: true },
-					organization_id: { type: "uuid", required: true },
-					entity_type: { type: "text", required: true },
-					display_name: { type: "text" },
-					description: { type: "text" },
-					content: { type: "jsonb" },
-					status: { type: "text", default: "active" },
-					priority: { type: "integer", default: 0 },
-					tags: { type: "text[]", default: "{}" },
-					classification: {
-						type: "security_classification",
-						default: "restricted",
-					},
-					compartment_markings: { type: "text[]", default: "{}" },
-					created_at: { type: "timestamptz", default: "now()" },
-					updated_at: { type: "timestamptz", default: "now()" },
-					created_by: { type: "uuid", required: true },
-					updated_by: { type: "uuid", required: true },
-					version: { type: "integer", default: 1 },
-					sync_state: { type: "sync_state", default: "local_dirty" },
-					last_synced: { type: "timestamptz" },
-				},
-			});
-
-			// Load events table structure
-			this.schema.entities.set("events", {
-				tableName: "events",
-				primaryKey: "id",
-				fields: {
-					id: { type: "uuid", required: true },
-					organization_id: { type: "uuid", required: true },
-					event_type: { type: "text", required: true },
-					source_entity_id: { type: "uuid" },
-					target_entity_id: { type: "uuid" },
-					event_data: { type: "jsonb" },
-					classification: {
-						type: "security_classification",
-						default: "restricted",
-					},
-					compartment_markings: { type: "text[]", default: "{}" },
-					created_at: { type: "timestamptz", default: "now()" },
-					created_by: { type: "uuid", required: true },
-				},
-			});
-
-			// Load relationships table structure
-			this.schema.entities.set("links", {
-				tableName: "links",
-				primaryKey: "id",
-				fields: {
-					id: { type: "uuid", required: true },
-					org_id: { type: "uuid", required: true },
-					source_id: { type: "uuid", required: true },
-					target_id: { type: "uuid", required: true },
-					relationship_type: { type: "text", required: true },
-					metadata: { type: "jsonb" },
-					classification: {
-						type: "security_classification",
-						default: "restricted",
-					},
-					compartment_markings: { type: "text[]", default: "{}" },
-					created_at: { type: "timestamptz", default: "now()" },
-					created_by: { type: "uuid", required: true },
-				},
-			});
-
-			// Load security classifications
-			this.schema.classifications = new Set([
-				"public",
-				"internal",
-				"restricted",
-				"confidential",
-				"secret",
-				"top_secret",
-				"nato_restricted",
-				"nato_confidential",
-				"nato_secret",
-				"cosmic_top_secret",
-			]);
-
-			this.schema.loaded = true;
-			console.log("[HybridStateManager] Database schema loaded");
-		} catch (error) {
-			console.error(
-				"[HybridStateManager] Failed to load database schema:",
-				error
-			);
-			throw error;
-		}
-	}
-
-	/**
-	 * Loads UI-ready type definitions from the raw database schema.
-	 * @private
-	 * @returns {Promise<void>}
-	 */
-	async loadTypeDefinitionsFromSchema() {
-		try {
-			// Create type definitions based on database schema
-			for (const [
-				entityType,
-				schemaInfo,
-			] of this.schema.entities.entries()) {
-				const typeDef = {
-					id: entityType,
-					name:
-						entityType.charAt(0).toUpperCase() +
-						entityType.slice(1),
-					table: schemaInfo.tableName,
-					fields: this.convertSchemaToFields(schemaInfo.fields),
-					actions: this.getDefaultActionsForType(entityType),
-					security: {
-						classificationField: "classification",
-						compartmentField: "compartment_markings",
-						ownerField: "created_by",
-					},
-				};
-
-				this.typeDefinitions.set(entityType, typeDef);
-			}
-
-			console.log(
-				`[HybridStateManager] Loaded ${this.typeDefinitions.size} type definitions from schema`
-			);
-		} catch (error) {
-			console.error(
-				"[HybridStateManager] Failed to load type definitions:",
-				error
-			);
-			throw error;
-		}
-	}
-
-	/**
-	 * Converts raw database schema field definitions into a format suitable for UI rendering.
-	 * @private
-	 * @param {object} schemaFields - The raw field definitions from the schema.
-	 * @returns {object[]} An array of UI-ready field definitions.
-	 */
-	convertSchemaToFields(schemaFields) {
-		const uiFields = [];
-
-		for (const [fieldName, fieldInfo] of Object.entries(schemaFields)) {
-			// Skip internal system fields from UI
-			if (
-				[
-					"id",
-					"organization_id",
-					"created_at",
-					"updated_at",
-					"created_by",
-					"updated_by",
-					"version",
-				].includes(fieldName)
-			) {
-				continue;
-			}
-
-			const uiField = {
-				name: fieldName,
-				label: this.formatFieldLabel(fieldName),
-				type: this.mapDatabaseTypeToUI(fieldInfo.type),
-				required: fieldInfo.required || false,
-				default: fieldInfo.default,
-				validation: this.getFieldValidation(fieldName, fieldInfo),
-			};
-
-			// Special handling for security fields
-			if (fieldName === "classification") {
-				uiField.type = "select";
-				uiField.options = Array.from(this.schema.classifications);
-				uiField.security = true;
-			}
-
-			if (fieldName === "compartment_markings") {
-				uiField.type = "tags";
-				uiField.security = true;
-			}
-
-			uiFields.push(uiField);
-		}
-
-		return uiFields;
-	}
-
-	/**
-	 * Maps a database data type to a corresponding UI component type.
-	 * @private
-	 * @param {string} dbType - The database type string.
-	 * @returns {string} The corresponding UI field type.
-	 */
-	mapDatabaseTypeToUI(dbType) {
-		const typeMap = {
-			text: "text",
-			varchar: "text",
-			uuid: "hidden",
-			integer: "number",
-			boolean: "checkbox",
-			jsonb: "json",
-			"text[]": "tags",
-			timestamptz: "datetime",
-			security_classification: "select",
-			sync_state: "hidden",
-		};
-
-		return typeMap[dbType] || "text";
-	}
-
-	/**
-	 * Formats a snake_case field name into a human-readable "Title Case" label.
-	 * @private
-	 * @param {string} fieldName - The field name to format.
-	 * @returns {string} The formatted label.
-	 */
-	formatFieldLabel(fieldName) {
-		return fieldName
-			.split("_")
-			.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-			.join(" ");
-	}
-
-	/**
-	 * Generates basic validation rules for a field based on its schema definition.
-	 * @private
-	 * @param {string} fieldName - The name of the field.
-	 * @param {object} fieldInfo - The schema information for the field.
-	 * @returns {object[]} An array of validation rule objects.
-	 */
-	getFieldValidation(fieldName, fieldInfo) {
-		const validation = [];
-
-		if (fieldInfo.required) {
-			validation.push({
-				type: "required",
-				message: `${this.formatFieldLabel(fieldName)} is required`,
-			});
-		}
-
-		if (fieldInfo.type === "text" && fieldName.includes("email")) {
-			validation.push({
-				type: "email",
-				message: "Must be a valid email address",
-			});
-		}
-
-		if (fieldName === "classification") {
-			validation.push({
-				type: "security_classification",
-				message: "Must be a valid security classification",
-			});
-		}
-
-		return validation;
-	}
-
-	/**
-	 * Gets a default set of UI actions for a given entity type.
-	 * @private
-	 * @param {string} entityType - The type of the entity.
-	 * @returns {object[]} An array of action definition objects.
-	 */
-	getDefaultActionsForType(entityType) {
-		const baseActions = [
-			{ id: "view", name: "View", icon: "eye", category: "essential" },
-			{ id: "edit", name: "Edit", icon: "edit", category: "essential" },
-			{
-				id: "delete",
-				name: "Delete",
-				icon: "trash",
-				category: "common",
-				confirmation: true,
-			},
-		];
-
-		const typeSpecificActions = {
-			objects: [
-				{
-					id: "duplicate",
-					name: "Duplicate",
-					icon: "copy",
-					category: "common",
-				},
-				{
-					id: "export",
-					name: "Export",
-					icon: "download",
-					category: "advanced",
-				},
-			],
-			events: [
-				{
-					id: "replay",
-					name: "Replay Event",
-					icon: "refresh",
-					category: "advanced",
-				},
-			],
-			links: [
-				{
-					id: "visualize",
-					name: "Visualize",
-					icon: "network",
-					category: "common",
-				},
-			],
-		};
-
-		return [...baseActions, ...(typeSpecificActions[entityType] || [])];
-	}
-
-	/**
 	 * Saves an entity to the appropriate persistent store, handling polyinstantiation and security.
 	 * @param {object} entity - The entity object to save.
 	 * @returns {Promise<IDBValidKey>} A promise that resolves with the key of the saved item.
 	 * @throws {Error} If the storage system is not ready or if the save operation fails.
 	 */
 	async saveEntity(entity) {
-		try {
-			if (!this.storage.ready) {
-				throw new Error("Storage system not initialized");
+		return this.#managers.errorHelpers.tryOr(
+			async () => {
+				if (!this.#storage.ready) {
+					throw new Error("Storage system not initialized");
+				}
+
+				// 1. Determine the correct store
+				const store = this.storeFor(entity);
+
+				// 2. Ensure logical_id is present for polyinstantiated types, using the IdManager
+				if (
+					store === "objects_polyinstantiated" &&
+					!entity.logical_id
+				) {
+					entity.logical_id = this.#managers.idManager.generate();
+				}
+
+				// 3. Add/update in client state
+				this.#clientState.entities.set(entity.id, entity);
+
+				// 4. Save through the secure storage instance, which handles MAC, crypto, etc.
+				const result = await this.#storage.instance.put(store, entity);
+
+				// 5. Emit event
+				this.emit("entitySaved", {
+					// V8.0 Parity: Use standardized event names
+					store,
+					id: entity.id || entity.logical_id,
+					entity,
+				});
+
+				return result;
+			},
+			(error) => {
+				this.emit("entitySaveFailed", {
+					entity,
+					error,
+					severity: "high",
+				});
+				// The error is already logged by tryOr, so we just re-throw.
+				throw error;
+			},
+			{
+				component: "HybridStateManager",
+				operation: "saveEntity",
 			}
-
-			// 1. Determine the correct store
-			const store = this.storeFor(entity);
-
-			// 2. Ensure logical_id is present for polyinstantiated types
-			if (store === "objects_polyinstantiated" && !entity.logical_id) {
-				entity.logical_id = crypto.randomUUID();
-			}
-
-			// 3. Add/update in client state
-			this.clientState.entities.set(entity.id, entity);
-
-			// 4. Save through the secure storage instance, which handles MAC, crypto, etc.
-			const result = await this.storage.instance.put(store, entity);
-
-			// 5. Emit event
-			this.emit("entitySaved", {
-				store,
-				id: entity.id || entity.logical_id,
-				entity,
-			});
-
-			return result;
-		} catch (error) {
-			console.error("[HybridStateManager] Failed to save entity:", error);
-			this.emit("entitySaveFailed", { entity, error });
-			throw error;
-		}
+		);
 	}
 
 	/**
@@ -773,20 +402,20 @@ export class HybridStateManager {
 	 */
 	async loadEntity(logicalId) {
 		try {
-			if (!this.storage.ready) {
+			if (!this.#storage.ready) {
 				throw new Error("Storage system not initialized");
 			}
 
 			// Attempt to load polyinstantiated versions first.
 			// The `get` method on the storage instance will handle merging readable rows.
-			const poly = await this.storage.instance.get(
+			const poly = await this.#storage.instance.get(
 				"objects_polyinstantiated",
 				logicalId
 			);
 			if (poly) return poly;
 
 			// Fallback to the standard objects store if no polyinstantiated version is found.
-			return await this.storage.instance.get("objects", logicalId);
+			return await this.#storage.instance.get("objects", logicalId);
 		} catch (error) {
 			console.error(
 				`[HybridStateManager] Failed to load entity ${logicalId}:`,
@@ -807,19 +436,19 @@ export class HybridStateManager {
 		const startTime = performance.now();
 
 		try {
-			if (!this.storage.ready) {
+			if (!this.#storage.ready) {
 				throw new Error("Storage system not initialized");
 			}
 
 			// This is a placeholder; a real implementation would need more specific options.
 			// For now, we assume it loads all from the 'objects' store.
-			const result = await this.storage.instance.getAll("objects");
+			const result = await this.#storage.instance.getAll("objects");
 
 			result.forEach((entity) =>
-				this.clientState.entities.set(entity.id, entity)
+				this.#clientState.entities.set(entity.id, entity)
 			);
 
-			this.metricsRegistry?.updateAverage(
+			this.#metricsRegistry?.updateAverage(
 				"storage.loadTime",
 				performance.now() - startTime
 			);
@@ -844,23 +473,23 @@ export class HybridStateManager {
 	 */
 	async deleteEntity(logicalId) {
 		try {
-			if (!this.storage.ready) {
+			if (!this.#storage.ready) {
 				throw new Error("Storage system not initialized");
 			}
 
 			// 1. Remove from client state first for immediate UI feedback.
-			this.clientState.entities.delete(logicalId);
+			this.#clientState.entities.delete(logicalId);
 
 			// 2. Attempt to delete from the polyinstantiated store.
 			// The storage's delete method will handle finding all readable instances.
-			await this.storage.instance.delete(
+			await this.#storage.instance.delete(
 				"objects_polyinstantiated",
 				logicalId
 			);
 
 			// 3. Attempt to delete from the standard store as a fallback.
 			// If the entity was only in the standard store, this will catch it.
-			await this.storage.instance.delete("objects", logicalId);
+			await this.#storage.instance.delete("objects", logicalId);
 
 			// 4. Emit event
 			this.emit("entityDeleted", {
@@ -886,12 +515,12 @@ export class HybridStateManager {
 	 */
 	async getEntityHistory(logicalId) {
 		try {
-			if (!this.storage.ready) {
+			if (!this.#storage.ready) {
 				throw new Error("Storage system not initialized");
 			}
 
 			// Delegate to the storage instance, which knows how to handle this.
-			const history = await this.storage.instance.getHistory(
+			const history = await this.#storage.instance.getHistory(
 				"objects_polyinstantiated",
 				logicalId
 			);
@@ -918,14 +547,14 @@ export class HybridStateManager {
 		const startTime = performance.now();
 
 		try {
-			if (!this.storage.ready || !this.storage.instance.sync) {
+			if (!this.#storage.ready || !this.#storage.instance.sync) {
 				console.warn("[HybridStateManager] Sync not available");
 				return { synced: 0, skipped: 0 };
 			}
 
-			const result = await this.storage.instance.sync(options);
+			const result = await this.#storage.instance.sync(options);
 
-			this.metricsRegistry?.updateAverage(
+			this.#metricsRegistry?.updateAverage(
 				"storage.syncTime",
 				performance.now() - startTime
 			);
@@ -958,7 +587,7 @@ export class HybridStateManager {
 		ttl = 4 * 3600000
 	) {
 		try {
-			const securityManager = this.managers.securityManager;
+			const securityManager = this.#managers.securityManager;
 			if (!securityManager) {
 				throw new Error("SecurityManager not initialized.");
 			}
@@ -985,67 +614,19 @@ export class HybridStateManager {
 	}
 
 	/**
-	 * Gets the raw database schema for a given entity type.
-	 * @param {string} entityType - The type of the entity.
-	 * @returns {object|undefined} The schema object, or undefined if not found.
-	 */
-	getEntitySchema(entityType) {
-		return this.schema.entities.get(entityType);
-	}
-
-	/**
-	 * Gets the UI-ready type definition for a given entity type.
-	 * @param {string} entityType - The type of the entity.
-	 * @returns {object|undefined} The type definition object, or undefined if not found.
-	 */
-	getTypeDefinition(entityType) {
-		return this.typeDefinitions.get(entityType);
-	}
-
-	/**
-	 * Gets a list of all available entity types.
-	 * @returns {string[]} An array of entity type names.
-	 */
-	getAvailableEntityTypes() {
-		return Array.from(this.typeDefinitions.keys());
-	}
-
-	/**
-	 * Gets a list of all available security classifications.
-	 * @returns {string[]} An array of classification names.
-	 */
-	getSecurityClassifications() {
-		return Array.from(this.schema.classifications);
-	}
-
-	/**
-	 * Retrieves performance and state metrics related to the storage subsystem.
-	 * @returns {object} An object containing storage metrics.
-	 */
-	getStorageMetrics() {
-		return {
-			...this.metricsRegistry?.getNamespace("storage"),
-			storageReady: this.storage.ready,
-			loadedModules: this.storage.instance?.modules || [],
-			schemaLoaded: this.schema.loaded,
-			typeDefinitions: this.typeDefinitions.size,
-		};
-	}
-
-	/**
 	 * Registers a listener function for a specific event type.
 	 * @param {string} eventName - The name of the event to listen for.
 	 * @param {Function} listener - The callback function to execute.
 	 * @returns {Function} An unsubscribe function to remove the listener.
 	 */
 	on(eventName, listener) {
-		if (!this.listeners.has(eventName)) {
-			this.listeners.set(eventName, []);
+		if (!this.#listeners.has(eventName)) {
+			this.#listeners.set(eventName, []);
 		}
-		this.listeners.get(eventName).push(listener);
+		this.#listeners.get(eventName).push(listener);
 
 		const unsubscribe = () => {
-			const listeners = this.listeners.get(eventName);
+			const listeners = this.#listeners.get(eventName);
 			if (listeners) {
 				const index = listeners.indexOf(listener);
 				if (index > -1) {
@@ -1053,8 +634,20 @@ export class HybridStateManager {
 				}
 			}
 		};
-		this.#unsubscribeFunctions.push(unsubscribe);
 		return unsubscribe;
+	}
+
+	/**
+	 * Unsubscribes all event listeners created via the `on` method.
+	 * @private
+	 */
+	#unsubscribeAll() {
+		this.#unsubscribeFunctions.forEach((unsubscribe) => {
+			if (typeof unsubscribe === "function") {
+				unsubscribe();
+			}
+		});
+		this.#unsubscribeFunctions.length = 0; // Clear the array
 	}
 
 	/**
@@ -1064,7 +657,7 @@ export class HybridStateManager {
 	 * @returns {void}
 	 */
 	emit(eventName, payload) {
-		const listeners = this.listeners.get(eventName);
+		const listeners = this.#listeners.get(eventName) || [];
 		if (listeners) {
 			listeners.forEach((listener) => {
 				try {
@@ -1078,8 +671,18 @@ export class HybridStateManager {
 			});
 		}
 
-		// V8.0 Parity: The stateManager is the central event bus. It emits events to its own registered listeners.
-		// The EventFlowEngine is one of these listeners, but other parts of the system can listen directly as well.
+		// Also emit to wildcard listeners
+		const wildcardListeners = this.#listeners.get("*") || [];
+		wildcardListeners.forEach((listener) => {
+			try {
+				listener(payload, eventName); // Pass eventName to wildcard listeners
+			} catch (error) {
+				console.error(
+					`Error in wildcard listener for event ${eventName}:`,
+					error
+				);
+			}
+		});
 	}
 
 	/**
@@ -1091,18 +694,11 @@ export class HybridStateManager {
 		console.log("[HybridStateManager] Starting cleanup...");
 
 		// 1. Unsubscribe all internal event listeners
-		this.#unsubscribeFunctions.forEach((unsubscribe) => {
-			try {
-				unsubscribe?.();
-			} catch (error) {
-				console.warn("[HybridStateManager] Unsubscribe failed:", error);
-			}
-		});
-		this.#unsubscribeFunctions.length = 0;
+		this.#unsubscribeAll();
 
 		// 2. Clean up all managers that have a cleanup method
-		for (const managerName in this.managers) {
-			const manager = this.managers[managerName];
+		for (const managerName in this.#managers) {
+			const manager = this.#managers[managerName];
 			if (manager && typeof manager.cleanup === "function") {
 				try {
 					await manager.cleanup();
@@ -1115,17 +711,11 @@ export class HybridStateManager {
 			}
 		}
 
-		this.initialized = false;
+		// 3. Clear listeners and reset state
+		this.#listeners.clear();
+		this.#initialized = false;
 		console.log("[HybridStateManager] Cleanup complete.");
 	}
-
-	// ... Rest of the existing methods remain unchanged ...
-	// (executeAction, mapActionToCommand, executeCommand, etc.)
-
-	/**
-	 * All other existing methods remain the same...
-	 * (executeAction, getEntity, getEntitiesByType, recordOperation, etc.)
-	 */
 }
 
 export default HybridStateManager;

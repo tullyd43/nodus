@@ -294,65 +294,31 @@ export default class CustomValidator {
 	 * @param {object} entity - The entity to check against.
 	 * @returns {boolean} True if all conditions pass.
 	 */
-	#evaluateConditions(conditions, entity) {
-		for (const condition of conditions) {
-			if (!this.#evaluateCondition(condition, entity)) {
-				return false;
-			}
+	async #evaluateConditions(conditions, entity) {
+		const conditionRegistry =
+			this.#stateManager?.managers?.conditionRegistry;
+		if (!conditionRegistry) {
+			this.#audit("condition_eval_failed", {
+				reason: "ConditionRegistry not available.",
+			});
+			return false; // Fail closed if the registry is missing.
 		}
-		return true;
-	}
 
-	/**
-	 * Evaluates a single condition against an entity.
-	 * @private
-	 * @param {object} condition - The condition to evaluate.
-	 * @param {object} entity - The entity to check against.
-	 * @returns {boolean} The result of the condition evaluation.
-	 */
-	#evaluateCondition(condition, entity) {
-		const { field, operator, value } = condition;
-		const entityValue = this.#getNestedValue(entity, field);
+		// The context for evaluation is the entity itself.
+		// The ConditionRegistry expects a context object.
+		const evaluationContext = { entity };
 
-		switch (operator) {
-			case "equals":
-				return entityValue === value;
-			case "not_equals":
-				return entityValue !== value;
-			case "contains":
-				return (
-					typeof entityValue === "string" &&
-					entityValue.includes(value)
-				);
-			case "starts_with":
-				return (
-					typeof entityValue === "string" &&
-					entityValue.startsWith(value)
-				);
-			case "ends_with":
-				return (
-					typeof entityValue === "string" &&
-					entityValue.endsWith(value)
-				);
-			case "greater_than":
-				return Number(entityValue) > Number(value);
-			case "less_than":
-				return Number(entityValue) < Number(value);
-			case "exists":
-				return entityValue !== null && entityValue !== undefined;
-			case "not_exists":
-				return entityValue === null || entityValue === undefined;
-			case "in":
-				return Array.isArray(value) && value.includes(entityValue);
-			case "not_in":
-				return Array.isArray(value) && !value.includes(entityValue);
-			default:
-				this.#stateManager?.emit("warn", {
-					source: "CustomValidator",
-					message: `Unknown condition operator: ${operator}`,
-				});
-				return false;
-		}
+		// V8.0 Parity: Mandate 2.2 - Delegate evaluation to the central, secure ConditionRegistry.
+		// This avoids hardcoded logic and supports complex, nested conditions (`and`, `or`, `not`).
+		const conditionSet = {
+			type: "and", // All conditions in the array must pass.
+			conditions,
+		};
+
+		return await conditionRegistry.evaluate(
+			conditionSet,
+			evaluationContext
+		);
 	}
 
 	/**
@@ -363,6 +329,9 @@ export default class CustomValidator {
 	 * @returns {*} The value at the specified path, or undefined if not found.
 	 */
 	#getNestedValue(obj, path) {
+		// V8.0 Parity: This is now a utility function. In a future refactor, this could be moved
+		// to a shared utility module if used by other classes. For now, it remains here.
+		if (!path || typeof path !== "string") return undefined;
 		return path.split(".").reduce((current, key) => current?.[key], obj);
 	}
 

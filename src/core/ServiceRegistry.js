@@ -1,7 +1,9 @@
 /**
  * @file ServiceRegistry.js
- * @description Central registry for instantiating and providing core application services.
- * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} - Mandate 1.3
+ * @description Implements the V8 Parity Mandate for a central service registry. This module is the *only*
+ * authorized source for instantiating and providing core application services, ensuring a single,
+ * manageable lifecycle for all major system components.
+ * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} - Mandate 1.3: Service Registry Enforcement.
  */
 
 // Import all core service classes that will be managed by the registry.
@@ -28,43 +30,72 @@ import { MetricsRegistry } from "../utils/MetricsRegistry.js";
 import { MetricsReporter } from "../utils/MetricsReporter.js";
 import { OptimizationAccessControl } from "./OptimizationAccessControl.js";
 
-// A map of service names to their constructors.
-const SERVICE_CONSTRUCTORS = {
-	// Foundational (no dependencies on other managers)
+/**
+ * @description Defines foundational services with no dependencies on other managers.
+ * These are the first to be initialized.
+ * @private
+ */
+const FOUNDATIONAL_SERVICES = {
 	errorHelpers: ErrorHelpers, // Note: Static class
 	metricsRegistry: MetricsRegistry,
 	idManager: IdManager,
 	cacheManager: CacheManager,
 	securityManager: SecurityManager,
+};
 
-	// Core Logic (may depend on foundational services)
+/**
+ * @description Defines core logic services that may depend on foundational services.
+ * @private
+ */
+const CORE_LOGIC_SERVICES = {
 	forensicLogger: ForensicLogger,
 	policies: SystemPolicies,
 	conditionRegistry: ConditionRegistry,
 	actionHandler: ActionHandlerRegistry,
 	componentRegistry: ComponentDefinitionRegistry,
 	eventFlowEngine: EventFlowEngine,
-	validationLayer: ValidationLayer,
+};
 
-	// Application/Feature Level
+/**
+ * @description Defines application-level services that depend on core logic services.
+ * @private
+ */
+const APPLICATION_SERVICES = {
+	validationLayer: ValidationLayer,
 	plugin: ManifestPluginSystem,
 	embeddingManager: EmbeddingManager,
 	queryService: QueryService,
 	adaptiveRenderer: AdaptiveRenderer,
 	buildingBlockRenderer: BuildingBlockRenderer,
-
-	// Server-side / Specialized
-	databaseOptimizer: DatabaseOptimizer,
-	cds: CrossDomainSolution,
-	optimizationAccessControl: OptimizationAccessControl,
-	metricsReporter: MetricsReporter,
 	extensionManager: ExtensionManager,
 };
 
 /**
+ * @description Defines specialized or server-side services.
+ * @private
+ */
+const SPECIALIZED_SERVICES = {
+	databaseOptimizer: DatabaseOptimizer,
+	cds: CrossDomainSolution,
+	optimizationAccessControl: OptimizationAccessControl,
+	metricsReporter: MetricsReporter,
+};
+
+/**
+ * A map of all service names to their constructors for easy lookup.
+ * @private
+ */
+const SERVICE_CONSTRUCTORS = {
+	...FOUNDATIONAL_SERVICES,
+	...CORE_LOGIC_SERVICES,
+	...APPLICATION_SERVICES,
+	...SPECIALIZED_SERVICES,
+};
+
+/**
  * @class ServiceRegistry
- * @description Manages the lifecycle of all core services, ensuring they are instantiated
- * correctly and only once.
+ * @description Manages the lifecycle of all core services, ensuring they are instantiated correctly,
+ * in a deterministic order, and only once. This enforces the "No Direct Instantiation" mandate.
  */
 export class ServiceRegistry {
 	/** @private @type {import('./HybridStateManager.js').default} */
@@ -78,13 +109,38 @@ export class ServiceRegistry {
 	}
 
 	/**
-	 * Initializes and registers all core services with the HybridStateManager.
-	 * This method respects the dependency order.
+	 * Initializes and registers all core services with the HybridStateManager in a specific,
+	 * deterministic order to correctly manage dependencies.
 	 * @returns {Promise<void>}
 	 */
 	async initializeAll() {
 		console.log("[ServiceRegistry] Initializing all core services...");
-		for (const serviceName of Object.keys(SERVICE_CONSTRUCTORS)) {
+
+		// V8.0 Parity: Mandate 1.3 - Define an explicit, non-negotiable initialization order.
+		// This makes the system's dependency structure clear and robust.
+		const INITIALIZATION_ORDER = [
+			// 1. Foundational: No internal dependencies.
+			"errorHelpers",
+			"metricsRegistry",
+			"idManager",
+			"cacheManager",
+			"securityManager",
+			// 2. Core Logic: Depends on foundational services.
+			"forensicLogger",
+			"policies",
+			"conditionRegistry",
+			"actionHandler",
+			"componentRegistry",
+			"eventFlowEngine",
+			// 3. Application Services: Depends on core logic.
+			"validationLayer",
+			"buildingBlockRenderer",
+			"adaptiveRenderer",
+			"plugin", // Plugins can register components, so load after registries.
+			"extensionManager",
+		];
+
+		for (const serviceName of INITIALIZATION_ORDER) {
 			await this.get(serviceName);
 		}
 		console.log("[ServiceRegistry] All core services initialized.");
@@ -92,7 +148,7 @@ export class ServiceRegistry {
 
 	/**
 	 * Gets a service instance by name. If the service is not yet instantiated,
-	 * it will be created, initialized, and cached.
+	 * it will be created, initialized, and stored in the state manager.
 	 * @param {string} serviceName - The name of the service to retrieve.
 	 * @returns {Promise<object|null>} The service instance.
 	 */
@@ -113,11 +169,6 @@ export class ServiceRegistry {
 			const context = {
 				stateManager: this.#stateManager,
 			};
-
-			// Handle special context for DatabaseOptimizer
-			if (serviceName === "databaseOptimizer") {
-				context.dbClient = this.#stateManager.storage.instance?._db;
-			}
 
 			// Handle static classes vs. instantiable classes
 			const instance =

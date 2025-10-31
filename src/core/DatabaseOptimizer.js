@@ -4,15 +4,21 @@
 /**
  * @class DatabaseOptimizer
  * @classdesc Analyzes query performance and suggests/applies optimizations for JSONB data, such as creating GIN indexes or materialized views.
+ * @privateFields {#stateManager, #db, #metrics, #forensicLogger, #errorHelpers, #thresholds, #intervals, #queryAnalysisInterval, #viewRefreshInterval, #autoSuggestionsInterval, #monitoring, #autoSuggestions}
  */
 export class DatabaseOptimizer {
 	// V8.0 Parity: Declare all private fields at the top of the class.
-	/** @private @type {import('./HybridStateManager.js').default|null} */ #stateManager =
-		null;
-	/** @private @type {import('./storage/ModernIndexedDB.js').ModernIndexedDB|null} */ #db =
-		null;
-	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */ #metrics =
-		null;
+	/** @private @type {import('./HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('./storage/ModernIndexedDB.js').ModernIndexedDB} */
+	#db;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics;
+	/** @private @type {import('./ForensicLogger.js').default|null} */
+	#forensicLogger;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers;
+
 	/** @private @type {object} */ #thresholds = {
 		slowQueryMs: 50,
 		hotQueryCount: 100,
@@ -20,21 +26,37 @@ export class DatabaseOptimizer {
 		materializedViewRows: 10000,
 		partitionRows: 1000000,
 	};
+
 	/** @private @type {object} */ #intervals = {
 		queryAnalysis: 5 * 60 * 1000, // 5 minutes
 		optimization: 60 * 60 * 1000, // 1 hour
 		viewRefresh: 30 * 60 * 1000, // 30 minutes
 	};
+
 	/** @private @type {ReturnType<typeof setInterval>|null} */ #queryAnalysisInterval =
 		null;
 	/** @private @type {ReturnType<typeof setInterval>|null} */ #viewRefreshInterval =
 		null;
 	/** @private @type {ReturnType<typeof setInterval>|null} */ #autoSuggestionsInterval =
 		null;
+	/** @private @type {boolean} */
+	#monitoring = true;
+	/** @private @type {boolean} */
+	#autoSuggestions = true;
 
-	monitoring = true;
-	/** @type {boolean} */
-	autoSuggestions = true;
+	get monitoring() {
+		return this.#monitoring;
+	}
+	set monitoring(value) {
+		this.#monitoring = !!value;
+	}
+
+	get autoSuggestions() {
+		return this.#autoSuggestions;
+	}
+	set autoSuggestions(value) {
+		this.#autoSuggestions = !!value;
+	}
 
 	/**
 	 * Creates an instance of DatabaseOptimizer.
@@ -42,13 +64,14 @@ export class DatabaseOptimizer {
 	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
 	constructor(context) {
-		// V8.0 Parity: This is a server-side module. It should receive a dedicated DB client, not the stateManager.
-		this.#stateManager = context.stateManager; // Keep for eventing if needed
+		this.#stateManager = context.stateManager;
 		this.#db = context.dbClient; // Expect a dedicated SQL database client
+
+		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
 		this.#metrics =
-			context.stateManager?.metricsRegistry?.namespace(
-				"databaseOptimizer"
-			);
+			this.#stateManager.metricsRegistry?.namespace("databaseOptimizer");
+		this.#forensicLogger = this.#stateManager.managers.forensicLogger;
+		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
 	}
 
 	/**
@@ -57,38 +80,40 @@ export class DatabaseOptimizer {
 	 * @throws {Error} If required database tables are missing.
 	 */
 	async initialize() {
-		try {
-			console.log("🔧 Initializing DatabaseOptimizer...");
+		return this.#errorHelpers.tryOr(
+			async () => {
+				console.log("🔧 Initializing DatabaseOptimizer...");
 
-			// V8.0 Parity: Add a guard to ensure this runs only with a compatible DB client.
-			if (!this.#db || typeof this.#db.query !== "function") {
-				throw new Error(
-					"DatabaseOptimizer requires a compatible SQL database client with a .query() method."
-				);
-			}
+				// V8.0 Parity: Add a guard to ensure this runs only with a compatible DB client.
+				if (!this.#db || typeof this.#db.query !== "function") {
+					throw new Error(
+						"DatabaseOptimizer requires a compatible SQL database client with a `query()` method."
+					);
+				}
 
-			// Verify schema exists
-			await this.#verifySchema();
+				// Verify schema exists
+				await this.#verifySchema();
 
-			// Load existing optimizations
-			await this.#loadOptimizations();
+				// Start monitoring if enabled
+				if (this.#monitoring) {
+					this.#startMonitoring();
+				}
 
-			// Start monitoring if enabled
-			if (this.monitoring) {
-				this.startMonitoring();
-			}
+				// Start auto-suggestions if enabled
+				if (this.#autoSuggestions) {
+					this.#startAutoSuggestions();
+				}
 
-			// Start auto-suggestions if enabled
-			if (this.autoSuggestions) {
-				this.startAutoSuggestions();
-			}
-
-			console.log("✅ DatabaseOptimizer initialized");
-			return true;
-		} catch (error) {
-			console.error("Failed to initialize DatabaseOptimizer:", error);
-			throw error;
-		}
+				console.log("✅ DatabaseOptimizer initialized");
+				return true;
+			},
+			(error) => {
+				// The error is already handled by tryOr, but we can re-throw if needed.
+				console.error("Failed to initialize DatabaseOptimizer:", error);
+				throw error;
+			},
+			{ component: "DatabaseOptimizer", operation: "initialize" }
+		);
 	}
 
 	/**
@@ -104,7 +129,7 @@ export class DatabaseOptimizer {
 		];
 
 		for (const table of requiredTables) {
-			// V8.0 Parity: Use the private field #db
+			// V8.0 Parity: Use the private field #db.
 			const result = await this.#db.query(
 				` 
         SELECT EXISTS (
@@ -124,41 +149,22 @@ export class DatabaseOptimizer {
 	}
 
 	/**
-	 * Loads a summary of previously applied optimizations from the database to provide context.
-	 * @private
-	 */
-	async #loadOptimizations() {
-		try {
-			const result = await this.#db.query(`
-        SELECT 
-          optimization_type,
-          COUNT(*) as count,
-          AVG(performance_gain) as avg_gain
-        FROM database_optimizations 
-        WHERE status = 'applied'
-        GROUP BY optimization_type
-      `);
-
-			console.log("📊 Loaded optimization history:", result.rows);
-		} catch (error) {
-			console.error("Failed to load optimization history:", error);
-		}
-	}
-
-	/**
 	 * Starts the periodic tasks for analyzing query patterns and refreshing materialized views.
 	 * @private
 	 */
-	startMonitoring() {
+	#startMonitoring() {
 		// Analyze query patterns
 		this.#queryAnalysisInterval = setInterval(() => {
 			this.#analyzeQueryPatterns();
 		}, this.#intervals.queryAnalysis);
 
 		// Refresh materialized views
-		this.#viewRefreshInterval = setInterval(() => {
-			this.#refreshMaterializedViews();
-		}, this.#intervals.viewRefresh);
+		if (this.#db.client.refresh_performance_views) {
+			// Check if function exists
+			this.#viewRefreshInterval = setInterval(() => {
+				this.#refreshMaterializedViews();
+			}, this.#intervals.viewRefresh);
+		}
 
 		console.log("📈 Performance monitoring started");
 	}
@@ -167,7 +173,7 @@ export class DatabaseOptimizer {
 	 * Starts the periodic task for automatically generating new optimization suggestions.
 	 * @private
 	 */
-	startAutoSuggestions() {
+	#startAutoSuggestions() {
 		this.#autoSuggestionsInterval = setInterval(() => {
 			this.#generateOptimizationSuggestions();
 		}, this.#intervals.optimization);
@@ -196,10 +202,10 @@ export class DatabaseOptimizer {
 		indexUsed = null
 	) {
 		try {
-			// Don't log if monitoring is disabled
-			if (!this.monitoring) return;
+			if (!this.#monitoring) return;
 
-			// Insert into performance log
+			this.#metrics?.increment("queriesLogged");
+
 			await this.#db.query(
 				`
         INSERT INTO query_performance_log 
@@ -217,18 +223,20 @@ export class DatabaseOptimizer {
 				]
 			);
 
-			this.#metrics?.increment("queriesLogged");
-
 			// Check if this query needs immediate attention
 			if (executionTime > this.#thresholds.criticalLatencyMs) {
-				await this.handleCriticalSlowQuery(
+				await this.#handleCriticalSlowQuery(
 					tableName,
 					jsonbPath,
 					executionTime
 				);
 			}
 		} catch (error) {
-			console.error("Failed to log query performance:", error);
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "logQuery",
+				context: { tableName, jsonbPath },
+			});
 		}
 	}
 
@@ -239,7 +247,7 @@ export class DatabaseOptimizer {
 	 * @param {string} jsonbPath - The JSONB path that was queried.
 	 * @param {number} executionTime - The execution time of the slow query.
 	 */
-	async handleCriticalSlowQuery(tableName, jsonbPath, executionTime) {
+	async #handleCriticalSlowQuery(tableName, jsonbPath, executionTime) {
 		try {
 			// Check if we already have a suggestion for this
 			const existing = await this.#db.query(
@@ -254,7 +262,7 @@ export class DatabaseOptimizer {
 			if (existing.rows.length > 0) return;
 
 			// Create urgent index suggestion
-			await this.createIndexSuggestion(
+			await this.#createIndexSuggestion(
 				tableName,
 				jsonbPath,
 				"urgent_index",
@@ -263,12 +271,19 @@ export class DatabaseOptimizer {
 					urgency: "critical",
 				}
 			);
-
-			console.log(
-				`🚨 Critical slow query detected: ${tableName}.${jsonbPath} (${executionTime}ms)`
-			);
+			const message = `Critical slow query detected: ${tableName}.${jsonbPath} (${executionTime}ms)`;
+			console.warn(`🚨 ${message}`);
+			this.#forensicLogger?.logAuditEvent("DB_CRITICAL_PERFORMANCE", {
+				message,
+				tableName,
+				jsonbPath,
+				executionTime,
+			});
 		} catch (error) {
-			console.error("Failed to handle critical slow query:", error);
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "handleCriticalSlowQuery",
+			});
 		}
 	}
 
@@ -277,6 +292,8 @@ export class DatabaseOptimizer {
 	 * @private
 	 */
 	async #analyzeQueryPatterns() {
+		this.#metrics?.increment("analysisCycles");
+
 		try {
 			// Get slow query patterns from last hour
 			const result = await this.#db.query(
@@ -309,7 +326,11 @@ export class DatabaseOptimizer {
 				);
 			}
 		} catch (error) {
-			console.error("Failed to analyze query patterns:", error);
+			this.#metrics?.increment("analysisErrors");
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "analyzeQueryPatterns",
+			});
 		}
 	}
 
@@ -350,7 +371,7 @@ export class DatabaseOptimizer {
 			// Create suggestion if beneficial
 			if (estimatedBenefit > 10) {
 				// Only if we expect >10ms improvement
-				await this.createIndexSuggestion(
+				await this.#createIndexSuggestion(
 					table_name,
 					jsonb_path,
 					optimizationType,
@@ -364,10 +385,11 @@ export class DatabaseOptimizer {
 				);
 			}
 		} catch (error) {
-			console.error(
-				"Failed to evaluate optimization opportunity:",
-				error
-			);
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "evaluateOptimizationOpportunity",
+				context: { pattern },
+			});
 		}
 	}
 
@@ -380,15 +402,23 @@ export class DatabaseOptimizer {
 	 * @param {object} [metadata={}] - Additional metadata about the suggestion.
 	 * @returns {Promise<string|null>} A promise that resolves with the ID of the new suggestion, or null on failure.
 	 */
-	async createIndexSuggestion(
+	async #createIndexSuggestion(
 		tableName,
 		jsonbPath,
 		suggestionType,
 		metadata = {}
 	) {
 		try {
+			// Security: Sanitize inputs to prevent SQL injection in identifiers.
+			if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
+				throw new Error(`Invalid table name: ${tableName}`);
+			}
+			if (!/^[a-zA-Z0-9_.\->>']+$/.test(jsonbPath)) {
+				throw new Error(`Invalid JSONB path: ${jsonbPath}`);
+			}
+
 			let suggestedSql, rollbackSql;
-			const indexName = `idx_${tableName}_${jsonbPath.replace(/[^a-z0-9]/g, "_")}`;
+			const indexName = `idx_${tableName}_${jsonbPath.replace(/[^a-z0-9_]/g, "_")}`;
 
 			switch (suggestionType) {
 				case "gin_index":
@@ -481,7 +511,11 @@ export class DatabaseOptimizer {
 
 			return result.rows[0].id;
 		} catch (error) {
-			console.error("Failed to create index suggestion:", error);
+			this.#metrics?.increment("suggestionErrors");
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "createIndexSuggestion",
+			});
 			return null;
 		}
 	}
@@ -494,81 +528,81 @@ export class DatabaseOptimizer {
 	 * @throws {Error} If the suggestion is not found, has an invalid status, or if the SQL execution fails.
 	 */
 	async applyOptimization(suggestionId, approvedBy = "system") {
-		try {
-			// Get suggestion details
-			const result = await this.#db.query(
-				`
+		return this.#errorHelpers.tryOr(
+			async () => {
+				// Get suggestion details
+				const result = await this.#db.query(
+					`
         SELECT * FROM index_suggestions WHERE id = $1
       `,
-				[suggestionId]
-			);
-
-			if (result.rows.length === 0) {
-				throw new Error(`Suggestion ${suggestionId} not found`);
-			}
-
-			const suggestion = result.rows[0];
-
-			if (
-				suggestion.status !== "pending" &&
-				suggestion.status !== "approved"
-			) {
-				throw new Error(
-					`Cannot apply suggestion in status: ${suggestion.status}`
+					[suggestionId]
 				);
-			}
 
-			console.log(
-				`🔧 Applying ${suggestion.suggestion_type} optimization...`
-			);
+				if (result.rows.length === 0) {
+					throw new Error(`Suggestion ${suggestionId} not found`);
+				}
 
-			// Execute the optimization SQL
-			const startTime = Date.now();
-			await this.#db.query(suggestion.suggested_sql);
-			const executionTime = Date.now() - startTime;
+				const suggestion = result.rows[0];
 
-			// Update suggestion status
-			await this.#db.query(
-				`
+				if (
+					suggestion.status !== "pending" &&
+					suggestion.status !== "approved"
+				) {
+					throw new Error(
+						`Cannot apply suggestion in status: ${suggestion.status}`
+					);
+				}
+
+				console.log(
+					`🔧 Applying ${suggestion.suggestion_type} optimization...`
+				);
+
+				// Execute the optimization SQL
+				const startTime = performance.now();
+				await this.#db.query(suggestion.suggested_sql);
+				const executionTime = Date.now() - startTime;
+
+				// Update suggestion status
+				await this.#db.query(
+					`
         UPDATE index_suggestions 
         SET status = 'applied', applied_at = now()
         WHERE id = $1
       `,
-				[suggestionId]
-			);
+					[suggestionId]
+				);
 
-			// Record in optimizations table
-			await this.#db.query(
-				`
+				// Record in optimizations table
+				await this.#db.query(
+					`
         INSERT INTO database_optimizations 
         (optimization_type, table_name, target_field, sql_definition, rollback_sql, 
          query_count, avg_latency_before, status, approved_at, applied_at, metadata)
         VALUES ($1, $2, $3, $4, $5, $6, $7, 'applied', now(), now(), $8)
       `,
-				[
-					suggestion.suggestion_type,
-					suggestion.table_name,
-					suggestion.jsonb_path,
-					suggestion.suggested_sql,
-					suggestion.rollback_sql,
-					suggestion.query_frequency,
-					suggestion.avg_query_time,
-					JSON.stringify({
-						suggestionId,
-						approvedBy,
-						executionTimeMs: executionTime,
-						estimatedBenefit: suggestion.estimated_benefit,
-					}),
-				]
-			);
+					[
+						suggestion.suggestion_type,
+						suggestion.table_name,
+						suggestion.jsonb_path,
+						suggestion.suggested_sql,
+						suggestion.rollback_sql,
+						suggestion.query_frequency,
+						suggestion.avg_query_time,
+						JSON.stringify({
+							suggestionId,
+							approvedBy,
+							executionTimeMs: executionTime,
+							estimatedBenefit: suggestion.estimated_benefit,
+						}),
+					]
+				);
 
-			this.#metrics?.increment("optimizationsApplied");
+				this.#metrics?.increment("optimizationsApplied");
 
-			console.log(
-				`✅ Applied ${suggestion.suggestion_type} optimization in ${executionTime}ms`
-			); // V8.0 Parity: Use the private field #stateManager for eventing.
-			if (this.#stateManager) {
-				this.#stateManager.emit("optimization_applied", {
+				console.log(
+					`✅ Applied ${suggestion.suggestion_type} optimization in ${executionTime.toFixed(2)}ms`
+				);
+				this.#stateManager?.emit("optimization_applied", {
 					id: suggestionId,
 					type: suggestion.suggestion_type,
 					table: suggestion.table_name,
@@ -576,29 +610,32 @@ export class DatabaseOptimizer {
 					executionTime,
 					approvedBy,
 				});
-			}
 
-			return true;
-		} catch (error) {
-			console.error(
-				`Failed to apply optimization ${suggestionId}:`,
-				error
-			);
-
-			// Update suggestion status to failed
-			await this.#db
-				.query(
-					`
+				return true;
+			},
+			async (error) => {
+				this.#metrics?.increment("optimizationErrors");
+				// Update suggestion status to failed
+				await this.#db
+					.query(
+						`
         UPDATE index_suggestions 
         SET status = 'failed'
         WHERE id = $1
       `,
-					[suggestionId]
-				)
-				.catch(() => {});
-
-			throw error;
-		}
+						[suggestionId]
+					)
+					.catch((e) =>
+						console.error("Failed to mark suggestion as failed:", e)
+					);
+				throw error; // Re-throw original error
+			},
+			{
+				component: "DatabaseOptimizer",
+				operation: "applyOptimization",
+				context: { suggestionId, approvedBy },
+			}
+		);
 	}
 
 	/**
@@ -608,55 +645,59 @@ export class DatabaseOptimizer {
 	 * @throws {Error} If the optimization is not found, has an invalid status, or if rollback SQL is missing.
 	 */
 	async rollbackOptimization(optimizationId) {
-		try {
-			const result = await this.#db.query(
-				`
+		return this.#errorHelpers.tryOr(
+			async () => {
+				const result = await this.#db.query(
+					`
         SELECT * FROM database_optimizations WHERE id = $1
       `,
-				[optimizationId]
-			);
-
-			if (result.rows.length === 0) {
-				throw new Error(`Optimization ${optimizationId} not found`);
-			}
-
-			const optimization = result.rows[0];
-
-			if (optimization.status !== "applied") {
-				throw new Error(
-					`Cannot rollback optimization in status: ${optimization.status}`
+					[optimizationId]
 				);
-			}
 
-			if (!optimization.rollback_sql) {
-				throw new Error("No rollback SQL available");
-			}
+				if (result.rows.length === 0) {
+					throw new Error(`Optimization ${optimizationId} not found`);
+				}
 
-			console.log(`🔙 Rolling back ${optimization.optimization_type}...`);
+				const optimization = result.rows[0];
 
-			// Execute rollback SQL
-			await this.#db.query(optimization.rollback_sql);
+				if (optimization.status !== "applied") {
+					throw new Error(
+						`Cannot rollback optimization in status: ${optimization.status}`
+					);
+				}
 
-			// Update status
-			await this.#db.query(
-				`
+				if (!optimization.rollback_sql) {
+					throw new Error("No rollback SQL available");
+				}
+
+				console.log(
+					`🔙 Rolling back ${optimization.optimization_type}...`
+				);
+
+				// Execute rollback SQL
+				await this.#db.query(optimization.rollback_sql);
+
+				// Update status
+				await this.#db.query(
+					`
         UPDATE database_optimizations 
         SET status = 'rolled_back'
         WHERE id = $1
       `,
-				[optimizationId]
-			);
+					[optimizationId]
+				);
 
-			console.log(`✅ Rolled back ${optimization.optimization_type}`);
+				console.log(`✅ Rolled back ${optimization.optimization_type}`);
 
-			return true;
-		} catch (error) {
-			console.error(
-				`Failed to rollback optimization ${optimizationId}:`,
-				error
-			);
-			throw error;
-		}
+				return true;
+			},
+			null, // Let the helper handle logging
+			{
+				component: "DatabaseOptimizer",
+				operation: "rollbackOptimization",
+				context: { optimizationId },
+			}
+		);
 	}
 
 	/**
@@ -664,6 +705,14 @@ export class DatabaseOptimizer {
 	 * @private
 	 */
 	async #generateOptimizationSuggestions() {
+		// Check if the function exists on the DB client before calling
+		if (!this.#db.client.suggest_jsonb_indexes) {
+			console.warn(
+				"[DatabaseOptimizer] `suggest_jsonb_indexes` function not found on DB client. Skipping auto-suggestions."
+			);
+			return;
+		}
+
 		try {
 			console.log("🔍 Generating optimization suggestions...");
 
@@ -679,7 +728,7 @@ export class DatabaseOptimizer {
 			);
 
 			for (const suggestion of result.rows) {
-				await this.createIndexSuggestion(
+				await this.#createIndexSuggestion(
 					suggestion.table_name,
 					suggestion.jsonb_path,
 					"gin_index",
@@ -700,10 +749,10 @@ export class DatabaseOptimizer {
 				);
 			}
 		} catch (error) {
-			console.error(
-				"Failed to generate optimization suggestions:",
-				error
-			);
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "generateOptimizationSuggestions",
+			});
 		}
 	}
 
@@ -712,15 +761,20 @@ export class DatabaseOptimizer {
 	 * @private
 	 */
 	async #refreshMaterializedViews() {
+		// Check if the function exists on the DB client before calling
+		if (!this.#db.client.refresh_performance_views) {
+			return;
+		}
+
 		try {
 			console.log("🔄 Refreshing materialized views...");
 
-			const startTime = Date.now();
+			const startTime = performance.now();
 			await this.#db.query("SELECT refresh_performance_views()");
-			const executionTime = Date.now() - startTime;
+			const executionTime = performance.now() - startTime;
 
 			console.log(
-				`✅ Materialized views refreshed in ${executionTime}ms`
+				`✅ Materialized views refreshed in ${executionTime.toFixed(2)}ms`
 			);
 
 			// Log the performance
@@ -733,7 +787,11 @@ export class DatabaseOptimizer {
 				"refresh"
 			);
 		} catch (error) {
-			console.error("Failed to refresh materialized views:", error);
+			this.#metrics?.increment("viewRefreshErrors");
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "refreshMaterializedViews",
+			});
 		}
 	}
 
@@ -760,7 +818,10 @@ export class DatabaseOptimizer {
 
 			return result.rows;
 		} catch (error) {
-			console.error("Failed to get pending suggestions:", error);
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "getPendingSuggestions",
+			});
 			return [];
 		}
 	}
@@ -799,7 +860,10 @@ export class DatabaseOptimizer {
 						: null,
 			}));
 		} catch (error) {
-			console.error("Failed to get applied optimizations:", error);
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "getAppliedOptimizations",
+			});
 			return [];
 		}
 	}
@@ -811,11 +875,11 @@ export class DatabaseOptimizer {
 	async getPerformanceMetrics() {
 		try {
 			const [slowQueries, tableStats, indexStats] = await Promise.all([
-				// V8.0 Parity: Use private field #db
+				// V8.0 Parity: Use private field #db.
 				this.#db.query("SELECT * FROM slow_query_analysis LIMIT 10"),
 				this.#db.query(
 					"SELECT * FROM database_performance_overview LIMIT 10"
-				), // V8.0 Parity: Use private field #db
+				),
 				this.#db.query(`
           SELECT 
             schemaname, tablename, indexname, idx_scan, idx_tup_read,
@@ -831,10 +895,13 @@ export class DatabaseOptimizer {
 				slowQueries: slowQueries.rows,
 				tableStats: tableStats.rows,
 				indexStats: indexStats.rows,
-				systemMetrics: this.#metrics,
+				systemMetrics: this.#metrics?.getAllAsObject(),
 			};
 		} catch (error) {
-			console.error("Failed to get performance metrics:", error);
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "getPerformanceMetrics",
+			});
 			return null;
 		}
 	}
@@ -850,7 +917,10 @@ export class DatabaseOptimizer {
 			);
 			return result.rows;
 		} catch (error) {
-			console.error("Failed to get optimization opportunities:", error);
+			this.#errorHelpers?.handleError(error, {
+				component: "DatabaseOptimizer",
+				operation: "getOptimizationOpportunities",
+			});
 			return [];
 		}
 	}
@@ -869,11 +939,11 @@ export class DatabaseOptimizer {
 		}
 
 		if (typeof config.monitoring === "boolean") {
-			this.monitoring = config.monitoring;
+			this.#monitoring = config.monitoring;
 		}
 
 		if (typeof config.autoSuggestions === "boolean") {
-			this.autoSuggestions = config.autoSuggestions;
+			this.#autoSuggestions = config.autoSuggestions;
 		}
 
 		console.log("📝 DatabaseOptimizer configuration updated");
@@ -887,15 +957,15 @@ export class DatabaseOptimizer {
 		return {
 			...(this.#metrics?.getAllAsObject() || {}),
 			thresholds: this.#thresholds,
-			monitoring: this.monitoring,
-			autoSuggestions: this.autoSuggestions,
+			monitoring: this.#monitoring,
+			autoSuggestions: this.#autoSuggestions,
 		};
 	}
 
 	/**
-	 * Shutdown the optimizer
+	 * Shuts down the optimizer, clearing all running intervals.
 	 */
-	async shutdown() {
+	async cleanup() {
 		console.log("[DatabaseOptimizer] Shutting down...");
 		clearInterval(this.#queryAnalysisInterval);
 		clearInterval(this.#viewRefreshInterval);
@@ -903,7 +973,7 @@ export class DatabaseOptimizer {
 		this.#queryAnalysisInterval = null;
 		this.#viewRefreshInterval = null;
 		this.#autoSuggestionsInterval = null;
-		console.log("[DatabaseOptimizer] Shutdown complete.");
+		console.log("[DatabaseOptimizer] Cleanup complete.");
 	}
 }
 

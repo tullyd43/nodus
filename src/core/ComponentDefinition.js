@@ -304,23 +304,28 @@ export class ComponentDefinition {
 
 /**
  * @class ComponentDefinitionRegistry
+ * @privateFields {#stateManager, #metrics, #definitions, #categories}
  * @classdesc Manages all component definitions in the system.
  */
 export class ComponentDefinitionRegistry {
+	/** @private @type {import('./HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {Map<string, ComponentDefinition>} */
+	#definitions = new Map();
+	/** @private @type {Set<string>} */
+	#categories = new Set();
+
 	/**
 	 * @param {object} context - The application context.
 	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
 	constructor({ stateManager }) {
-		/** @public @type {import('./HybridStateManager.js').default} */
-		this.stateManager = stateManager;
+		this.#stateManager = stateManager;
 		// V8.0 Parity: Derive metricsRegistry from stateManager
-		this.metrics =
-			stateManager.metricsRegistry?.namespace("componentRegistry");
-		/** @private @type {Map<string, ComponentDefinition>} */
-		this.definitions = new Map();
-		/** @private @type {Set<string>} */
-		this.categories = new Set();
+		this.#metrics =
+			this.#stateManager.metricsRegistry?.namespace("componentRegistry");
 	}
 
 	/**
@@ -332,20 +337,20 @@ export class ComponentDefinitionRegistry {
 	register(definition) {
 		if (!(definition instanceof ComponentDefinition)) {
 			// V8.0 Parity: Pass stateManager to the definition constructor.
-			const config = { ...definition, stateManager: this.stateManager };
+			const config = { ...definition, stateManager: this.#stateManager };
 			definition = new ComponentDefinition(definition.id, config);
 		}
 
 		// Run before hooks
-		this.stateManager?.emit?.("component:beforeRegister", { definition });
+		this.#stateManager?.emit?.("component:beforeRegister", { definition });
 
 		// Register the definition
-		this.definitions.set(definition.id, definition);
-		this.categories.add(definition.category);
-		this.metrics?.increment("registered");
+		this.#definitions.set(definition.id, definition);
+		this.#categories.add(definition.category);
+		this.#metrics?.increment("registered");
 
 		// Run after hooks
-		this.stateManager?.emit?.("component:afterRegister", { definition });
+		this.#stateManager?.emit?.("component:afterRegister", { definition });
 
 		return definition;
 	}
@@ -357,7 +362,7 @@ export class ComponentDefinitionRegistry {
 	 * @returns {ComponentDefinition|undefined}
 	 */
 	get(id) {
-		return this.definitions.get(id);
+		return this.#definitions.get(id);
 	}
 
 	/**
@@ -367,7 +372,7 @@ export class ComponentDefinitionRegistry {
 	 * @returns {Array<ComponentDefinition>}
 	 */
 	getByCategory(category) {
-		return Array.from(this.definitions.values()).filter(
+		return Array.from(this.#definitions.values()).filter(
 			(def) => def.category === category
 		);
 	}
@@ -379,7 +384,7 @@ export class ComponentDefinitionRegistry {
 	 * @returns {Array<ComponentDefinition>}
 	 */
 	getForEntityTypes(entityTypes) {
-		return Array.from(this.definitions.values()).filter((def) =>
+		return Array.from(this.#definitions.values()).filter((def) =>
 			def.canRender(entityTypes)
 		);
 	}
@@ -392,8 +397,8 @@ export class ComponentDefinitionRegistry {
 	 */
 	getForUser(userPermissions = []) {
 		const subject =
-			this.stateManager?.managers?.securityManager?.getSubject();
-		return Array.from(this.definitions.values()).filter((def) =>
+			this.#stateManager?.managers?.securityManager?.getSubject();
+		return Array.from(this.#definitions.values()).filter((def) =>
 			def.hasPermissions(subject?.permissions || userPermissions)
 		);
 	}
@@ -406,7 +411,7 @@ export class ComponentDefinitionRegistry {
 	 */
 	search(query) {
 		const lowerQuery = query.toLowerCase();
-		return Array.from(this.definitions.values()).filter(
+		return Array.from(this.#definitions.values()).filter(
 			(def) =>
 				def.name.toLowerCase().includes(lowerQuery) ||
 				def.description.toLowerCase().includes(lowerQuery) ||
@@ -421,12 +426,14 @@ export class ComponentDefinitionRegistry {
 	 * @returns {boolean} `true` if successful, `false` otherwise.
 	 */
 	unregister(id) {
-		const definition = this.definitions.get(id);
+		const definition = this.#definitions.get(id);
 		if (!definition) return false;
 
-		this.stateManager?.emit?.("component:beforeUnregister", { definition });
-		this.definitions.delete(id);
-		this.stateManager?.emit?.("component:afterUnregister", {
+		this.#stateManager?.emit?.("component:beforeUnregister", {
+			definition,
+		});
+		this.#definitions.delete(id);
+		this.#stateManager?.emit?.("component:afterUnregister", {
 			id,
 			definition,
 		});
@@ -440,7 +447,7 @@ export class ComponentDefinitionRegistry {
 	 * @returns {Array<string>}
 	 */
 	getCategories() {
-		return Array.from(this.categories);
+		return Array.from(this.#categories);
 	}
 
 	/**
@@ -449,7 +456,7 @@ export class ComponentDefinitionRegistry {
 	 * @returns {Array<object>}
 	 */
 	exportAsEntities() {
-		return Array.from(this.definitions.values()).map((def) =>
+		return Array.from(this.#definitions.values()).map((def) =>
 			def.toEntity()
 		);
 	}
@@ -482,10 +489,10 @@ export class ComponentDefinitionRegistry {
 	 * @returns {object}
 	 */
 	getStats() {
-		const definitions = Array.from(this.definitions.values());
+		const definitions = Array.from(this.#definitions.values());
 
 		const stats = {
-			...this.metrics.getAllAsObject(),
+			...this.#metrics.getAllAsObject(),
 			totalDefinitions: definitions.length,
 			categoryCounts: Object.fromEntries(
 				this.getCategories().map((cat) => [

@@ -12,10 +12,6 @@
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  */
 
-import { DateCore } from "@utils/DateUtils.js";
-
-import { constantTimeCheck } from "../security/ct.js"; // timing-channel padding
-
 /**
  * @typedef {object} StorageLoaderConfig
  * @property {string} [baseURL="/src/core/storage/modules/"] - The base URL for dynamically loading module scripts.
@@ -166,7 +162,7 @@ export class StorageLoader {
 	 * @param {StorageCreationOptions} options - The options for creating the storage instance.
 	 * @returns {Promise<object>} An object detailing the required modules for each category (core, security, crypto, sync).
 	 */
-	async #analyzeRequirements(authContext, options) {
+	#analyzeRequirements(authContext, options) {
 		// 1) demo mode check
 		if (this.#config.demoMode) {
 			this.#audit("STORAGE_PROFILE_SELECTED", { profile: "demo" });
@@ -228,7 +224,7 @@ export class StorageLoader {
 	 * @returns {Promise<object>} An object containing the loaded module classes, ready for instantiation.
 	 */
 	async #loadRequiredModules(requirements) {
-		const modules = {
+		return {
 			validation: await this.#loadValidationStack(
 				requirements.core || []
 			),
@@ -241,7 +237,6 @@ export class StorageLoader {
 				requirements.indexeddb || ["indexeddb-adapter"]
 			),
 		};
-		return modules;
 	}
 
 	/**
@@ -510,8 +505,6 @@ export class StorageLoader {
  */
 class ModularOfflineStorage {
 	/** @private @type {Map<string, object>} */
-	#modules = new Map();
-	/** @private @type {boolean} */
 	#isReady = false;
 	/** @private @type {import('../HybridStateManager.js').default|null} */
 	#stateManager;
@@ -519,6 +512,11 @@ class ModularOfflineStorage {
 	/**
 	 * Creates an instance of ModularOfflineStorage.
 	 * @param {object} context - The application context.
+	 * @param {object} context.modules - An object containing the instantiated modules.
+	 * @param {import('./modules/validation-stack.js').default} context.modules.validation
+	 * @param {object} context.modules.security
+	 * @param {object} context.modules.crypto
+	 * @param {import('./modules/sync-stack.js').default} context.modules.sync
 	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 * @param {object} context.moduleClasses - An object containing the loaded module classes.
 	 */
@@ -529,40 +527,16 @@ class ModularOfflineStorage {
 			);
 		}
 		this.#stateManager = stateManager;
+		this.validation = moduleClasses.validation;
+		this.security = moduleClasses.security;
+		this.crypto = moduleClasses.crypto;
+		this.sync = moduleClasses.sync;
+		this.indexeddb = moduleClasses.indexeddb;
 
-		// Instantiate modules
-		for (const type of Object.keys(moduleClasses)) {
-			const Cls = moduleClasses[type];
-			if (!Cls) continue;
-
-			// V8.0 Parity: All modules receive the stateManager context.
-			const moduleContext = { stateManager: this.#stateManager };
-
-			if (type === "indexeddb") {
-				const indexeddbConfig =
-					this.#stateManager.config.storageConfig?.indexeddb;
-				// Pass IndexedDB config only to adapter
-				this.#modules.set(
-					type,
-					new Cls({
-						...(indexeddbConfig || {}),
-						...moduleContext,
-					})
-				);
-			} else if (typeof Cls === "function") {
-				// It's a class constructor
-				this.#modules.set(type, new Cls(moduleContext));
-			} else {
-				this.#modules.set(type, Cls); // Some stacks may already be instances
-			}
-		}
 		this.#audit("MODULAR_STORAGE_CREATED", {
 			modules: this.modules,
 			demoMode: this.#isDemoMode,
 		});
-	}
-	get #isDemoMode() {
-		return this.#stateManager.config.demoMode === true;
 	}
 
 	/**
@@ -574,15 +548,21 @@ class ModularOfflineStorage {
 		if (this.#isReady) return this;
 		// Deterministic init order
 		const order = ["indexeddb", "crypto", "security", "validation", "sync"];
-		for (const moduleName of order) {
-			const m = this.#modules.get(moduleName);
-			if (m && typeof m.init === "function") {
-				await m.init();
+		for (const moduleKey of order) {
+			const moduleInstance = this[moduleKey];
+			if (moduleInstance && typeof moduleInstance.init === "function") {
+				await moduleInstance.init();
 			}
 		}
 		this.#isReady = true;
 		console.log("[ModularOfflineStorage] Initialized with dynamic modules");
 		return this;
+	}
+
+	// -------------------------------------------------------------------------
+	// V8.0 Parity: Centralized dependency derivation
+	get #isDemoMode() {
+		return this.#stateManager.config.demoMode === true;
 	}
 
 	// -------------------------------------------------------------------------
@@ -596,12 +576,20 @@ class ModularOfflineStorage {
 	}
 
 	/**
-	 * Retrieves the crypto router from the security manager.
+	 * Retrieves the crypto module.
 	 * @private
 	 * @returns {object|null}
 	 */
-	#getCryptoRouter() {
-		return this.#stateManager?.managers?.securityManager?.cryptoRouter;
+	get #crypto() {
+		return this.crypto;
+	}
+
+	/**
+	 * @private
+	 * @returns {import('../security/InformationFlowTracker.js').InformationFlowTracker|null}
+	 */
+	get #informationFlow() {
+		return this.#stateManager?.managers?.informationFlowTracker;
 	}
 
 	/**
@@ -611,6 +599,7 @@ class ModularOfflineStorage {
 	 */
 	#subject() {
 		return (
+			// V8 Parity: Derive from stateManager
 			this.#mac?.subject() || {
 				level: "unclassified",
 				compartments: new Set(),
@@ -713,7 +702,7 @@ class ModularOfflineStorage {
 		base.merged_at = new Date().toISOString();
 
 		// Info flow (optional)
-		this.#stateManager?.informationFlow?.derived(
+		this.#informationFlow?.derived(
 			rows.map((r) => ({
 				level: r.classification_level,
 				compartments: r.compartments,
@@ -725,6 +714,26 @@ class ModularOfflineStorage {
 		return base;
 	}
 
+	/**
+	 * Wraps a database operation with performance metrics and error handling.
+	 * @private
+	 * @param {string} operationName - The name of the operation (e.g., 'get', 'put').
+	 * @param {Function} operationFn - The async function performing the DB operation.
+	 * @returns {Promise<any>}
+	 */
+	async #trace(operationName, operationFn) {
+		const measure = this.#stateManager?.managers?.metricsRegistry?.measure;
+		const errorHelpers = this.#stateManager?.managers?.errorHelpers;
+
+		// Mandate 4.3: Use the metrics decorator/wrapper for performance measurement.
+		if (measure && errorHelpers) {
+			const measuredFn = measure(`storage.${operationName}`)(operationFn);
+			return errorHelpers.captureAsync(measuredFn, {
+				component: `ModularOfflineStorage.${operationName}`,
+			});
+		}
+		return operationFn(); // Fallback if core services are not ready.
+	}
 	// -------------------------------------------------------------------------
 	// Writes (transparent encryption if crypto & not demo)
 	/**
@@ -736,96 +745,78 @@ class ModularOfflineStorage {
 	 * @returns {Promise<IDBValidKey>} The key of the stored item.
 	 */
 	async put(storeName, item) {
-		// V8.0 Parity: Simplified logic
-		const idx = this.#modules.get("indexeddb");
-		if (!idx?.put) throw new Error("IndexedDB adapter not loaded");
+		return this.#trace("put", async () => {
+			const idx = this.indexeddb;
+			if (!idx?.put) throw new Error("IndexedDB adapter not loaded");
 
-		// MAC write (no write down)
-		const mac = this.#mac;
-		if (!this.#isDemoMode && mac) {
-			const canWrite = this.#mac.canWrite(
-				this.#subject(),
-				this.#getLabel(item, { storeName })
-			);
-			if (!canWrite) {
-				throw new Error(
-					"MAC_WRITE_DENIED: Insufficient clearance to write at this level."
+			// MAC write (no write down)
+			const mac = this.#mac;
+			if (!this.#isDemoMode && mac) {
+				const canWrite = mac.canWrite(
+					this.#subject(),
+					this.#getLabel(item, { storeName })
 				);
+				if (!canWrite) {
+					throw new Error(
+						"MAC_WRITE_DENIED: Insufficient clearance to write at this level."
+					);
+				}
 			}
-		}
 
-		let record = { ...item };
+			let record = { ...item };
 
-		// Polyinstantiation Write Logic
-		if (storeName === "objects_polyinstantiated") {
-			// 1. Generate the deterministic composite ID.
-			// This ensures that a put operation for the same logical object at the same classification level
-			// will overwrite the existing instance, fulfilling the "overwrite same-level" rule.
-			// A write to a different classification level will create a new row if permitted by MAC.
-			record.id = `${item.logical_id}-${item.classification_level}`;
-
-			// 2. The MAC 'enforceNoWriteDown' check has already ensured the user has permission
-			// to write at this classification level. The composite ID handles the storage logic.
-			// Additional checks (e.g., preventing a new low-level instance if a higher one exists)
-			// could be added here, but the current model relies on the MAC check as the primary guard.
-		}
-
-		const cryptoRouter = this.#getCryptoRouter();
-		if (!this.#isDemoMode && cryptoRouter) {
-			// Encrypt either the whole record or just instance_data for polyinstantiated entities
-			const isPoly = storeName === "objects_polyinstantiated";
-			const label = this.#getLabel(item, { storeName });
-
-			if (isPoly && record.instance_data) {
-				const pt = new TextEncoder().encode(
-					JSON.stringify(record.instance_data) // Only encrypt the sensitive part
-				);
-				// AAD binds the ciphertext to its classification metadata.
-				// This stronger AAD payload includes the unique ID and a timestamp,
-				// preventing replay or substitution attacks.
-				const aadPayload = {
-					...label,
-					logical_id: record.logical_id,
-					id: record.id,
-					timestamp: DateCore.timestamp(),
-				};
-				const aad = new TextEncoder().encode(
-					JSON.stringify(aadPayload)
-				);
-				const env = await cryptoRouter.encrypt(label, pt, aad);
-				record = {
-					...record,
-					encrypted: true,
-					ciphertext: env.ciphertext,
-					iv: env.iv,
-					alg: env.alg,
-					kid: env.kid,
-					tag: env.tag,
-				};
-				delete record.instance_data;
-			} else {
-				const pt = new TextEncoder().encode(JSON.stringify(record));
-				// AAD binds the ciphertext to its classification metadata for the whole object.
-				const aadPayload = {
-					...label,
-					id: record.id, // Bind to the specific record ID
-					timestamp: DateCore.timestamp(),
-				};
-				const aad = new TextEncoder().encode(
-					JSON.stringify(aadPayload)
-				);
-				const env = await cryptoRouter.encrypt(label, pt, aad);
-				record.envelope = env;
-				record.encrypted = true;
+			// Polyinstantiation Write Logic
+			if (storeName === "objects_polyinstantiated") {
+				record.id = `${item.logical_id}-${item.classification_level}`;
 			}
-		}
 
-		const res = await idx.put(storeName, record);
-		this.#stateManager.emit("entitySaved", {
-			store: storeName,
-			item: record,
+			const crypto = this.#crypto;
+			if (!this.#isDemoMode && crypto) {
+				const isPoly = storeName === "objects_polyinstantiated";
+				const label = this.#getLabel(item, { storeName });
+
+				if (isPoly && record.instance_data) {
+					const pt = new TextEncoder().encode(
+						JSON.stringify(record.instance_data)
+					);
+					const aadPayload = {
+						...label,
+						logical_id: record.logical_id,
+						id: record.id,
+					};
+					const aad = new TextEncoder().encode(
+						JSON.stringify(aadPayload)
+					);
+					const env = await crypto.encrypt(label, pt, aad);
+					record = {
+						...record,
+						encrypted: true,
+						ciphertext: env.ciphertext,
+						iv: env.iv,
+						alg: env.alg,
+						kid: env.kid,
+						tag: env.tag,
+					};
+					delete record.instance_data;
+				} else {
+					const pt = new TextEncoder().encode(JSON.stringify(record));
+					const aadPayload = { ...label, id: record.id };
+					const aad = new TextEncoder().encode(
+						JSON.stringify(aadPayload)
+					);
+					const env = await crypto.encrypt(label, pt, aad);
+					record.envelope = env;
+					record.encrypted = true;
+				}
+			}
+
+			const res = await idx.put(storeName, record);
+			this.#stateManager.emit("entitySaved", {
+				store: storeName,
+				item: record,
+			});
+			return res;
 		});
-		return res;
 	}
 
 	// -------------------------------------------------------------------------
@@ -839,11 +830,10 @@ class ModularOfflineStorage {
 	 * @returns {Promise<object|null>} The decrypted and merged item, or null.
 	 */
 	async get(storeName, id) {
-		// V8.0 Parity: Simplified logic
-		const idx = this.#modules.get("indexeddb");
-		if (!idx?.get) throw new Error("IndexedDB adapter not loaded");
+		return this.#trace("get", async () => {
+			const idx = this.indexeddb;
+			if (!idx?.get) throw new Error("IndexedDB adapter not loaded");
 
-		return constantTimeCheck(async () => {
 			// Poly store: read all rows for logical_id and MAC-filter them
 			if (storeName === "objects_polyinstantiated") {
 				const rows = await idx.queryByIndex(
@@ -875,7 +865,7 @@ class ModularOfflineStorage {
 				}
 			}
 			return this.#maybeDecryptNormal(raw);
-		}, 100);
+		});
 	}
 
 	/**
@@ -886,14 +876,13 @@ class ModularOfflineStorage {
 	 * @returns {Promise<void>}
 	 */
 	async delete(storeName, id) {
-		// V8.0 Parity: Simplified logic
-		const idx = this.#modules.get("indexeddb");
-		if (!idx?.delete) throw new Error("IndexedDB adapter not loaded");
+		return this.#trace("delete", async () => {
+			const idx = this.indexeddb;
+			if (!idx?.delete) throw new Error("IndexedDB adapter not loaded");
 
-		return constantTimeCheck(async () => {
 			// Polyinstantiated delete: find all readable instances and delete them.
 			if (storeName === "objects_polyinstantiated") {
-				const logicalId = id; // For polyinstantiated, 'id' parameter refers to logical_id
+				const logicalId = id;
 				const rows = await idx.queryByIndex(
 					storeName,
 					"logical_id",
@@ -958,7 +947,7 @@ class ModularOfflineStorage {
 				store: storeName,
 				id,
 			});
-		}, 100);
+		});
 	}
 
 	/**
@@ -970,11 +959,12 @@ class ModularOfflineStorage {
 	 * @returns {Promise<object[]>} An array of readable items.
 	 */
 	async query(storeName, index, value) {
-		const idx = this.#modules.get("indexeddb");
-		if (!idx?.queryByIndex) throw new Error("IndexedDB adapter not loaded");
-
-		return constantTimeCheck(async () => {
+		return this.#trace("query", async () => {
+			const idx = this.indexeddb;
+			if (!idx?.queryByIndex)
+				throw new Error("IndexedDB adapter not loaded");
 			const out = await idx.queryByIndex(storeName, index, value);
+
 			const readable = this.#filterReadable(out || [], storeName);
 			const decrypted = await Promise.all(
 				readable.map((r) => {
@@ -985,7 +975,7 @@ class ModularOfflineStorage {
 				})
 			);
 			return decrypted;
-		}, 100);
+		});
 	}
 
 	/**
@@ -995,11 +985,11 @@ class ModularOfflineStorage {
 	 * @returns {Promise<object[]>} An array of all readable items.
 	 */
 	async getAll(storeName) {
-		const idx = this.#modules.get("indexeddb");
-		if (!idx?.getAll) throw new Error("IndexedDB adapter not loaded");
-
-		return constantTimeCheck(async () => {
+		return this.#trace("getAll", async () => {
+			const idx = this.indexeddb;
+			if (!idx?.getAll) throw new Error("IndexedDB adapter not loaded");
 			const out = await idx.getAll(storeName);
+
 			const readable = this.#filterReadable(out || [], storeName);
 			const decrypted = await Promise.all(
 				readable.map((r) => {
@@ -1010,7 +1000,7 @@ class ModularOfflineStorage {
 				})
 			);
 			return decrypted;
-		}, 100);
+		});
 	}
 
 	/**
@@ -1025,10 +1015,11 @@ class ModularOfflineStorage {
 			return []; // History is only supported for polyinstantiated entities.
 		}
 
-		const idx = this.#modules.get("indexeddb");
-		if (!idx?.queryByIndex) throw new Error("IndexedDB adapter not loaded");
+		return this.#trace("getHistory", async () => {
+			const idx = this.indexeddb;
+			if (!idx?.queryByIndex)
+				throw new Error("IndexedDB adapter not loaded");
 
-		return constantTimeCheck(async () => {
 			// 1. Fetch all physical rows for the logical ID.
 			const allRows = await idx.queryByIndex(
 				storeName,
@@ -1048,7 +1039,7 @@ class ModularOfflineStorage {
 			return decryptedVersions.sort(
 				(a, b) => new Date(b.updated_at) - new Date(a.updated_at)
 			);
-		}, 100);
+		});
 	}
 
 	// -------------------------------------------------------------------------
@@ -1059,22 +1050,20 @@ class ModularOfflineStorage {
 	 * @returns {Promise<object>} The row with its `instance_data` decrypted.
 	 */
 	async #maybeDecryptPoly(row) {
-		const cryptoRouter = this.#getCryptoRouter();
-		if (this.#isDemoMode || !cryptoRouter || !row?.encrypted) return row;
+		const crypto = this.#crypto;
+		if (this.#isDemoMode || !crypto || !row?.encrypted) return row;
 		const label = this.#getLabel(row, {
 			storeName: "objects_polyinstantiated",
 		});
 
 		// Reconstruct the AAD payload used during encryption for verification.
-		// The timestamp is not included here as it's part of the authenticated
-		// data but not needed for reconstruction. The crypto layer verifies it.
 		const aadPayload = {
 			...label,
 			logical_id: row.logical_id,
 			id: row.id,
 		};
 		const aad = new TextEncoder().encode(JSON.stringify(aadPayload));
-		const pt = await cryptoRouter.decrypt(
+		const pt = await crypto.decrypt(
 			label,
 			{
 				ciphertext: row.ciphertext,
@@ -1103,8 +1092,8 @@ class ModularOfflineStorage {
 	 * @returns {Promise<object>} The decrypted object.
 	 */
 	async #maybeDecryptNormal(row) {
-		const cryptoRouter = this.#getCryptoRouter();
-		if (this.#isDemoMode || !cryptoRouter || !row?.encrypted) return row;
+		const crypto = this.#crypto;
+		if (this.#isDemoMode || !crypto || !row?.encrypted) return row;
 		const label = this.#getLabel(row);
 
 		// Reconstruct the AAD payload for verification.
@@ -1113,7 +1102,7 @@ class ModularOfflineStorage {
 			id: row.id,
 		};
 		const aad = new TextEncoder().encode(JSON.stringify(aadPayload));
-		const pt = await cryptoRouter.decrypt(label, row.envelope, aad);
+		const pt = await crypto.decrypt(label, row.envelope, aad);
 		const obj = JSON.parse(new TextDecoder().decode(pt));
 		return obj;
 	}
@@ -1160,6 +1149,12 @@ class ModularOfflineStorage {
 	 * @returns {string[]}
 	 */
 	get modules() {
-		return Array.from(this.#modules.keys());
+		const loaded = [];
+		if (this.indexeddb) loaded.push("indexeddb");
+		if (this.crypto) loaded.push("crypto");
+		if (this.security) loaded.push("security");
+		if (this.validation) loaded.push("validation");
+		if (this.sync) loaded.push("sync");
+		return loaded;
 	}
 }

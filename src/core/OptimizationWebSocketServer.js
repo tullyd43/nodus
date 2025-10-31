@@ -311,7 +311,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
 			// V8.0 Parity: Mandate 2.4 - Log successful authentication.
 			this.#forensicLogger?.logAuditEvent("AUTH_SUCCESS", {
 				component: "OptimizationWebSocketServer",
-				clientId: clientId,
+				clientId,
 				userId: client.authenticatedUserId, // Stored from token verification
 			});
 
@@ -332,7 +332,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
 			// V8.0 Parity: Mandate 2.4 - Log failed authentication.
 			this.#forensicLogger?.logAuditEvent("AUTH_FAILURE", {
 				component: "OptimizationWebSocketServer",
-				clientId: clientId,
+				clientId,
 				reason: error.message,
 			});
 

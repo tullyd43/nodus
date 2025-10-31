@@ -1,5 +1,7 @@
 // src/core/storage/modules/basic-crypto.js
 // BasicCrypto — foundational cryptographic module for Nodus storage systems.
+
+import { AppError } from "../../../utils/ErrorHelpers.js";
 // Handles lightweight encryption, hashing, and key generation utilities.
 // This acts as a default fallback when higher-level (enterprise/NATO) crypto modules are not loaded.
 
@@ -12,16 +14,16 @@
  * @warning This module's encryption methods are **NOT SECURE** and are for placeholder/demonstration purposes only.
  * They should never be used to protect sensitive data in a production environment.
  * @module BasicCrypto
+ *
+ * @privateFields {#config, #stateManager, #metrics, #errorHelpers}
  */
 export default class BasicCrypto {
-	/**
-	 * Configuration for the module.
-	 * @private
-	 * @type {object}
-	 */
-	#config;
 	/** @private @type {import('../../HybridStateManager.js').default} */
 	#stateManager;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
 
 	/**
 	 * Creates an instance of BasicCrypto.
@@ -31,8 +33,11 @@ export default class BasicCrypto {
 	 */
 	constructor({ stateManager, options = {} }) {
 		this.#stateManager = stateManager;
-		this.#config = options;
-		console.log("[BasicCrypto] Loaded with config:", this.#config);
+
+		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("basicCrypto");
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
 	}
 
 	/**
@@ -40,7 +45,6 @@ export default class BasicCrypto {
 	 * @returns {Promise<this>} The initialized instance.
 	 */
 	async init() {
-		console.log("[BasicCrypto] Ready (stub implementation)");
 		return this;
 	}
 
@@ -57,8 +61,6 @@ export default class BasicCrypto {
 	 * // hashed will be "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 	 */
 	async hash(input) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("basicCrypto");
 		const startTime = performance.now();
 		try {
 			const data = new TextEncoder().encode(input);
@@ -68,8 +70,8 @@ export default class BasicCrypto {
 				.join("");
 		} finally {
 			const duration = performance.now() - startTime;
-			metrics?.increment("hashCount");
-			metrics?.updateAverage("hashTime", duration);
+			this.#metrics?.increment("hashCount");
+			this.#metrics?.updateAverage("hashTime", duration);
 		}
 	}
 
@@ -84,16 +86,14 @@ export default class BasicCrypto {
 	 * @returns {Promise<string>} The base64-encoded string, prefixed with "enc:".
 	 */
 	async encrypt(data) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("basicCrypto");
 		const startTime = performance.now();
 		try {
 			const encoded = btoa(JSON.stringify(data));
 			return `enc:${encoded}`;
 		} finally {
 			const duration = performance.now() - startTime;
-			metrics?.increment("encryptionCount");
-			metrics?.updateAverage("encryptionTime", duration);
+			this.#metrics?.increment("encryptionCount");
+			this.#metrics?.updateAverage("encryptionTime", duration);
 		}
 	}
 
@@ -109,17 +109,25 @@ export default class BasicCrypto {
 	 * @throws {Error} If the payload is malformed or does not start with "enc:".
 	 */
 	async decrypt(payload) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("basicCrypto");
 		const startTime = performance.now();
 		try {
-			if (!payload.startsWith("enc:")) throw new Error("Invalid payload");
+			if (typeof payload !== "string" || !payload.startsWith("enc:")) {
+				throw new AppError(
+					"Invalid or malformed payload for decryption."
+				);
+			}
 			const decoded = atob(payload.slice(4));
 			return JSON.parse(decoded);
+		} catch (error) {
+			const appError = new AppError("Basic decryption failed.", {
+				cause: error,
+			});
+			this.#errorHelpers?.handleError(appError);
+			throw appError;
 		} finally {
 			const duration = performance.now() - startTime;
-			metrics?.increment("decryptionCount");
-			metrics?.updateAverage("decryptionTime", duration);
+			this.#metrics?.increment("decryptionCount");
+			this.#metrics?.updateAverage("decryptionTime", duration);
 		}
 	}
 }

@@ -16,6 +16,8 @@ export class AdaptiveRenderer {
 	#stateManager;
 	/** @private @type {import('./ComponentDefinition.js').ComponentDefinitionRegistry|null} */
 	#componentRegistry = null;
+	/** @private @type {import('./BuildingBlockRenderer.js').BuildingBlockRenderer|null} */
+	#buildingBlockRenderer = null;
 	/** @private @type {import('../utils/LRUCache.js').LRUCache|null} */
 	#adaptationCache = null;
 	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
@@ -35,6 +37,8 @@ export class AdaptiveRenderer {
 		this.#stateManager = stateManager;
 		// Derive dependencies from stateManager in the constructor.
 		this.#componentRegistry = this.#stateManager.managers.componentRegistry;
+		this.#buildingBlockRenderer =
+			this.#stateManager.managers.buildingBlockRenderer;
 		this.#adaptationCache =
 			this.#stateManager.managers.cacheManager?.getCache("adaptations");
 		this.#metrics =
@@ -43,14 +47,14 @@ export class AdaptiveRenderer {
 		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
 		this.#forensicLogger?.logAuditEvent("SYSTEM_INITIALIZATION", {
 			component: "AdaptiveRenderer",
+			status: "initialized",
 		});
 
-		// V8.0 Parity: Mandate 4.3 - Apply performance measurement decorator.
-		if (this.#metrics) {
-			this.render = this.#metrics.measure("render")(
-				this.render.bind(this)
-			);
-		}
+		// V8.0 Parity: Mandate 4.3 - Apply performance measurement decorator to the render method.
+		// Note: The decorator is implemented as a higher-order function wrapper for now.
+		this.render = this.#metrics.measure("render", {
+			component: "AdaptiveRenderer",
+		})(this.render.bind(this));
 	}
 
 	/**
@@ -62,8 +66,6 @@ export class AdaptiveRenderer {
 	 * @returns {HTMLElement|object} The rendered component or a fallback element.
 	 */
 	render(componentId, context, data = {}) {
-		// const startTime = performance.now(); // V8.0 Parity: Timing is now handled by the decorator.
-
 		return this.#errorHelpers?.tryOr(
 			() => {
 				const component = this.#getComponent(componentId);
@@ -101,13 +103,9 @@ export class AdaptiveRenderer {
 					renderContext
 				);
 
-				// const duration = performance.now() - startTime; // V8.0 Parity: Timing is now handled by the decorator.
-				// this.#recordRenderMetrics(duration, !!adaptation.cached);
-
 				return result;
 			},
-			(error) => this.#renderError(componentId, error, context),
-			{ componentId, context }
+			(error) => this.#renderError(componentId, error, context)
 		);
 	}
 
@@ -176,67 +174,46 @@ export class AdaptiveRenderer {
 	 * @returns {HTMLElement|object|null} The rendered component.
 	 */
 	#renderAdaptation(component, adaptation, context) {
-		const renderMethod =
-			component.render[adaptation.name] || component.render.default;
-
-		// V8.0 Parity: Use error helper for centralized error management.
-		if (!renderMethod) {
-			this.#forensicLogger?.warn(
-				`AdaptiveRenderer: No render method for adaptation ${adaptation.name}`,
-				{ componentId: component.id, adaptationName: adaptation.name }
+		// V8.0 Parity: Delegate all rendering to the BuildingBlockRenderer.
+		if (!this.#buildingBlockRenderer) {
+			this.#forensicLogger?.logAuditEvent("RENDER_FAILURE", {
+				reason: "BuildingBlockRenderer not available",
+				componentId: component.id,
+			});
+			return this.#renderFallback(
+				component.id,
+				context,
+				"Renderer not available"
 			);
-			return this.#renderFallback(component.id, context);
 		}
 
 		// Extend the context with adaptation-specific info for the render function.
 		const finalRenderContext = context.extend({
 			adaptationName: adaptation.name,
-			config: { ...component.defaultConfig, ...adaptation.render },
+			// Merge component's default config with the adaptation's render config.
+			config: {
+				...component.defaultConfig,
+				...(adaptation.render || {}),
+			},
 		});
 
-		// Execute render method
-		if (typeof renderMethod === "function") {
-			return renderMethod(finalRenderContext);
-		} else if (typeof renderMethod === "string") {
-			// Template-based rendering
-			return this.#renderTemplate(renderMethod, finalRenderContext);
-		} else {
-			// Static content (less common, but supported)
-			console.warn(
-				`[AdaptiveRenderer] Render method for ${component.id} is not a function or string.`
-			);
-			return null;
+		// The `composition` is the render definition from the adaptation.
+		// It can be a block ID (string), a sequence (array), or a layout (object).
+		const composition =
+			component.render[adaptation.name] || component.render.default;
+
+		if (!composition) {
+			this.#forensicLogger?.logAuditEvent("RENDER_FAILURE", {
+				reason: `No render definition for adaptation '${adaptation.name}'`,
+				componentId: component.id,
+			});
+			return this.#renderFallback(component.id, context);
 		}
-	}
 
-	/**
-	 * @description Renders a component from a string template.
-	 * @private
-	 * @param {string} template - The string template to render.
-	 * @param {object} context - The data to inject into the template.
-	 * @returns {HTMLElement|Node} The rendered HTML element.
-	 */
-	#renderTemplate(template, context) {
-		// Simple variable substitution for {{variable}}
-		const rendered = template.replace(
-			/\{\{([\w.-]+)\}\}/g,
-			(match, path) => context.getNestedValue?.(path) ?? ""
+		return this.#buildingBlockRenderer.render(
+			composition,
+			finalRenderContext
 		);
-
-		// V8.0 Parity: Use DOMParser for safer HTML creation in browser environments.
-		const parser = new DOMParser();
-		const doc = parser.parseFromString(rendered, "text/html");
-
-		// If the template resulted in a single element, return it directly.
-		// Otherwise, return a document fragment containing all top-level elements.
-		if (doc.body.children.length === 1) {
-			return doc.body.firstChild;
-		}
-		const fragment = document.createDocumentFragment();
-		Array.from(doc.body.children).forEach((child) =>
-			fragment.appendChild(child)
-		);
-		return fragment;
 	}
 
 	/**
@@ -244,19 +221,25 @@ export class AdaptiveRenderer {
 	 * @private
 	 * @param {string} componentId - The ID of the missing component.
 	 * @param {RenderContext} context - The current rendering context.
+	 * @param {string} [reason="Component not found"] - The reason for the fallback.
 	 * @returns {HTMLElement} The fallback element.
 	 */
-	#renderFallback(componentId, context) {
+	#renderFallback(componentId, context, reason = "Component not found") {
 		const fallback = document.createElement("div");
 		fallback.className = "adaptive-renderer-fallback";
+		fallback.style.cssText =
+			"padding: 8px; background: #fffbe6; border: 1px solid #ffe58f; border-radius: 4px; color: #d46b08; font-size: 12px;";
+
 		const content = document.createElement("div");
 		content.className = "fallback-content";
-		content.innerHTML = `<strong>Component Not Found</strong>`;
+
+		const strong = document.createElement("strong");
+		strong.textContent = reason;
+
 		const p1 = document.createElement("p");
 		p1.textContent = `Component: ${componentId}`;
-		const p2 = document.createElement("p");
-		p2.textContent = `Context: ${context.purpose || "unknown"}`;
-		content.append(p1, p2);
+
+		content.append(strong, p1);
 		fallback.appendChild(content);
 		return fallback;
 	}
@@ -272,29 +255,22 @@ export class AdaptiveRenderer {
 	#renderError(componentId, error, context) {
 		const errorEl = document.createElement("div");
 		errorEl.className = "adaptive-renderer-error";
+		errorEl.style.cssText =
+			"padding: 8px; background: #fff1f0; border: 1px solid #ffccc7; border-radius: 4px; color: #cf1322; font-size: 12px;";
+
 		const content = document.createElement("div");
 		content.className = "error-content";
-		content.innerHTML = `<strong>Render Error</strong>`;
+
+		const strong = document.createElement("strong");
+		strong.textContent = "Render Error";
+
 		const p1 = document.createElement("p");
 		p1.textContent = `Component: ${componentId}`;
 		const p2 = document.createElement("p");
 		p2.textContent = `Error: ${error.message}`;
-		content.append(p1, p2);
+		content.append(strong, p1, p2);
 		errorEl.appendChild(content);
 		return errorEl;
-	}
-
-	/**
-	 * @description Records performance metrics for a render operation.
-	 * @private
-	 * @param {number} duration - The duration of the render operation in milliseconds.
-	 * @param {boolean} wasFromCache - Whether the adaptation was retrieved from the cache.
-	 * @returns {void}
-	 */
-	#recordRenderMetrics(duration, wasFromCache) {
-		this.#metrics?.increment("renderCount");
-		this.#metrics?.updateAverage("renderTime", duration);
-		if (!wasFromCache) this.#metrics?.increment("cacheMisses");
 	}
 
 	/**

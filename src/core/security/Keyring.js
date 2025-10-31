@@ -1,5 +1,6 @@
 // src/core/security/Keyring.js
 
+import { ErrorHelpers } from "@utils/ErrorHelpers.js";
 /**
  * Manages cryptographic keys in a temporary in-memory store.
  * This class is designed for development and testing purposes.
@@ -7,13 +8,21 @@
  * Hardware Security Module (HSM) or Key Management Service (KMS) like AWS KMS, Azure Key Vault, or GCP KMS
  * to ensure proper key security, rotation, and access control.
  */
+/**
+ * @privateFields {#stateManager, #cache, #metrics, #errorHelpers}
+ */
 export class InMemoryKeyring {
-	/**
-	 * A map to store cryptographic key objects, indexed by their domain string.
-	 * @type {Map<string, object>}
-	 * @private
-	 */
-	#map = new Map();
+	// Mandate 3.1: All internal properties MUST be private.
+	/** @private @type {import('../HybridStateManager.js').default|null} */
+	#stateManager = null;
+	/** @private @type {import('../../managers/CacheManager.js').LRUCache|null} */
+	#cache = null;
+	/** @private @type {import('../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+
+	static #DEFAULT_CACHE_SIZE = 128;
 
 	/**
 	 * @private
@@ -76,18 +85,31 @@ export class InMemoryKeyring {
 	/**
 	 * The constructor is intentionally empty as no setup is needed.
 	 */
-	constructor() {
-		// No-op
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
+	}
+
+	/**
+	 * Initializes the keyring by setting up its cache and metrics dependencies.
+	 */
+	initialize() {
+		const managers = this.#stateManager?.managers;
+		if (!managers?.cacheManager) {
+			throw new Error("[InMemoryKeyring] CacheManager is not available.");
+		}
+		// Mandate 4.1: All caches MUST be bounded.
+		this.#cache = managers.cacheManager.getCache("inMemoryKeys", {
+			maxSize: InMemoryKeyring.#DEFAULT_CACHE_SIZE,
+		});
+		this.#metrics =
+			this.#stateManager.metricsRegistry?.namespace("keyring");
+		this.#errorHelpers = managers.errorHelpers;
 	}
 
 	/**
 	 * Retrieves a cryptographic key for a given security domain.
 	 * If a key for the specified domain does not exist in the keyring, a placeholder
 	 * key object with mock encryption and decryption functions is generated and stored.
-	 *
-	 * @note The `encrypt` and `decrypt` methods provided by the generated key are
-	 * **placeholders** and offer no actual cryptographic security. They are for
-	 * demonstration and testing only.
 	 *
 	 * @param {string} domain - The security domain for which to retrieve the key (e.g., "secret::alpha+beta").
 	 * @returns {Promise<object>} A promise that resolves to a key object.
@@ -98,20 +120,37 @@ export class InMemoryKeyring {
 	 *   - `decrypt`: {Function} An asynchronous function to decrypt an envelope.
 	 */
 	async getKey(domain) {
-		if (!this.#map.has(domain)) {
-			const kid = `dev:${domain}`;
-			// Generate a real AES-GCM key for development use.
-			const key = await crypto.subtle.generateKey(
-				{ name: "AES-GCM", length: 256 },
-				true, // extractable
-				["encrypt", "decrypt"]
-			);
+		return this.#errorHelpers?.tryAsync(
+			async () => {
+				if (this.#cache.has(domain)) {
+					this.#metrics?.increment("get.cache_hit");
+					return this.#cache.get(domain);
+				}
 
-			// V8.0 Parity: Encapsulate key operations in a dedicated private class.
-			const devKey = new InMemoryKeyring.#DevKey(key, kid);
-			this.#map.set(domain, devKey);
-		}
-		return this.#map.get(domain);
+				this.#metrics?.increment("get.cache_miss");
+				const timer = this.#metrics?.timer("get.generation_duration");
+
+				const kid = `dev:${domain}`;
+				// Generate a real AES-GCM key for development use.
+				const key = await crypto.subtle.generateKey(
+					{ name: "AES-GCM", length: 256 },
+					true, // extractable
+					["encrypt", "decrypt"]
+				);
+
+				// V8.0 Parity: Encapsulate key operations in a dedicated private class.
+				const devKey = new InMemoryKeyring.#DevKey(key, kid);
+				this.#cache.set(domain, devKey);
+
+				timer?.stop();
+				return devKey;
+			},
+			{
+				component: "InMemoryKeyring",
+				operation: "getKey",
+				context: { domain },
+			}
+		);
 	}
 
 	/**
@@ -122,24 +161,42 @@ export class InMemoryKeyring {
 	 * @returns {Promise<CryptoKey|CryptoKeyPair>} A promise that resolves to the derived key or key pair.
 	 */
 	async derive(purpose, domain) {
-		const keyId = `${purpose}::${domain}`;
-		if (this.#map.has(keyId)) {
-			return this.#map.get(keyId);
-		}
+		return this.#errorHelpers?.tryAsync(
+			async () => {
+				const keyId = `${purpose}::${domain}`;
+				if (this.#cache.has(keyId)) {
+					this.#metrics?.increment("derive.cache_hit");
+					return this.#cache.get(keyId);
+				}
 
-		if (purpose === "signing") {
-			const keyPair = await crypto.subtle.generateKey(
-				{
-					name: "ECDSA",
-					namedCurve: "P-384", // V8.0 Parity: Use a stronger curve for signing.
-				},
-				true, // extractable
-				["sign", "verify"]
-			);
-			this.#map.set(keyId, keyPair);
-			return keyPair;
-		}
+				this.#metrics?.increment("derive.cache_miss");
+				const timer = this.#metrics?.timer(
+					"derive.generation_duration"
+				);
 
-		throw new Error(`Unsupported purpose for key derivation: ${purpose}`);
+				if (purpose === "signing") {
+					const keyPair = await crypto.subtle.generateKey(
+						{
+							name: "ECDSA",
+							namedCurve: "P-384", // V8.0 Parity: Use a stronger curve for signing.
+						},
+						true, // extractable
+						["sign", "verify"]
+					);
+					this.#cache.set(keyId, keyPair);
+					timer?.stop();
+					return keyPair;
+				}
+
+				throw new Error(
+					`Unsupported purpose for key derivation: ${purpose}`
+				);
+			},
+			{
+				component: "InMemoryKeyring",
+				operation: "derive",
+				context: { purpose, domain },
+			}
+		);
 	}
 }

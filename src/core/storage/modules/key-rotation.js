@@ -10,26 +10,31 @@ import { AppError } from "../../../utils/ErrorHelpers.js";
  * It supports scheduled rotations, emergency rotations, and maintains a history of key versions.
  *
  * @module KeyRotation
+ * @privateFields {#cryptoProvider, #rotationSchedule, #keyHistory, #rotationCallbacks, #stateManager, #metrics, #options, #forensicLogger, #errorHelpers}
  */
 export default class KeyRotation {
 	/** @private @type {import('./aes-crypto.js').default|null} */
 	#cryptoProvider = null;
 	/** @private @type {object|null} */
 	#rotationSchedule = null;
-	/** @private @type {Map<number, object>} */
-	#keyHistory = new Map();
+	/**
+	 * @private
+	 * @description V8.0 Parity: Mandate 4.1 - Use a bounded cache for key history.
+	 * @type {import('../../../utils/LRUCache.js').LRUCache|null}
+	 */
+	#keyHistory = null;
 	/** @private @type {Function[]} */
 	#rotationCallbacks = [];
 	/** @private @type {import('../../HybridStateManager.js').default} */
 	#stateManager = null;
 	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics = null;
-	/** @private @type {object} */
-	#options;
 	/** @private @type {import('../../ForensicLogger.js').default|null} */
 	#forensicLogger = null;
 	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
 	#errorHelpers = null;
+	/** @private @type {object} */
+	#options;
 
 	/**
 	 * Creates an instance of KeyRotation.
@@ -69,6 +74,13 @@ export default class KeyRotation {
 			});
 		}
 
+		// V8.0 Parity: Mandate 4.1 - Obtain a bounded cache from the central CacheManager.
+		this.#keyHistory = this.#stateManager?.managers?.cacheManager?.getCache(
+			"keyRotationHistory",
+			{
+				max: this.#options.keyHistoryLimit,
+			}
+		);
 		if (this.#options.autoRotate) {
 			this.#scheduleNextRotation();
 		}
@@ -106,9 +118,6 @@ export default class KeyRotation {
 				rotatedTo: newVersion,
 				reason: "scheduled",
 			});
-
-			// Cleanup old history
-			this.#cleanupKeyHistory();
 
 			// Update metrics
 			const rotationTime = performance.now() - startTime;
@@ -178,7 +187,7 @@ export default class KeyRotation {
 	 */
 	async onKeysDestroyed() {
 		this.#cancelScheduledRotation();
-		this.#keyHistory.clear();
+		this.#keyHistory?.clear();
 		this.#audit("keys_destroyed", {
 			reason: "Crypto provider keys destroyed.",
 		});
@@ -192,7 +201,7 @@ export default class KeyRotation {
 		return {
 			...this.#metrics?.getAllAsObject(),
 			nextRotationAt: this.#rotationSchedule?.scheduledTime || null,
-			keyHistoryCount: this.#keyHistory.size,
+			keyHistoryCount: this.#keyHistory?.size || 0,
 			isAutoRotating: this.#options.autoRotate,
 		};
 	}
@@ -202,12 +211,11 @@ export default class KeyRotation {
 	 * @returns {Array<{version: number, rotatedAt: number, rotatedTo: number, reason: string}>} An array of key history records.
 	 */
 	getKeyHistory() {
-		return Array.from(this.#keyHistory.entries()).map(
-			([version, info]) => ({
-				version,
-				...info,
-			})
-		);
+		if (!this.#keyHistory) return [];
+		return this.#keyHistory.dump().map(([version, info]) => ({
+			version: Number(version),
+			...info,
+		}));
 	}
 
 	/**
@@ -256,7 +264,7 @@ export default class KeyRotation {
 	destroy() {
 		this.#cancelScheduledRotation();
 		this.#audit("destroy", {});
-		this.#keyHistory.clear();
+		this.#keyHistory?.clear();
 		this.#rotationCallbacks = [];
 	}
 
@@ -304,26 +312,6 @@ export default class KeyRotation {
 		if (this.#rotationSchedule?.timeout) {
 			clearTimeout(this.#rotationSchedule.timeout);
 			this.#rotationSchedule = null;
-		}
-	}
-
-	/**
-	 * Cleans up the key history log to stay within the configured limit.
-	 * @private
-	 */
-	#cleanupKeyHistory() {
-		if (this.#keyHistory.size <= this.#options.keyHistoryLimit) return;
-
-		// Remove oldest entries
-		const entries = Array.from(this.#keyHistory.entries());
-		entries.sort((a, b) => a[1].rotatedAt - b[1].rotatedAt);
-
-		const toRemove = entries.slice(
-			0,
-			entries.length - this.#options.keyHistoryLimit
-		);
-		for (const [version] of toRemove) {
-			this.#keyHistory.delete(version);
 		}
 	}
 

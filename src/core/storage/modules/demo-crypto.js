@@ -9,10 +9,10 @@
  * @module DemoCrypto
  */
 export default class DemoCrypto {
-	/** @private @type {object} */
-	#config;
 	/** @private @type {import('../../HybridStateManager.js').default} */
 	#stateManager;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
 
 	/**
 	 * Creates an instance of DemoCrypto.
@@ -22,8 +22,17 @@ export default class DemoCrypto {
 	 */
 	constructor({ stateManager, options = {} }) {
 		this.#stateManager = stateManager;
-		this.#config = options;
-		console.log("[DemoCrypto] Loaded with config:", this.#config);
+		// V8.0 Parity: Mandate 4.3 - Initialize metrics namespace in the constructor.
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("demoCrypto");
+	}
+
+	/**
+	 * Initializes the module. This is a stub for API consistency with other crypto modules.
+	 * @returns {Promise<this>} The initialized instance.
+	 */
+	async init() {
+		return this;
 	}
 
 	/**
@@ -35,16 +44,13 @@ export default class DemoCrypto {
 	 * @returns {Promise<string>} A string representing the "encrypted" data.
 	 */
 	async encrypt(data) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("demoCrypto");
 		const startTime = performance.now();
 		try {
-			console.log("[DemoCrypto] Encrypting data (demo):", data);
 			return `encrypted(${JSON.stringify(data)})`;
 		} finally {
 			const duration = performance.now() - startTime;
-			metrics?.increment("encryptionCount");
-			metrics?.updateAverage("encryptionTime", duration);
+			this.#metrics?.increment("encryptionCount");
+			this.#metrics?.updateAverage("encryptionTime", duration);
 		}
 	}
 
@@ -56,11 +62,8 @@ export default class DemoCrypto {
 	 * @returns {Promise<*>} The original data.
 	 */
 	async decrypt(encryptedData) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("demoCrypto");
 		const startTime = performance.now();
 		try {
-			console.log("[DemoCrypto] Decrypting data (demo):", encryptedData);
 			const match = encryptedData.match(/^encrypted\((.*)\)$/);
 			if (match && match[1]) {
 				return JSON.parse(match[1]);
@@ -68,8 +71,8 @@ export default class DemoCrypto {
 			return encryptedData;
 		} finally {
 			const duration = performance.now() - startTime;
-			metrics?.increment("decryptionCount");
-			metrics?.updateAverage("decryptionTime", duration);
+			this.#metrics?.increment("decryptionCount");
+			this.#metrics?.updateAverage("decryptionTime", duration);
 		}
 	}
 }

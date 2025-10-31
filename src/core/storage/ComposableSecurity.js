@@ -4,6 +4,7 @@
 import { PolicyError } from "../../utils/ErrorHelpers.js";
 
 /**
+ * @privateFields {#mac, #accessCache, #config, #ready, #stateManager, #metrics}
  * @description
  * Provides a composable, multi-layered security engine for the application.
  * This class integrates Mandatory Access Control (MAC) via the Bell-LaPadula model,
@@ -65,6 +66,20 @@ export class ComposableSecurity {
 		this.#ready = true;
 		this.#audit("security_initialized", {});
 		console.log("[ComposableSecurity] Security layer is ready.");
+
+		// Mandate 4.3: Apply metrics decorator to performance-critical methods.
+		const measure =
+			this.#stateManager.managers.metricsRegistry?.measure.bind(
+				this.#stateManager.managers.metricsRegistry
+			);
+		if (measure) {
+			this.checkAccess = measure("security.checkAccess")(
+				this.checkAccess.bind(this)
+			);
+			this.canAccess = measure("security.canAccess")(
+				this.canAccess.bind(this)
+			);
+		}
 		return this;
 	}
 
@@ -74,7 +89,7 @@ export class ComposableSecurity {
 	 * @param {object} entity - The data entity being accessed.
 	 * @param {'read'|'write'|'delete'} action - The action being performed.
 	 * @param {object} [context={}] - Additional context, like the store name.
-	 * @returns {Promise<boolean>} True if access is granted.
+	 * @returns {Promise<boolean>} A promise that resolves to `true` if access is granted.
 	 * @throws {Error} If access is denied by either MAC or RBAC checks.
 	 */
 	async checkAccess(entity, action, context = {}) {
@@ -144,10 +159,8 @@ export class ComposableSecurity {
 		// Check cache first
 		const cachedAccess = this.#accessCache?.get(cacheKey);
 		if (cachedAccess !== undefined) {
-			this.#metrics?.increment("cacheHits");
 			return cachedAccess;
 		}
-		this.#metrics?.increment("cacheMisses");
 		this.#metrics?.increment("accessChecks");
 
 		// Perform access check
@@ -161,7 +174,6 @@ export class ComposableSecurity {
 		this.#accessCache?.set(cacheKey, hasAccess);
 
 		if (!hasAccess) {
-			this.#metrics?.increment("accessDenied");
 			this.#audit("access_denied", {
 				classification,
 				compartments,
@@ -187,10 +199,8 @@ export class ComposableSecurity {
 	 * @returns {number} The cache hit rate as a value between 0 and 1.
 	 */
 	getCacheHitRate() {
-		const hits = this.#metrics?.get("cacheHits")?.value || 0;
-		const misses = this.#metrics?.get("cacheMisses")?.value || 0;
-		const total = hits + misses;
-		return total > 0 ? hits / total : 0;
+		// V8.0 Parity: Delegate to the CacheManager's built-in stats.
+		return this.#accessCache?.stats?.hitRate ?? 0;
 	}
 
 	/**
@@ -319,7 +329,9 @@ export class ComposableSecurity {
 		) {
 			forensicLogger.logAuditEvent(
 				`COMPOSABLE_SECURITY_${eventType.toUpperCase()}`,
-				data
+				data,
+				// Mandate 2.4: Pass user context for attribution.
+				this.#stateManager?.managers?.securityManager?.context
 			);
 		} else {
 			console.warn(
@@ -331,6 +343,7 @@ export class ComposableSecurity {
 		// Log security violations and errors
 		if (eventType.includes("denied") || eventType.includes("failed")) {
 			console.warn(`[Security] ${eventType}:`, data);
+			this.#metrics?.increment("accessDenied");
 		}
 	}
 

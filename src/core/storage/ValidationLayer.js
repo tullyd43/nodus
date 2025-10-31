@@ -13,6 +13,7 @@
  * @class ValidationLayer
  * @classdesc Orchestrates a stack of validation modules to perform comprehensive data validation.
  * It supports base schema checks, type-specific rules, security constraints, and custom business logic.
+ * @privateFields {#validators, #customRules, #config, #ready, #stateManager, #metrics, #errorHelpers, #forensicLogger}
  */
 export class ValidationLayer {
 	/**
@@ -37,6 +38,12 @@ export class ValidationLayer {
 	#ready = false;
 	/** @private @type {import('../HybridStateManager.js').default|null} */
 	#stateManager = null;
+	/** @private @type {import('../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+	/** @private @type {import('../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
 
 	/**
 	 * Creates an instance of ValidationLayer.
@@ -59,30 +66,42 @@ export class ValidationLayer {
 			asyncTimeout: options.asyncTimeout || 5000,
 			...options,
 		};
-
-		this.#initializeBaseValidators();
-		this.#loadCustomValidators(this.#config.customValidators);
 	}
 
 	/**
-	 * Gets the namespaced metrics registry instance.
-	 * @private
-	 * @returns {import('../../utils/MetricsRegistry.js').MetricsRegistry|null}
-	 */
-	get #metrics() {
-		return this.#stateManager?.metricsRegistry?.namespace("validation");
-	}
-
-	/**
-	 * Initializes the validation layer and any asynchronous validators.
+	 * Initializes the validation layer, deriving dependencies and setting up validators.
 	 * @public
 	 * @returns {Promise<this>} The initialized ValidationLayer instance.
 	 */
 	async init() {
 		if (this.#ready) return this;
 
-		// Initialize async validators if any
+		// Mandate 1.2: Derive dependencies from the stateManager.
+		const managers = this.#stateManager.managers;
+		this.#metrics =
+			this.#stateManager.metricsRegistry?.namespace("validation");
+		this.#errorHelpers = managers?.errorHelpers ?? null;
+		this.#forensicLogger = managers?.forensicLogger ?? null;
+
+		// Mandate 4.3: Apply metrics decorator to performance-critical methods.
+		const measure = managers.metricsRegistry?.measure.bind(
+			managers.metricsRegistry
+		);
+		if (measure) {
+			this.validateEntity = measure("validation.validateEntity")(
+				this.validateEntity.bind(this)
+			);
+		}
+
+		this.#initializeBaseValidators();
+		this.#loadCustomValidators(this.#config.customValidators);
 		await this.#initializeAsyncValidators();
+
+		this.#audit("VALIDATION_LAYER_INITIALIZED", {
+			strictMode: this.#config.strictMode,
+			customRules: this.#customRules.size,
+			fieldValidators: this.#validators.size,
+		});
 
 		this.#ready = true;
 		console.log("[ValidationLayer] Ready with schema validation");
@@ -97,75 +116,87 @@ export class ValidationLayer {
 	 */
 	async validateEntity(entity) {
 		if (!this.#ready) throw new Error("ValidationLayer not initialized");
-
-		const startTime = performance.now();
 		const errors = [];
 
-		try {
-			// 1. Base schema validation
-			const baseResult = this.#validateBaseSchema(entity);
-			if (!baseResult.valid) {
-				errors.push(...baseResult.errors);
-			}
+		return this.#errorHelpers?.tryAsync(
+			async () => {
+				const startTime = performance.now();
+				const warnings = [];
 
-			// 2. Type-specific validation
-			const typeResult = this.#validateEntityType(entity);
-			if (!typeResult.valid) {
-				errors.push(...typeResult.errors);
-			}
+				// 1. Base schema validation
+				const baseResult = this.#validateBaseSchema(entity);
+				if (!baseResult.valid) {
+					errors.push(...baseResult.errors);
+				}
 
-			// 3. Security validation
-			const securityResult = this.#validateSecurity(entity);
-			if (!securityResult.valid) {
-				errors.push(...securityResult.errors);
-			}
+				// 2. Type-specific validation
+				const typeResult = this.#validateEntityType(entity);
+				if (!typeResult.valid) {
+					errors.push(...typeResult.errors);
+				}
 
-			// 4. Custom business rules
-			const customResult = await this.#validateCustomRules(entity);
-			if (!customResult.valid) {
-				errors.push(...customResult.errors);
-			}
+				// 3. Security validation
+				const securityResult = this.#validateSecurity(entity);
+				if (!securityResult.valid) {
+					errors.push(...securityResult.errors);
+				}
 
-			// 5. Cross-field validation
-			const crossFieldResult = this.#validateCrossFields(entity);
-			if (!crossFieldResult.valid) {
-				errors.push(...crossFieldResult.errors);
-			}
+				// 4. Custom business rules
+				const customResult = await this.#validateCustomRules(entity);
+				if (!customResult.valid) {
+					errors.push(...customResult.errors);
+				}
 
-			const latency = performance.now() - startTime;
-			const isValid = errors.length === 0;
+				// 5. Cross-field validation
+				const crossFieldResult = this.#validateCrossFields(entity);
+				if (!crossFieldResult.valid) {
+					errors.push(...crossFieldResult.errors);
+				}
 
-			this.#recordValidation(isValid, latency, errors);
+				const latency = performance.now() - startTime;
+				const isValid = errors.length === 0;
 
-			if (!isValid) {
-				this.stateManager?.emit?.("validationError", {
-					entityId: entity.id,
-					entityType: entity.entity_type,
-					errors: errors.slice(0, this.#config.maxErrors),
-				});
-			}
+				this.#recordValidation(isValid, latency, errors);
+				if (!isValid) {
+					this.#audit("VALIDATION_FAILED", {
+						entityId: entity.id,
+						entityType: entity.entity_type,
+						errors: errors.slice(0, this.#config.maxErrors),
+					});
+					this.#stateManager?.emit?.("validationError", {
+						entityId: entity.id,
+						entityType: entity.entity_type,
+						errors: errors.slice(0, this.#config.maxErrors),
+					});
+				}
 
-			return {
-				valid: isValid,
-				errors: errors.slice(0, this.#config.maxErrors),
-				warnings: [],
-				metadata: {
-					latency,
-					rulesExecuted: this.#getExecutedRules(),
-					entityType: entity.entity_type,
+				return {
+					valid: isValid,
+					errors,
+					warnings,
+					metadata: {
+						latency,
+						rulesExecuted: this.#getExecutedRules(),
+						entityType: entity.entity_type,
+					},
+				};
+			},
+			{
+				component: "ValidationLayer",
+				operation: "validateEntity",
+				context: {
+					entityId: entity?.id,
+					entityType: entity?.entity_type,
 				},
-			};
-		} catch (error) {
-			const latency = performance.now() - startTime;
-			this.#recordValidation(false, latency, [error.message]);
-
-			return {
-				valid: false,
-				errors: [`Validation system error: ${error.message}`],
-				warnings: [],
-				metadata: { latency, systemError: true },
-			};
-		}
+				rethrow: false, // Let the method return a validation result object on error
+				fallback: {
+					valid: false,
+					errors: ["A critical validation error occurred."],
+					warnings: [],
+					metadata: { systemError: true },
+				},
+			}
+		);
 	}
 
 	/**
@@ -255,6 +286,10 @@ export class ValidationLayer {
 	 * @param {Function} rule - The validation function, which should accept an entity and return `{valid: boolean, errors: string[]}`.
 	 */
 	addValidationRule(name, rule) {
+		if (this.#customRules.has(name)) {
+			console.warn(`[ValidationLayer] Overwriting custom rule: ${name}`);
+		}
+
 		if (typeof rule !== "function") {
 			throw new Error("Validation rule must be a function");
 		}
@@ -270,6 +305,12 @@ export class ValidationLayer {
 	 * @param {Function} validator - The validator function, which accepts a value and field definition.
 	 */
 	addFieldValidator(name, validator) {
+		if (this.#validators.has(name)) {
+			console.warn(
+				`[ValidationLayer] Overwriting field validator: ${name}`
+			);
+		}
+
 		if (typeof validator !== "function") {
 			throw new Error("Field validator must be a function");
 		}
@@ -302,6 +343,9 @@ export class ValidationLayer {
 	cleanup() {
 		this.#validators.clear();
 		this.#customRules.clear();
+		this.#audit("VALIDATION_LAYER_CLEANUP", {
+			clearedRules: this.#customRules.size,
+		});
 		this.#ready = false;
 	}
 
@@ -339,14 +383,13 @@ export class ValidationLayer {
 		}
 
 		// Entity type validation using schema from stateManager
-		if (this.#stateManager?.schema?.loaded) {
-			const validTypes = this.#stateManager.getAvailableEntityTypes();
-			if (
-				entity.entity_type &&
-				!validTypes.includes(entity.entity_type)
-			) {
-				errors.push(`Invalid entity_type: ${entity.entity_type}`);
-			}
+		const componentRegistry = this.#stateManager.managers.componentRegistry;
+		if (
+			componentRegistry &&
+			entity.entity_type &&
+			!componentRegistry.hasDefinition(entity.entity_type)
+		) {
+			errors.push(`Invalid entity_type: ${entity.entity_type}`);
 		}
 
 		return {
@@ -386,22 +429,24 @@ export class ValidationLayer {
 	#validateSecurity(entity) {
 		const errors = [];
 
-		// Classification validation using schema from stateManager
-		if (this.#stateManager?.schema?.loaded) {
-			const validClassifications =
-				this.#stateManager.getSecurityClassifications();
+		// Classification validation using SecurityManager
+		const securityManager = this.#stateManager.managers.securityManager;
+		if (securityManager) {
+			const isValidClassification = (c) =>
+				c && securityManager.isValidClassification(c);
+
 			if (
 				entity.classification &&
-				!validClassifications.includes(entity.classification)
+				!isValidClassification(entity.classification)
 			) {
 				errors.push(`Invalid classification: ${entity.classification}`);
 			}
 			if (
 				entity.nato_classification &&
-				!validClassifications.includes(entity.nato_classification)
+				!isValidClassification(entity.nato_classification)
 			) {
 				errors.push(
-					`Invalid classification: ${entity.nato_classification}`
+					`Invalid NATO classification: ${entity.nato_classification}`
 				);
 			}
 		}
@@ -831,6 +876,21 @@ export class ValidationLayer {
 	#isValidTimestamp(value) {
 		const date = new Date(value);
 		return !isNaN(date.getTime()) && date.toISOString() === value;
+	}
+
+	/**
+	 * Logs an audit event if the forensic logger is available.
+	 * @private
+	 * @param {string} eventType - The type of the event (e.g., 'VALIDATION_FAILED').
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		const securityManager = this.#stateManager?.managers?.securityManager;
+		this.#forensicLogger?.logAuditEvent(eventType, data, {
+			component: "ValidationLayer",
+			// Mandate 2.4: Pass the full user context for attribution.
+			userContext: securityManager?.getSubject(),
+		});
 	}
 
 	/**

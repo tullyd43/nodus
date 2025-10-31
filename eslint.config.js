@@ -78,6 +78,7 @@ export default [
 				URL: "readonly",
 				Blob: "readonly",
 				FileReader: "readonly",
+				DOMParser: "readonly",
 				CustomEvent: "readonly",
 				crypto: "readonly",
 				TextEncoder: "readonly",

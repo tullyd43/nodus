@@ -41,19 +41,9 @@ const FORBIDDEN_PATTERNS = new Map([
 /**
  * Scans a string of code for forbidden patterns.
  * @param {string} codeString - The JavaScript code to scan.
- * @param {object} [options={}] - Scanning options.
- * @param {boolean} [options.ignoreComments=true] - Whether to ignore patterns found inside comments.
- * @param {string} codeString - The JavaScript code to scan.
  * @returns {Array<{message: string, severity: 'critical'|'warning'}>} An array of violation objects.
  */
-export function scanForForbiddenPatterns(
-	codeString,
-	{ ignoreComments = true } = {}
-) {
-	if (ignoreComments) {
-		// Remove single-line and multi-line comments to avoid false positives.
-		codeString = codeString.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
-	}
+export function scanForForbiddenPatterns(codeString) {
 	const violations = [];
 	for (const [pattern, details] of FORBIDDEN_PATTERNS.entries()) {
 		if (pattern.test(codeString)) {

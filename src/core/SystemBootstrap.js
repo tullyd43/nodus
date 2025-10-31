@@ -1,15 +1,20 @@
 /**
  * @file SystemBootstrap.js
- * @description Handles the initialization sequence of the application, ensuring all core systems are loaded in the correct order.
+ * @description Orchestrates the entire application startup sequence. This class is the main entry point
+ * for initializing the system, ensuring all core services are loaded in the correct order, security
+ * checks are performed, and the application is brought to a stable, ready state.
+ * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} - This file is central to enforcing Mandates 1.3, 2.1, 2.4, and 4.3.
  */
 
 import { HybridStateManager } from "./HybridStateManager.js";
 import { DateCore } from "../utils/DateUtils.js";
 
 /**
+ * @privateFields {#config, #stateManager, #metrics, #forensicLogger}
  * @class SystemBootstrap
- * @privateFields {#config, #stateManager}
- * @description Orchestrates the application's startup process.
+ * @description Orchestrates the application's startup process, transforming a configuration object
+ * into a fully operational application instance. It is responsible for the deterministic
+ * initialization of all subsystems.
  */
 export class SystemBootstrap {
 	/** @private @type {object} */
@@ -17,6 +22,11 @@ export class SystemBootstrap {
 	/** @private @type {import('./HybridStateManager.js').HybridStateManager|null} */
 	#stateManager = null;
 
+	// V8.0 Parity: Mandate 4.3 & 2.4 - Bootstrap must be instrumented.
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('./ForensicLogger.js').ForensicLogger|null} */
+	#forensicLogger = null;
 	/**
 	 * @param {object} config - The main application configuration.
 	 */
@@ -30,53 +40,88 @@ export class SystemBootstrap {
 	 * @returns {Promise<HybridStateManager>} The fully initialized state manager.
 	 */
 	async initialize(authContext) {
-		console.log("[SystemBootstrap] Starting application initialization...");
+		const startTime = performance.now();
+		console.log(`[SystemBootstrap] V8 Parity Initializing...`);
 
-		// 1. Create the state manager instance.
-		this.#stateManager = new HybridStateManager(this.#config);
+		try {
+			// Phase 1: Create the State Manager. This is the single source of truth.
+			this.#stateManager = new HybridStateManager(this.#config);
 
-		// 2. Initialize the core storage system and set the user context.
+			// Phase 2: Initialize Core Infrastructure (Storage, Security, Logging).
+			// This phase is critical; failure here is fatal.
+			await this.#initializeCoreInfrastructure(authContext);
+
+			// V8.0 Parity: Mandate 2.4 - Log the start of the bootstrap process.
+			this.#forensicLogger?.logAuditEvent("BOOTSTRAP_START", {
+				userId: authContext?.userId,
+				timestamp: DateCore.now(),
+			});
+
+			// Phase 3: Run Post-Core Security Checks.
+			// V8.0 Parity: Mandate 2.1 - Scan for forbidden code before loading app services.
+			await this.#runSecurityChecks();
+
+			// Phase 4: Initialize Application Services (Plugins, Event Flows, etc.).
+			await this.#initializeAppServices();
+
+			// Phase 5: Finalize and signal readiness.
+			const duration = performance.now() - startTime;
+			this.#metrics?.timer("bootstrap.total_duration", duration);
+			this.#forensicLogger?.logAuditEvent("BOOTSTRAP_SUCCESS", {
+				duration,
+			});
+
+			return this.#finalizeInitialization();
+		} catch (error) {
+			const duration = performance.now() - startTime;
+			console.error(
+				`[SystemBootstrap] CRITICAL FAILURE after ${duration.toFixed(2)}ms:`,
+				error
+			);
+
+			// V8.0 Parity: Mandate 2.4 - Log the failure securely.
+			this.#forensicLogger?.logAuditEvent("BOOTSTRAP_FAILURE", {
+				error: error.message,
+				stack: error.stack,
+				duration,
+			});
+
+			// Re-throw to halt the application load.
+			throw new Error(`System initialization failed: ${error.message}`);
+		}
+	}
+
+	/**
+	 * Loads and initializes the core, foundational managers in the correct dependency order.
+	 * This includes storage, security, logging, and metrics.
+	 * @private
+	 * @param {object} authContext - The user's authentication context.
+	 * @returns {Promise<void>}
+	 */
+	async #initializeCoreInfrastructure(authContext) {
+		const startTime = performance.now();
+		console.log(
+			"[SystemBootstrap] Loading core infrastructure managers..."
+		);
+
+		// The ServiceRegistry requires the storage system to be ready first.
 		await this.#stateManager.initializeStorageSystem(
 			authContext,
 			this.#stateManager
 		);
 
-		// 3. Initialize core subsystems (event engine, security, etc.).
-		await this.#stateManager.bootstrapSubsystems();
+		// Now, initialize all core services via the registry.
+		// This enforces Mandate 1.3: Service Registry Enforcement.
+		await this.#stateManager.serviceRegistry.initializeAll();
 
-		// 4. Load critical, foundational managers.
-		await this.#bootstrapCore();
+		// V8.0 Parity: After core services are up, assign them for instrumentation.
+		this.#metrics = this.#stateManager.metricsRegistry;
+		this.#forensicLogger = this.#stateManager.managers.forensicLogger;
 
-		// 5. Load the database schema.
-		await this.#stateManager.loadDatabaseSchema();
-
-		// 6. Load application-level services that depend on the schema and core managers.
-		await this.#loadApplicationServices();
-
-		// 7. Finalize initialization and emit the system ready event.
-		return this.#finalizeInitialization();
-	}
-
-	/**
-	 * Loads and initializes the core, foundational managers in the correct dependency order.
-	 * @private
-	 * @returns {Promise<void>}
-	 */
-	async #bootstrapCore() {
-		console.log(
-			"[SystemBootstrap] Loading core infrastructure managers..."
+		this.#metrics?.timer(
+			"bootstrap.core_infra_duration",
+			performance.now() - startTime
 		);
-		try {
-			// V8.0 Parity: Mandate 1.3 - Use the ServiceRegistry to initialize all services.
-			// The registry itself handles instantiation order and dependencies.
-			await this.#stateManager.serviceRegistry.initializeAll();
-		} catch (error) {
-			console.error(
-				`[SystemBootstrap] CRITICAL: A core service failed to initialize. Halting.`,
-				error
-			);
-			throw new Error(`Core service initialization failed.`);
-		}
 	}
 
 	/**
@@ -84,18 +129,40 @@ export class SystemBootstrap {
 	 * @private
 	 * @returns {Promise<void>}
 	 */
-	async #loadApplicationServices() {
+	async #initializeAppServices() {
+		const startTime = performance.now();
 		console.log("[SystemBootstrap] Loading application services...");
 
-		// The ServiceRegistry has already loaded all services, including the plugin system.
-		// We just need to ensure event flows are loaded after plugins have been registered.
+		// The ServiceRegistry has already initialized all managers, including the plugin system.
+		// Now, we load data that depends on those managers, like event flow definitions.
 
 		await this.#loadEventFlows();
 
 		// --- Lazy-load non-critical managers in the background ---
 		this.#lazyLoadManagers();
+
+		this.#metrics?.timer(
+			"bootstrap.app_services_duration",
+			performance.now() - startTime
+		);
 	}
 
+	/**
+	 * Runs critical security validation checks after core services are up.
+	 * @private
+	 */
+	async #runSecurityChecks() {
+		console.log("[SystemBootstrap] Running security validation checks...");
+		// V8.0 Parity: Mandate 2.1 - This is where we would trigger the ArbitraryCodeValidator
+		// on any pre-loaded or discovered plugin code before it's executed.
+		const pluginManager = this.#stateManager.managers.plugin;
+		if (
+			pluginManager &&
+			typeof pluginManager.validateAllRuntimes === "function"
+		) {
+			await pluginManager.validateAllRuntimes();
+		}
+	}
 	/**
 	 * Finalizes the initialization process and emits the 'systemInitialized' event.
 	 * @private
@@ -117,23 +184,22 @@ export class SystemBootstrap {
 	 * This is done asynchronously to avoid blocking the main application startup.
 	 * It ensures that `RenderMetrics` is loaded and started before `MetricsReporter`.
 	 * @private
-	 * @returns {Promise<void>}
 	 */
-	async #initializeMetricsPipeline() {
+	#initializeMetricsPipeline() {
 		console.log("[SystemBootstrap] Initializing metrics pipeline...");
 
-		try {
-			// The metrics reporter is the primary service to load.
-			const metricsReporter =
-				await this.#stateManager.serviceRegistry.get("metricsReporter");
-			await metricsReporter?.start();
-			console.log("[SystemBootstrap] Metrics pipeline started.");
-		} catch (err) {
-			console.error(
-				"[SystemBootstrap] Failed to initialize metrics pipeline:",
-				err
+		// The ServiceRegistry has already instantiated the reporter. We just need to start it.
+		// We don't await this; it runs in the background.
+		this.#stateManager.managers.metricsReporter
+			?.start()
+			.then(() =>
+				console.log(
+					"[SystemBootstrap] Metrics reporting pipeline started."
+				)
+			)
+			.catch((err) =>
+				console.error("Failed to start metrics pipeline:", err)
 			);
-		}
 	}
 
 	/**
@@ -141,11 +207,6 @@ export class SystemBootstrap {
 	 * @private
 	 */
 	#lazyLoadManagers() {
-		// Conditionally load the EmbeddingManager if enabled, without awaiting.
-		if (this.#config.embeddingEnabled) {
-			// The service registry has already loaded it if it was in the list.
-		}
-
 		// Load and start the full metrics pipeline in the background.
 		this.#initializeMetricsPipeline();
 	}

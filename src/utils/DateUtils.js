@@ -4,8 +4,6 @@
  * This module replaces the legacy, isolated DateUtils system with a streamlined and maintainable alternative.
  */
 
-import { AppError, ErrorHelpers } from "./ErrorHelpers.js";
-
 /**
  * @class ImmutableDateTime
  * @description An immutable wrapper around the native JavaScript Date object.
@@ -22,9 +20,7 @@ export class ImmutableDateTime {
 	constructor(dateInput) {
 		this.#date = new Date(dateInput);
 		if (isNaN(this.#date.getTime())) {
-			throw new AppError("Invalid date provided to ImmutableDateTime.", {
-				category: "javascript_error",
-			});
+			throw new Error("Invalid date provided to ImmutableDateTime.");
 		}
 		// Freeze the object to prevent adding new properties.
 		Object.freeze(this);
@@ -89,15 +85,8 @@ export class DateCore {
 			}
 			return new ImmutableDateTime(input);
 		} catch (error) {
-			throw new AppError(`Invalid date input: ${input}`, {
-				category: "parsing_error",
-				severity: "medium",
-				context: {
-					inputValue: input,
-					inputType: typeof input,
-					originalError: error,
-				},
-			});
+			// Re-throw as a generic error; the wrapper will format it.
+			throw new Error(`Invalid date input: ${input}`);
 		}
 	}
 
@@ -186,6 +175,9 @@ export class DateCore {
  * is automatically monitored without needing to wrap each call individually.
  */
 export const MonitoredDateUtils = new Proxy(DateCore, {
+	// This proxy requires ErrorHelpers, which must be passed in context, not imported.
+	// The implementation below assumes ErrorHelpers will be on the context object.
+
 	get(target, prop, receiver) {
 		const originalMethod = target[prop];
 		if (
@@ -201,12 +193,18 @@ export const MonitoredDateUtils = new Proxy(DateCore, {
 			const context =
 				args[0] &&
 				typeof args[0] === "object" &&
-				args[0].metricsRegistry
+				args[0].stateManager?.managers?.errorHelpers
 					? args.shift()
 					: {};
 
+			const errorHelpers = context.stateManager?.managers?.errorHelpers;
+			if (!errorHelpers) {
+				// If no error helpers, just run the original method.
+				return originalMethod.apply(this, args);
+			}
+
 			const fn = () => originalMethod.apply(this, args);
-			const wrappedFn = ErrorHelpers.withPerformanceTracking(
+			const wrappedFn = errorHelpers.withPerformanceTracking(
 				fn,
 				`DateUtils.${prop}`
 			);

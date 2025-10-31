@@ -1,7 +1,7 @@
 // modules/realtime-sync.js
 // Real-time synchronization module for low-latency updates
 
-import { StorageError } from "../../../utils/ErrorHelpers.js";
+import { AppError, StorageError } from "../../../utils/ErrorHelpers.js";
 
 /**
  * @description
@@ -11,6 +11,7 @@ import { StorageError } from "../../../utils/ErrorHelpers.js";
  * automatic reconnection, message queuing, and a subscription model for receiving updates.
  *
  * @module RealtimeSync
+ * @privateFields {#connection, #messageQueue, #subscriptions, #reconnectAttempts, #config, #stateManager, #pendingRequests, #heartbeatInterval, #metrics, #forensicLogger, #errorHelpers}
  */
 export default class RealtimeSync {
 	/** @private @type {WebSocket|null} */
@@ -29,6 +30,12 @@ export default class RealtimeSync {
 	#pendingRequests = new Map();
 	/** @private @type {number|null} */
 	#heartbeatInterval = null;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
 
 	/** @public @type {string} */
 	name = "RealtimeSync";
@@ -46,6 +53,12 @@ export default class RealtimeSync {
 	constructor({ stateManager, options = {} }) {
 		this.#stateManager = stateManager;
 
+		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
+
 		this.#config = {
 			serverUrl: options.serverUrl || "wss://api.nodus.com/realtime",
 			reconnectDelay: options.reconnectDelay || 1000,
@@ -56,8 +69,6 @@ export default class RealtimeSync {
 			authTimeout: options.authTimeout || 5000,
 			...options,
 		};
-
-		console.log("[RealtimeSync] Loaded for real-time synchronization");
 	}
 
 	/**
@@ -66,7 +77,7 @@ export default class RealtimeSync {
 	 */
 	async init() {
 		await this.#connect();
-		console.log("[RealtimeSync] Real-time sync initialized");
+		this.#audit("init", { config: this.#config });
 		return this;
 	}
 
@@ -89,7 +100,10 @@ export default class RealtimeSync {
 			timestamp: Date.now(),
 		});
 
-		console.log(`[RealtimeSync] Subscribed to ${entityType} updates`);
+		this.#audit("subscribed", {
+			entityType,
+			callback: callback.name || "anonymous",
+		});
 	}
 
 	/**
@@ -113,6 +127,7 @@ export default class RealtimeSync {
 				entityType,
 				timestamp: Date.now(),
 			});
+			this.#audit("unsubscribed", { entityType });
 		}
 	}
 
@@ -167,7 +182,10 @@ export default class RealtimeSync {
 			const requestId = this.#generateRequestId();
 			const timeout = setTimeout(() => {
 				this.#pendingRequests.delete(requestId);
-				reject(new Error("Pull request timeout"));
+				const error = new StorageError("Pull request timeout", {
+					context: { entityTypes, since },
+				});
+				reject(this.#errorHelpers?.handleError(error) || error);
 			}, this.#config.messageTimeout);
 
 			this.#pendingRequests.set(requestId, {
@@ -222,17 +240,16 @@ export default class RealtimeSync {
 	 * @returns {object} An object containing various metrics.
 	 */
 	getMetrics() {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
 		if (this.#connection?.readyState === WebSocket.OPEN) {
 			const uptime =
 				Date.now() -
-				(metrics?.get("connectionStartTime")?.value || Date.now());
-			metrics?.set("connectionUptime", uptime);
+				(this.#metrics?.get("connectionStartTime")?.value ||
+					Date.now());
+			this.#metrics?.set("connectionUptime", uptime);
 		}
 
 		return {
-			...(metrics?.getAllAsObject() || {}),
+			...(this.#metrics?.getAllAsObject() || {}),
 			isConnected: this.#isConnected(),
 			subscriptions: this.#subscriptions.size,
 			pendingRequests: this.#pendingRequests.size,
@@ -257,7 +274,7 @@ export default class RealtimeSync {
 		this.#subscriptions.clear();
 		this.#messageQueue = [];
 
-		console.log("[RealtimeSync] Disconnected");
+		this.#audit("disconnected", {});
 	}
 
 	// Private methods
@@ -268,8 +285,6 @@ export default class RealtimeSync {
 	 */
 	async #connect() {
 		return new Promise((resolve, reject) => {
-			const metrics =
-				this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
 			try {
 				// V8.0 Parity: Use securityManager to get auth token for connection.
 				const authToken =
@@ -289,9 +304,12 @@ export default class RealtimeSync {
 				this.#connection = new WebSocket(url.toString());
 
 				this.#connection.onopen = () => {
-					console.log("[RealtimeSync] Connected to real-time server");
+					this.#audit("connected", {
+						url: this.#config.serverUrl,
+						attempt: this.#reconnectAttempts + 1,
+					});
 					this.#reconnectAttempts = 0;
-					metrics?.set("connectionStartTime", Date.now());
+					this.#metrics?.set("connectionStartTime", Date.now());
 
 					// Process queued messages
 					this.#processMessageQueue();
@@ -306,16 +324,23 @@ export default class RealtimeSync {
 				};
 
 				this.#connection.onclose = () => {
-					console.log("[RealtimeSync] Connection closed");
+					this.#audit("connection_closed", {});
 					this.#handleDisconnection();
 				};
 
 				this.#connection.onerror = (error) => {
-					console.error("[RealtimeSync] Connection error:", error);
-					reject(
-						new StorageError("WebSocket connection error.", {
+					const storageError = new StorageError(
+						"WebSocket connection error.",
+						{
 							cause: error,
-						})
+						}
+					);
+					this.#audit("connection_error", {
+						error: storageError.message,
+					});
+					reject(
+						this.#errorHelpers?.handleError(storageError) ||
+							storageError
 					);
 				};
 			} catch (error) {
@@ -330,22 +355,22 @@ export default class RealtimeSync {
 	 */
 	async #reconnect() {
 		if (this.#reconnectAttempts >= this.#config.maxReconnectAttempts) {
-			console.error("[RealtimeSync] Max reconnection attempts reached");
+			this.#audit("reconnect_failed_max_attempts", {
+				attempts: this.#config.maxReconnectAttempts,
+			});
 			return;
 		}
 
 		this.#reconnectAttempts++;
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
-		metrics?.increment("reconnections");
+		this.#metrics?.increment("reconnections");
 
 		const delay =
 			this.#config.reconnectDelay *
 			Math.pow(2, this.#reconnectAttempts - 1);
-		console.log(
-			`[RealtimeSync] Reconnecting in ${delay}ms (attempt ${this.#reconnectAttempts})`
-		);
-
+		this.#audit("reconnecting", {
+			delay,
+			attempt: this.#reconnectAttempts,
+		});
 		setTimeout(async () => {
 			try {
 				await this.#connect();
@@ -364,9 +389,7 @@ export default class RealtimeSync {
 	#handleMessage(data) {
 		try {
 			const message = JSON.parse(data);
-			const metrics =
-				this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
-			metrics?.increment("messagesReceived");
+			this.#metrics?.increment("messagesReceived");
 
 			// Calculate latency if timestamp provided
 			if (message.timestamp) {
@@ -397,13 +420,17 @@ export default class RealtimeSync {
 					this.#handleError(message);
 					break;
 				default:
-					console.warn(
-						"[RealtimeSync] Unknown message type:",
-						message.type
-					);
+					this.#audit("unknown_message_type", { type: message.type });
 			}
 		} catch (error) {
-			console.error("[RealtimeSync] Failed to parse message:", error);
+			const appError = new AppError("Failed to parse WebSocket message", {
+				cause: error,
+				context: { rawData: data },
+			});
+			this.#audit("message_parse_failed", {
+				error: appError.message,
+			});
+			this.#errorHelpers?.handleError(appError);
 		}
 	}
 
@@ -418,14 +445,14 @@ export default class RealtimeSync {
 			if (message.success) {
 				pending.resolve(message);
 			} else {
-				pending.reject(
-					new Error(message.error || "Unknown server error")
+				const error = new StorageError(
+					message.error || "Unknown server error",
+					{ context: { requestId: message.requestId } }
 				);
+				pending.reject(this.#errorHelpers?.handleError(error) || error);
 			}
 		} else {
-			console.warn(
-				`[RealtimeSync] Received response for unknown request ID: ${message.requestId}`
-			);
+			this.#audit("unknown_request_id", { requestId: message.requestId });
 		}
 	}
 
@@ -447,7 +474,14 @@ export default class RealtimeSync {
 						timestamp: message.timestamp,
 					});
 				} catch (error) {
-					console.error("[RealtimeSync] Callback error:", error);
+					const appError = new AppError(
+						"Subscription callback error",
+						{
+							cause: error,
+							context: { entityType },
+						}
+					);
+					this.#errorHelpers?.handleError(appError);
 				}
 			});
 		}
@@ -471,7 +505,14 @@ export default class RealtimeSync {
 						timestamp: message.timestamp,
 					});
 				} catch (error) {
-					console.error("[RealtimeSync] Callback error:", error);
+					const appError = new AppError(
+						"Subscription callback error",
+						{
+							cause: error,
+							context: { entityType },
+						}
+					);
+					this.#errorHelpers?.handleError(appError);
 				}
 			});
 		}
@@ -496,7 +537,11 @@ export default class RealtimeSync {
 	 * @param {object} message - The error message.
 	 */
 	#handleError(message) {
-		console.error("[RealtimeSync] Server error:", message.error);
+		const error = new StorageError("Real-time server error", {
+			context: { serverError: message.error },
+		});
+		this.#audit("server_error", { error: message.error });
+		this.#errorHelpers?.handleError(error);
 	}
 
 	/**
@@ -517,9 +562,7 @@ export default class RealtimeSync {
 	#sendMessage(message) {
 		if (this.#isConnected()) {
 			this.#connection.send(JSON.stringify(message));
-			const metrics =
-				this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
-			metrics?.increment("messagesSent");
+			this.#metrics?.increment("messagesSent");
 		} else {
 			// Queue message for when connection is restored
 			this.#messageQueue.push(message);
@@ -538,7 +581,10 @@ export default class RealtimeSync {
 			const requestId = this.#generateRequestId();
 			const timeout = setTimeout(() => {
 				this.#pendingRequests.delete(requestId);
-				reject(new Error("Push timeout"));
+				const error = new StorageError("Push timeout", {
+					context: { itemId: item.id, operation },
+				});
+				reject(this.#errorHelpers?.handleError(error) || error);
 			}, this.#config.messageTimeout);
 
 			this.#pendingRequests.set(requestId, {
@@ -616,8 +662,21 @@ export default class RealtimeSync {
 	 * @param {number} latency - The latency of the last message in milliseconds.
 	 */
 	#updateLatencyMetrics(latency) {
-		const metrics =
-			this.#stateManager?.metricsRegistry?.namespace("realtimeSync");
-		metrics?.updateAverage("averageLatency", latency);
+		this.#metrics?.updateAverage("averageLatency", latency);
+	}
+
+	/**
+	 * Logs an audit event if the forensic logger is available.
+	 * @private
+	 * @param {string} eventType - The type of the event (e.g., 'connected').
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		if (this.#forensicLogger) {
+			this.#forensicLogger.logAuditEvent(
+				`REALTIME_SYNC_${eventType.toUpperCase()}`,
+				data
+			);
+		}
 	}
 }

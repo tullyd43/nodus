@@ -1,5 +1,6 @@
 /**
  * @file ActionHandlerRegistry.js
+ * @version 1.1.0
  * @description A centralized registry for managing and executing reusable action handlers for the EventFlowEngine.
  */
 
@@ -8,18 +9,29 @@
  * @classdesc Manages the registration and execution of action handlers used by the EventFlowEngine.
  * This centralization makes actions reusable, testable, and consistent across the application.
  */
+
 export class ActionHandlerRegistry {
+	// V8.0 Parity: Mandate 3.1 - All internal properties MUST be private.
 	/** @private @type {import('./HybridStateManager.js').default} */
 	#stateManager;
 	/** @private @type {Map<string, Function>} */
 	#handlers = new Map();
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+
 	/**
 	 * Creates an instance of ActionHandlerRegistry.
 	 * @param {object} context - The application context.
 	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
 	constructor({ stateManager }) {
+		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from the stateManager.
 		this.#stateManager = stateManager;
+		this.#metrics =
+			this.#stateManager.metricsRegistry?.namespace("actionHandler");
+		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
 	}
 
 	/**
@@ -44,9 +56,7 @@ export class ActionHandlerRegistry {
 			);
 		}
 		this.#handlers.set(actionType, handler);
-		this.#stateManager.metricsRegistry?.increment(
-			"actionHandler.handlersRegistered"
-		);
+		this.#metrics?.increment("handlers.registered");
 	}
 
 	/**
@@ -67,32 +77,47 @@ export class ActionHandlerRegistry {
 		this.register(
 			"log_event",
 			async (action, event, flow, stateManager) => {
-				const level = action.level || "info";
-				const message = action.message || `Event: ${event.type}`;
-				const allowedLevels = {
-					log: console.log,
-					warn: console.warn,
-					error: console.error,
-					info: console.info,
-					debug: console.debug,
-				};
-				const logFn = allowedLevels[level] || console.log;
-				logFn(`[EventFlow:${flow.id}] ${message}`, event.data || "");
-
-				// Integrate with ForensicLogger for auditable logs
-				if (action.audit) {
-					const forensicLogger = stateManager.managers.forensicLogger;
-					if (forensicLogger) {
-						await forensicLogger.logAuditEvent(
-							`EVENT_FLOW_LOG_${level.toUpperCase()}`,
-							{
-								flowId: flow.id,
-								message,
-								eventData: event.data,
-							}
+				await this.#errorHelpers?.tryOr(
+					async () => {
+						const level = action.level || "info";
+						const message =
+							action.message || `Event: ${event.type}`;
+						const allowedLevels = {
+							log: console.log,
+							warn: console.warn,
+							error: console.error,
+							info: console.info,
+							debug: console.debug,
+						};
+						const logFn = allowedLevels[level] || console.log;
+						logFn(
+							`[EventFlow:${flow.id}] ${message}`,
+							event.data || ""
 						);
+
+						// Integrate with ForensicLogger for auditable logs
+						if (action.audit) {
+							const forensicLogger =
+								stateManager.managers.forensicLogger;
+							if (forensicLogger) {
+								await forensicLogger.logAuditEvent(
+									`EVENT_FLOW_LOG_${level.toUpperCase()}`,
+									{
+										flowId: flow.id,
+										message,
+										eventData: event.data,
+									}
+								);
+							}
+						}
+						this.#metrics?.increment("actions.executed.log_event");
+					},
+					null,
+					{
+						component: "ActionHandlerRegistry",
+						operation: "log_event",
 					}
-				}
+				);
 			}
 		);
 
@@ -100,13 +125,25 @@ export class ActionHandlerRegistry {
 		this.register(
 			"show_notification",
 			async (action, event, flow, stateManager) => {
-				const notification = {
-					type: action.template || "info",
-					message: action.message || `Event: ${event.type}`,
-					duration: action.duration || 3000,
-					data: event.data,
-				};
-				stateManager?.emit("show_notification", notification);
+				await this.#errorHelpers?.tryOr(
+					() => {
+						const notification = {
+							type: action.template || "info",
+							message: action.message || `Event: ${event.type}`,
+							duration: action.duration || 3000,
+							data: event.data,
+						};
+						stateManager?.emit("show_notification", notification);
+						this.#metrics?.increment(
+							"actions.executed.show_notification"
+						);
+					},
+					null,
+					{
+						component: "ActionHandlerRegistry",
+						operation: "show_notification",
+					}
+				);
 			}
 		);
 
@@ -114,13 +151,25 @@ export class ActionHandlerRegistry {
 		this.register(
 			"track_metric",
 			async (action, event, flow, stateManager) => {
-				const metric = {
-					name: action.metric,
-					value: action.value || 1,
-				};
-				stateManager?.metricsRegistry?.increment(
-					metric.name,
-					metric.value
+				await this.#errorHelpers?.tryOr(
+					() => {
+						const metric = {
+							name: action.metric,
+							value: action.value || 1,
+						};
+						stateManager?.metricsRegistry?.increment(
+							metric.name,
+							metric.value
+						);
+						this.#metrics?.increment(
+							"actions.executed.track_metric"
+						);
+					},
+					null,
+					{
+						component: "ActionHandlerRegistry",
+						operation: "track_metric",
+					}
 				);
 			}
 		);
@@ -129,29 +178,42 @@ export class ActionHandlerRegistry {
 		this.register(
 			"invalidate_cache",
 			async (action, event, flow, stateManager) => {
-				const cacheManager = stateManager?.managers?.cacheManager;
-				if (!cacheManager) return;
+				await this.#errorHelpers?.tryOr(
+					() => {
+						const cacheManager =
+							stateManager?.managers?.cacheManager;
+						if (!cacheManager) return;
 
-				let pattern = action.pattern || "*";
+						let pattern = action.pattern || "*";
 
-				// Simple template replacement
-				pattern = pattern.replace(
-					/\{\{data\.entity\.id\}\}/g,
-					event.data?.entity?.id ?? event.data?.id ?? ""
+						// Simple template replacement
+						pattern = pattern.replace(
+							/\{\{data\.entity\.id\}\}/g,
+							event.data?.entity?.id ?? event.data?.id ?? ""
+						);
+
+						if (pattern === "*") {
+							cacheManager.clearAll();
+							console.log(
+								`[ActionHandlerRegistry] Cleared all caches via flow: ${flow.id}`
+							);
+						} else {
+							// Invalidate a specific cache instance by name/pattern
+							cacheManager.invalidate(pattern);
+							console.log(
+								`[ActionHandlerRegistry] Invalidated cache '${pattern}' via flow: ${flow.id}`
+							);
+						}
+						this.#metrics?.increment(
+							"actions.executed.invalidate_cache"
+						);
+					},
+					null,
+					{
+						component: "ActionHandlerRegistry",
+						operation: "invalidate_cache",
+					}
 				);
-
-				if (pattern === "*") {
-					cacheManager.clearAll();
-					console.log(
-						`[ActionHandlerRegistry] Cleared all caches via flow: ${flow.id}`
-					);
-				} else {
-					// Invalidate a specific cache instance by name/pattern
-					cacheManager.invalidate(pattern);
-					console.log(
-						`[ActionHandlerRegistry] Invalidated cache '${pattern}' via flow: ${flow.id}`
-					);
-				}
 			}
 		);
 
@@ -159,11 +221,23 @@ export class ActionHandlerRegistry {
 		this.register(
 			"broadcast_event",
 			async (action, event, flow, stateManager) => {
-				stateManager?.emit(action.event, {
-					...event.data,
-					originalEvent: event.type,
-					flow: flow.id,
-				});
+				await this.#errorHelpers?.tryOr(
+					() => {
+						stateManager?.emit(action.event, {
+							...event.data,
+							originalEvent: event.type,
+							flow: flow.id,
+						});
+						this.#metrics?.increment(
+							"actions.executed.broadcast_event"
+						);
+					},
+					null,
+					{
+						component: "ActionHandlerRegistry",
+						operation: "broadcast_event",
+					}
+				);
 			}
 		);
 
@@ -171,29 +245,34 @@ export class ActionHandlerRegistry {
 		this.register(
 			"save_entity",
 			async (action, event, flow, stateManager) => {
-				const entityData = action.entity || event.data?.entity;
-				if (!entityData) {
-					console.warn(
-						`[ActionHandlerRegistry] 'save_entity' action in flow ${flow.id} is missing entity data.`
-					);
-					return;
-				}
-
-				try {
-					await stateManager.saveEntity(entityData);
-				} catch (error) {
-					console.error(
-						`[ActionHandlerRegistry] 'save_entity' action failed in flow ${flow.id}:`,
-						error
-					);
-					// Optionally emit a failure event
-					stateManager.emit("action_execution_error", {
-						action,
-						event,
-						flow,
-						error,
-					});
-				}
+				await this.#errorHelpers?.tryOr(
+					async () => {
+						const entityData = action.entity || event.data?.entity;
+						if (!entityData) {
+							console.warn(
+								`[ActionHandlerRegistry] 'save_entity' action in flow ${flow.id} is missing entity data.`
+							);
+							return;
+						}
+						await stateManager.saveEntity(entityData);
+						this.#metrics?.increment(
+							"actions.executed.save_entity"
+						);
+					},
+					(error) => {
+						// Optionally emit a failure event
+						stateManager.emit("action_execution_error", {
+							action,
+							event,
+							flow,
+							error,
+						});
+					},
+					{
+						component: "ActionHandlerRegistry",
+						operation: "save_entity",
+					}
+				);
 			}
 		);
 	}

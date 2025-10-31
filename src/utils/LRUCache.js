@@ -18,6 +18,10 @@ export class LRUCache {
 	#ttlMap = new Map();
 	#cleanupInterval = null;
 	#stateManager;
+	// V8.0 Parity: Mandate 1.2 - All dependencies are derived from the stateManager context.
+	#AppError;
+	#PolicyError;
+	#StorageError;
 
 	/**
 	 * Creates an instance of LRUCache.
@@ -26,38 +30,12 @@ export class LRUCache {
 	 * @param {import('../core/HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 * @param {import('./ErrorHelpers.js').ErrorHelpers} context.errorHelpers - The centralized error helper instance.
 	 */
-	// V8.0 Parity: Mandate 1.2 - All dependencies are derived from the stateManager context.
-	#AppError;
-	#PolicyError;
-	#StorageError;
 	constructor(maxSize = 1000, { stateManager, ...options } = {}) {
-		if (
-			typeof maxSize !== "number" ||
-			!Number.isInteger(maxSize) ||
-			maxSize <= 0
-		) {
-			throw new AppError("LRUCache maxSize must be a positive integer.", {
-				category: "configuration_error",
-				severity: "high",
-				context: { maxSize },
-			}); // AppError might not be available here, but this is a startup error.
-		}
-		if (
-			options.ttl &&
-			(typeof options.ttl !== "number" || options.ttl <= 0)
-		) {
-			throw new AppError("LRUCache ttl must be a positive number.", {
-				category: "configuration_error",
-				severity: "high",
-				context: { ttl: options.ttl },
-			}); // AppError might not be available here.
-		}
-
-		this.#maxSize = maxSize;
 		this.#stateManager = stateManager;
 
 		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
 		const ErrorHelpers = this.#stateManager?.managers?.errorHelpers;
+		// Fallback to standard Error if helpers are not available during early instantiation.
 		this.#AppError = ErrorHelpers?.AppError || Error;
 		this.#PolicyError = ErrorHelpers?.PolicyError || Error;
 		this.#StorageError = ErrorHelpers?.StorageError || Error;
@@ -71,6 +49,33 @@ export class LRUCache {
 			keyPrefix: "",
 			...options,
 		};
+
+		// Perform validation after error helpers are derived.
+		if (
+			typeof maxSize !== "number" ||
+			!Number.isInteger(maxSize) ||
+			maxSize <= 0
+		) {
+			throw new this.#AppError(
+				"LRUCache maxSize must be a positive integer.",
+				{
+					category: "configuration_error",
+				}
+			);
+		}
+		if (
+			this.#options.ttl &&
+			(typeof this.#options.ttl !== "number" || this.#options.ttl <= 0)
+		) {
+			throw new this.#AppError(
+				"LRUCache ttl must be a positive number.",
+				{
+					category: "configuration_error",
+				}
+			);
+		}
+
+		this.#maxSize = maxSize;
 
 		// V8.0 Parity: Derive managers and services from the stateManager.
 
@@ -140,9 +145,11 @@ export class LRUCache {
 							key,
 							securityContext,
 						});
-						throw new PolicyError("Access denied to cached item.");
+						throw new this.#PolicyError( // V8.0 Parity: Use derived error classes directly.
+							"Access denied to cached item."
+						);
 					}
-				} // V8.0 Parity: Use derived error classes. throw new this.#PolicyError("Access denied to cached item.");
+				}
 
 				// Update item access tracking
 				item.accessed = DateCore.timestamp(); // timestamp() returns a number, which is fine
@@ -213,9 +220,9 @@ export class LRUCache {
 							securityContext,
 							securityLabel,
 						});
-						throw new PolicyError(
+						throw new this.#PolicyError( // V8.0 Parity: Use derived error classes directly.
 							"Access denied to write to cache with this security label."
-						); // V8.0 Parity: Use derived error classes. throw new this.#PolicyError("Access denied to write to cache with this security label.");
+						);
 					}
 				}
 
@@ -619,13 +626,13 @@ export class LRUCache {
 
 		// After eviction, check if there's still not enough space
 		if ((metrics?.get("memory_bytes")?.value || 0) > targetMemory) {
-			throw new StorageError(
+			throw new this.#StorageError( // V8.0 Parity: Use derived error classes directly.
 				`Cannot add item of size ${newItemSize}. Insufficient memory after eviction.`,
 				{
 					memoryLimit: this.#options.memoryLimit,
 					currentUsage: metrics?.get("memory_bytes")?.value || 0,
 				}
-			); // V8.0 Parity: Use derived error classes. throw new this.#StorageError(...);
+			);
 		}
 	}
 

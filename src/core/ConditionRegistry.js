@@ -4,13 +4,16 @@
  * These conditions are used by the EventFlowEngine and other systems to make decisions based on context.
  */
 
-import ConditionSchema from "./ConditionSchema.json" assert { type: "json" };
+import ConditionSchema from "./ConditionSchema.json";
+import { DateConditions } from "../utils/DateUtils.js";
 /**
  * @class ConditionRegistry
+ * @privateFields {#stateManager, #conditions, #conditionCache, #metrics, #errorHelpers, #rateLimitStore, #schemaValidator}
  * @classdesc Manages the registration, evaluation, and caching of reusable condition functions.
  * This allows for a declarative and extensible way to define logic within event flows and actions.
  */
 export class ConditionRegistry {
+	// V8.0 Parity: Mandate 3.1 & 3.5 - All private fields are declared at the top.
 	/** @private @type {import('./HybridStateManager.js').default} */
 	#stateManager;
 	/** @private @type {Map<string, object>} */
@@ -21,9 +24,17 @@ export class ConditionRegistry {
 	#metrics = null;
 	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
 	#errorHelpers = null;
-	/** @private @type {Map<string, {count: number, windowStart: number}>} */ #rateLimitStore =
-		new Map(); // V8.0 Parity: Mandate 3.1 - Private field declaration.
-	/** @private @type {Function|null} */
+	/**
+	 * Stores rate limit counts for the 'is_rate_limited' condition.
+	 * @private
+	 * @type {Map<string, {count: number, windowStart: number}>}
+	 */
+	#rateLimitStore = new Map();
+	/**
+	 * A function that validates a condition definition against the ConditionSchema.json.
+	 * @private
+	 * @type {Function|null}
+	 */
 	#schemaValidator = null;
 
 	/**
@@ -46,16 +57,17 @@ export class ConditionRegistry {
 			this.#stateManager.metricsRegistry?.namespace("conditionRegistry");
 
 		// Get a dedicated cache instance from the CacheManager
-		this.#conditionCache =
-			this.#stateManager.managers.cacheManager?.getCache(
-				"conditionResults"
-			);
+		const cacheManager = this.#stateManager.managers.cacheManager;
+		if (cacheManager) {
+			this.#conditionCache = cacheManager.getCache("conditionResults", {
+				ttl: 300000, // 5 minute TTL for condition results
+			});
+		}
 
 		// V8.0 Parity: Mandate 2.2 - Create a simple schema validator.
-		this.#schemaValidator =
-			this.#createSimpleSchemaValidator(ConditionSchema);
+		this.#schemaValidator = this.#createSimpleSchemaValidator(ConditionSchema);
 
-		this.registerBuiltinConditions();
+		this.#registerBuiltinConditions();
 		console.log(
 			`[ConditionRegistry] Initialized with ${this.#conditions.size} built-in conditions.`
 		);
@@ -74,25 +86,14 @@ export class ConditionRegistry {
 	 * @returns {object} The registered condition object.
 	 */
 	register(conditionType, evaluator, options = {}) {
-		// V8.0 Parity: Mandate 2.2 - Validate examples against the schema upon registration.
-		if (options.examples) {
-			for (const example of options.examples) {
-				const { valid, errors } = this.validate(example);
-				if (!valid) {
-					throw new Error(
-						`Invalid example for condition '${conditionType}': ${errors.join(", ")}`
-					);
-				}
-			}
+		if (this.#conditions.has(conditionType)) {
+			console.warn(
+				`[ConditionRegistry] Overwriting existing condition handler for type: '${conditionType}'.`
+			);
 		}
 
-		// V8.0 Parity: Mandate 2.2 - Validate the condition schema itself upon registration.
-		if (options.schema) {
-			// This is a meta-check; in a real scenario, you might validate the schema structure.
-			// For now, we just ensure it's an object.
-			if (typeof options.schema !== "object")
-				throw new Error("Condition schema must be an object.");
-		}
+		// V8.0 Parity: Mandate 2.2 - Validate the condition definition and its examples upon registration.
+		this.#validateRegistration(conditionType, options);
 
 		const condition = {
 			type: conditionType,
@@ -105,7 +106,41 @@ export class ConditionRegistry {
 		};
 
 		this.#conditions.set(conditionType, condition);
+		this.#metrics?.increment("registered");
+
 		return condition;
+	}
+
+	/**
+	 * Validates a condition's definition and examples during registration.
+	 * @private
+	 * @param {string} conditionType - The type of the condition being registered.
+	 * @param {object} options - The registration options.
+	 */
+	#validateRegistration(conditionType, options) {
+		if (options.schema && typeof options.schema !== "object") {
+			throw new Error(
+				`Schema for condition '${conditionType}' must be an object.`
+			);
+		}
+
+		if (!options.examples || options.examples.length === 0) {
+			console.warn(
+				`[ConditionRegistry] No examples provided for condition '${conditionType}'.`
+			);
+			return;
+		}
+
+		for (const example of options.examples) {
+			const { valid, errors } = this.validate(example);
+			if (!valid) {
+				throw new Error(
+					`Invalid example for condition '${conditionType}': ${errors.join(
+						", "
+					)}. Example: ${JSON.stringify(example)}`
+				);
+			}
+		}
 	}
 
 	/**
@@ -113,7 +148,6 @@ export class ConditionRegistry {
 	 * @param {object} conditionDef - The definition of the condition to evaluate (e.g., `{ type: 'property_equals', property: 'user.role', value: 'admin' }`).
 	 * @param {object} evaluationContext - The context object containing data for the evaluation.
 	 * @param {object|null} securitySubject - The security subject (user, roles, permissions) for the evaluation.
-	 * @param {object} [options={}] - Additional options for the evaluation.
 	 * @returns {Promise<boolean>} A promise that resolves to `true` if the condition is met, `false` otherwise.
 	 */
 	async evaluate(conditionDef, evaluationContext, securitySubject = null) {
@@ -122,12 +156,10 @@ export class ConditionRegistry {
 		return this.#errorHelpers?.tryOr(
 			async () => {
 				// Generate cache key if condition is cacheable
-				// V8.0 Parity: Mandate 2.2 - Validate the condition before evaluation.
 				const { valid, errors } = this.validate(conditionDef);
-				if (!valid) {
-					throw new Error(
-						`Invalid condition definition for type '${conditionDef.type}': ${errors.join(", ")}`
-					);
+				if (!valid) { // V8.0 Parity: Mandate 2.2 - Stricter validation enforcement.
+					// Throw a specific, detailed error if validation fails.
+					throw new Error(`Invalid condition definition: ${errors.join("; ")}`);
 				}
 
 				const cacheKey = this.#generateCacheKey(
@@ -142,15 +174,13 @@ export class ConditionRegistry {
 					return this.#conditionCache.get(cacheKey);
 				}
 
-				// Get condition evaluator
+				// Get the registered condition evaluator.
 				const condition = this.#conditions.get(conditionDef.type);
 				if (!condition) {
-					throw new Error(
-						`Unknown condition type: ${conditionDef.type}`
-					);
+					throw new Error(`Unknown condition type: ${conditionDef.type}`);
 				}
 
-				// V8.0 Parity: Optimize for synchronous evaluators.
+				// Prepare arguments for the evaluator function.
 				const evaluatorArgs = [
 					conditionDef,
 					evaluationContext,
@@ -158,11 +188,12 @@ export class ConditionRegistry {
 					this.#stateManager,
 				];
 
+				// Await the result, which transparently handles both sync and async evaluators.
 				const result = await Promise.resolve(
 					condition.evaluator(...evaluatorArgs)
 				);
 
-				// Cache result if cacheable
+				// Store the result in the cache if the condition is cacheable.
 				if (cacheKey) {
 					this.#conditionCache?.set(cacheKey, result);
 					this.#metrics?.increment("cacheMisses");
@@ -192,11 +223,13 @@ export class ConditionRegistry {
 
 		try {
 			// V8.0 Parity: Create a more robust key using relevant context parts.
+			// The subject hash ensures user-specific results are cached separately.
+			// Note: This assumes evaluationContext is not overly large or circular.
 			const keyData = {
 				def: conditionDef,
 				subjectHash: securitySubject
-					? `${securitySubject.userId}:${securitySubject.role}`
-					: "",
+					? `${securitySubject.userId}:${securitySubject.role}:${securitySubject.level}`
+					: "anonymous",
 			};
 
 			return `cond:${JSON.stringify(keyData)}`;
@@ -213,7 +246,7 @@ export class ConditionRegistry {
 	 * Registers a set of common, built-in condition types.
 	 * @private
 	 */
-	registerBuiltinConditions() {
+	#registerBuiltinConditions() {
 		// Simple property comparison
 		this.register(
 			"property_equals",
@@ -225,7 +258,7 @@ export class ConditionRegistry {
 					property
 				);
 
-				return actualValue === expectedValue;
+				return actualValue === expectedValue; // Strict equality check.
 			},
 			{
 				description: "Compare a property value for equality",
@@ -234,8 +267,12 @@ export class ConditionRegistry {
 					value: { required: true },
 				},
 				examples: [
-					{ property: "user.role", value: "admin" },
-					{ property: "entity.status", value: "active" },
+					{ type: "property_equals", property: "data.user.role", value: "admin" },
+					{
+						type: "property_equals",
+						property: "data.entity.status",
+						value: "active",
+					},
 				],
 			}
 		);
@@ -287,7 +324,7 @@ export class ConditionRegistry {
 					},
 					value: { type: "number", required: true },
 				},
-			}
+			},
 		);
 
 		// Array membership
@@ -309,6 +346,7 @@ export class ConditionRegistry {
 					property: { type: "string", required: true },
 					array: { type: "array", required: true },
 				},
+				examples: [{ type: "in_array", property: "data.entity.type", array: ["task", "note"] }],
 			}
 		);
 
@@ -326,8 +364,22 @@ export class ConditionRegistry {
 
 				if (typeof actualValue !== "string") return false;
 
-				const regex = new RegExp(pattern, flags);
-				return regex.test(actualValue);
+				// Security: Prevent ReDoS by checking for overly complex patterns.
+				// This is a simple heuristic; a more robust solution might involve a dedicated library.
+				if (pattern.length > 100 || /[*+]\?/.test(pattern)) {
+					console.warn(
+						`[ConditionRegistry] Potentially complex regex pattern blocked: ${pattern}`
+					);
+					return false;
+				}
+
+				try {
+					const regex = new RegExp(pattern, flags);
+					return regex.test(actualValue);
+				} catch (e) {
+					console.error(`[ConditionRegistry] Invalid regex pattern: ${pattern}`, e);
+					return false;
+				}
 			},
 			{
 				description: "Match property against regular expression",
@@ -336,6 +388,7 @@ export class ConditionRegistry {
 					pattern: { type: "string", required: true },
 					flags: { type: "string" },
 				},
+				examples: [{ type: "regex_match", property: "data.entity.name", pattern: "^TASK-" }],
 			}
 		);
 
@@ -359,7 +412,7 @@ export class ConditionRegistry {
 					after: { type: "number" },
 					before: { type: "number" },
 				},
-			}
+			},
 		);
 
 		// Time of day
@@ -367,23 +420,15 @@ export class ConditionRegistry {
 			"time_of_day",
 			(conditionDef, evaluationContext) => {
 				const now = new Date(evaluationContext.timestamp || Date.now());
-				const hour = now.getHours();
-				const minute = now.getMinutes();
-				const timeInMinutes = hour * 60 + minute;
+				const timeInMinutes = now.getHours() * 60 + now.getMinutes();
 
 				if (conditionDef.after) {
-					const [afterHour, afterMinute] = conditionDef.after
-						.split(":")
-						.map(Number);
-					const afterInMinutes = afterHour * 60 + afterMinute;
+					const afterInMinutes = DateConditions.parseTimeString(conditionDef.after);
 					if (timeInMinutes < afterInMinutes) return false;
 				}
 
 				if (conditionDef.before) {
-					const [beforeHour, beforeMinute] = conditionDef.before
-						.split(":")
-						.map(Number);
-					const beforeInMinutes = beforeHour * 60 + beforeMinute;
+					const beforeInMinutes = DateConditions.parseTimeString(conditionDef.before);
 					if (timeInMinutes > beforeInMinutes) return false;
 				}
 
@@ -396,10 +441,43 @@ export class ConditionRegistry {
 					before: { type: "string", pattern: "^\\d{2}:\\d{2}$" },
 				},
 				examples: [
-					{ after: "09:00", before: "17:00" }, // Business hours
-					{ after: "22:00", before: "06:00" }, // Night hours
+					{ type: "time_of_day", after: "09:00", before: "17:00" }, // Business hours
+					{ type: "time_of_day", after: "22:00" }, // After 10 PM
 				],
-			}
+			},
+		);
+
+		// V8.0 Parity: Mandate 4.2 - Pre-parsed time condition for hot paths.
+		this.register(
+			"time_of_day_preparsed",
+			(conditionDef, evaluationContext) => {
+				const now = new Date(evaluationContext.timestamp || Date.now());
+				const timeInMinutes = now.getHours() * 60 + now.getMinutes();
+
+				// The `afterMinutes` and `beforeMinutes` properties are expected to be pre-calculated.
+				if (
+					conditionDef.afterMinutes !== undefined &&
+					timeInMinutes < conditionDef.afterMinutes
+				) {
+					return false;
+				}
+				if (
+					conditionDef.beforeMinutes !== undefined &&
+					timeInMinutes > conditionDef.beforeMinutes
+				) {
+					return false;
+				}
+
+				return true;
+			},
+			{
+				description:
+					"Check if current time is within a pre-parsed time range (for performance).",
+				schema: {
+					afterMinutes: { type: "number" },
+					beforeMinutes: { type: "number" },
+				},
+			},
 		);
 
 		// User permission check
@@ -427,7 +505,14 @@ export class ConditionRegistry {
 					permissions: { type: "array", required: true },
 					requireAll: { type: "boolean" },
 				},
-			}
+				examples: [
+					{
+						type: "user_has_permission",
+						permissions: ["entity:edit", "entity:delete"],
+						requireAll: true,
+					},
+				],
+			},
 		);
 
 		// User role check
@@ -445,6 +530,7 @@ export class ConditionRegistry {
 				schema: {
 					roles: { type: "array", required: true },
 				},
+				examples: [{ type: "user_has_role", roles: ["admin", "editor"] }]
 			}
 		);
 
@@ -464,6 +550,7 @@ export class ConditionRegistry {
 				schema: {
 					types: { type: "array", required: true },
 				},
+				examples: [{ type: "entity_type", types: ["user", "group"] }]
 			}
 		);
 
@@ -501,7 +588,14 @@ export class ConditionRegistry {
 					limit: { type: "number", required: true },
 					window: { type: "number" },
 				},
-			}
+				examples: [
+					{
+						type: "is_rate_limited",
+						limit: 5,
+						window: 60000,
+					},
+				],
+			},
 		);
 
 		// Complex condition (AND/OR logic)
@@ -558,6 +652,23 @@ export class ConditionRegistry {
 					},
 					conditions: { type: "array", required: true },
 				},
+				examples: [
+					{
+						type: "evaluate_logical",
+						operator: "AND",
+						conditions: [
+							{
+								type: "property_equals",
+								property: "data.entity.status",
+								value: "active",
+							},
+							{
+								type: "user_has_role",
+								roles: ["editor"],
+							},
+						],
+					},
+				],
 			}
 		);
 	}
@@ -568,7 +679,7 @@ export class ConditionRegistry {
 	 * @param {string} path - The dot-notation path (e.g., 'data.user.id').
 	 * @returns {*} The value at the specified path, or undefined if not found.
 	 */
-	#getNestedProperty(obj, path) {
+	#getNestedProperty(obj, path) { // Already private, but good to confirm.
 		return path
 			.split(".")
 			.reduce(
@@ -585,70 +696,91 @@ export class ConditionRegistry {
 	 * @private
 	 * @param {object} schema - The JSON schema to validate against.
 	 * @returns {Function} A function that takes data and returns `{valid: boolean, errors: string[]}`.
+	 * @see {@link d:\Development Files\repositories\nodus\src\core\ConditionSchema.json}
 	 */
-	#createSimpleSchemaValidator(schema) {
-		// This is a simplified, non-recursive validator that handles the specific `if/then` structure of ConditionSchema.json
+	#createSimpleSchemaValidator(schema) { // Already private, but good to confirm.
+		// This is a simplified, non-recursive validator that handles the `allOf` > `if/then` structure of ConditionSchema.json
 		return (conditionDef) => {
 			const errors = [];
 
-			// Base validation: must be an object with a 'type' property
 			if (typeof conditionDef !== "object" || conditionDef === null) {
 				return {
 					valid: false,
 					errors: ["Condition must be an object."],
 				};
 			}
-			if (typeof conditionDef.type !== "string") {
-				return {
-					valid: false,
-					errors: [
-						"Condition must have a 'type' property of type string.",
-					],
-				};
+
+			// Validate base required properties from the schema root
+			for (const key of schema.required || []) {
+				if (conditionDef[key] === undefined) {
+					errors.push(`Missing required property: '${key}'.`);
+				}
 			}
 
-			// Find the correct 'then' block for the given type
-			let ruleSchema = null;
-			if (schema.if?.properties?.type?.const === conditionDef.type) {
-				ruleSchema = schema.then;
-			}
-			// In a real schema, you'd iterate through an `allOf` or `anyOf` array.
-			// Our schema uses a flat list of if/then, which is not standard but we can parse it.
-			// A more robust implementation would use a proper JSON Schema library, but this adheres to the "dependency-free" mandate.
+			// Find the matching conditional schema within 'allOf'
+			const conditionalSchema = schema.allOf?.find(
+				(s) => s.if?.properties?.type?.const === conditionDef.type
+			);
 
-			// A simple loop to find the matching rule based on our non-standard schema structure
-			// This is a placeholder for a more robust check that would parse the full schema.
-			// For now, we'll check the specific condition type.
-			const conditionType = conditionDef.type;
-			const conditionHandler = this.#conditions.get(conditionType);
-
-			if (conditionHandler && conditionHandler.schema) {
-				const specificSchema = conditionHandler.schema;
-				// Check required properties
-				if (specificSchema.required) {
-					for (const key of specificSchema.required) {
+			if (conditionalSchema) {
+				const { then: thenSchema } = conditionalSchema;
+				if (thenSchema) {
+					// Validate required properties for the specific type
+					for (const key of thenSchema.required || []) {
 						if (conditionDef[key] === undefined) {
 							errors.push(
-								`Missing required property: '${key}' for type '${conditionType}'`
+								`Missing required property for type '${conditionDef.type}': '${key}'.`
 							);
 						}
 					}
-				}
 
-				// Check property types and enums
-				for (const key in specificSchema) {
-					if (conditionDef[key] !== undefined) {
-						const schemaProp = specificSchema[key];
-						if (
-							schemaProp.type &&
-							typeof conditionDef[key] !== schemaProp.type
-						) {
-							errors.push(
-								`Property '${key}' must be of type ${schemaProp.type}`
-							);
+					// Validate property types and enums
+					for (const key in thenSchema.properties || {}) {
+						if (conditionDef[key] !== undefined) {
+							const propSchema = thenSchema.properties[key];
+							const value = conditionDef[key];
+
+							// Type check
+							if (
+								propSchema.type &&
+								typeof value !== propSchema.type &&
+								!(
+									propSchema.type === "array" &&
+									Array.isArray(value)
+								)
+							) {
+								errors.push(
+									`Property '${key}' must be of type '${propSchema.type}', but received '${typeof value}'.`
+								);
+							}
+
+							// Enum check
+							if (
+								propSchema.enum &&
+								!propSchema.enum.includes(value)
+							) {
+								errors.push(
+									`Property '${key}' must be one of [${propSchema.enum.join(", ")}], but received '${value}'.`
+								);
+							}
+
+							// Pattern check
+							if (
+								propSchema.pattern &&
+								!new RegExp(propSchema.pattern).test(value)
+							) {
+								errors.push(
+									`Property '${key}' must match pattern: /${propSchema.pattern}/.`
+								);
+							}
 						}
 					}
 				}
+			} else if (conditionDef.type) {
+				// If a type is provided but no matching schema is found in allOf
+				errors.push(
+					`Unknown or un-schematized condition type: '${conditionDef.type}'.`
+				);
 			}
 
 			return {
@@ -686,16 +818,14 @@ export class ConditionRegistry {
 	 * @returns {object[]} An array of objects, each describing a registered condition.
 	 */
 	getAvailableConditions() {
-		return Array.from(this.#conditions.entries()).map(
-			([type, condition]) => ({
-				type,
-				description: condition.description,
-				schema: condition.schema,
-				examples: condition.examples,
-				async: condition.async,
-				cacheable: condition.cacheable,
-			})
-		);
+		return Array.from(this.#conditions.values()).map((condition) => ({
+			type: condition.type,
+			description: condition.description,
+			schema: condition.schema,
+			examples: condition.examples,
+			async: condition.async,
+			cacheable: condition.cacheable,
+		}));
 	}
 
 	/**
@@ -703,11 +833,10 @@ export class ConditionRegistry {
 	 * @returns {object} An object containing metrics like evaluation counts and cache hit rate.
 	 */
 	getStatistics() {
-		const stats = this.#metrics?.getAllAsObject() || {};
 		return {
-			...stats,
+			...(this.#metrics?.getAllAsObject() || {}),
 			totalConditions: this.#conditions.size,
-			cacheSize: this.#conditionCache?.size || 0,
+			cacheSize: this.#conditionCache?.size ?? 0,
 		};
 	}
 
@@ -717,6 +846,7 @@ export class ConditionRegistry {
 	clearCache() {
 		this.#conditionCache?.clear();
 		this.#rateLimitStore.clear();
+		this.#metrics?.increment("cacheClears");
 	}
 
 	/**
@@ -726,36 +856,6 @@ export class ConditionRegistry {
 	 */
 	unregister(conditionType) {
 		return this.#conditions.delete(conditionType);
-	}
-
-	/**
-	 * Creates a condition evaluator from an entity definition.
-	 * @static
-	 * @param {object} entity - The entity representing a condition definition.
-	 * @returns {object} A condition object with an evaluator function.
-	 */
-	static fromEntity(entity) {
-		if (
-			entity.domain !== "system" ||
-			entity.type !== "condition_definition"
-		) {
-			throw new Error("Invalid entity for condition definition");
-		}
-
-		const conditionDef = entity.data;
-
-		// Create evaluator function from definition
-		const evaluator = (conditionParams, context, options) =>
-			// Implementation would depend on the condition definition format
-			// This is a placeholder for entity-driven condition definitions
-			true;
-		return {
-			type: conditionDef.type,
-			evaluator,
-			description: conditionDef.description,
-			schema: conditionDef.schema,
-			cacheable: conditionDef.cacheable,
-		};
 	}
 }
 

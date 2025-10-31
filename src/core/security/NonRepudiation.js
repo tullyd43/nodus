@@ -8,31 +8,48 @@
 import { DateCore } from "@utils/DateUtils.js";
 
 /**
+ * @privateFields {#stateManager, #keyring, #errorHelpers, #metrics, #keyPair, #initializationPromise}
+ */
+/**
  * Provides a mechanism for creating non-repudiable records of user actions.
  * This is a critical security feature for audit trails and compliance, ensuring that
  * an action can be cryptographically proven to have been initiated by a specific user
  * at a specific time. It directly supports the **Compliance** pillar of the development philosophy.
  */
 export class NonRepudiation {
-	/** @private @type {import('../HybridStateManager.js').default|null} */
+	/** @private @type {import('../HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('./Keyring.js').InMemoryKeyring|null} */
+	#keyring = null;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
 	/** @private @type {CryptoKeyPair | null} */
 	#keyPair = null;
 	/** @private @type {Promise<void> | null} */
 	#initializationPromise = null;
-	/** @private @type {import('./ClassificationCrypto.js').ClassificationCrypto|null} */
-	#crypto = null;
 
 	/**
 	 * @param {object} context - The application context.
 	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
 	constructor({ stateManager }) {
-		this.#crypto = stateManager?.storage?.instance?._crypto ?? null;
-		if (!this.#crypto?.keyring) {
-			throw new Error(
-				"[NonRepudiation] A crypto instance with a keyring is required."
-			);
-		}
+		this.#stateManager = stateManager;
+	}
+
+	/**
+	 * Initializes the service by deriving dependencies and preparing the signing key.
+	 * This follows Mandate 1.2 for service initialization.
+	 */
+	initialize() {
+		const managers = this.#stateManager.managers;
+		this.#keyring = managers?.keyring ?? null;
+		this.#errorHelpers = managers?.errorHelpers ?? null;
+		this.#metrics = this.#stateManager.metricsRegistry?.namespace(
+			"security.nonRepudiation"
+		);
+
 		this.#initializationPromise = this.#initializeKeys("system-audit");
 	}
 
@@ -43,19 +60,19 @@ export class NonRepudiation {
 	 * @returns {Promise<void>}
 	 */
 	async #initializeKeys(domain) {
-		try {
-			// Use the keyring to derive a stable signing key.
-			// This ensures the same key is used across sessions for the same domain.
-			this.#keyPair = await this.#crypto.keyring.derive(
-				"signing",
-				domain
-			);
-		} catch (error) {
-			console.error(
-				"[NonRepudiation] Failed to generate signing keys:",
-				error
-			);
-		}
+		return this.#errorHelpers?.tryAsync(
+			async () => {
+				if (!this.#keyring) {
+					throw new Error(
+						"[NonRepudiation] Keyring service is not available."
+					);
+				}
+				// Use the keyring to derive a stable signing key.
+				// This ensures the same key is used across sessions for the same domain.
+				this.#keyPair = await this.#keyring.derive("signing", domain);
+			},
+			{ component: "NonRepudiation", operation: "initializeKeys" }
+		);
 	}
 
 	/**
@@ -87,70 +104,97 @@ export class NonRepudiation {
 	 * @returns {Promise<{signature: string, algorithm: string, timestamp: string}>} A promise that resolves to an object containing the signature, the algorithm used (currently a stub), and an ISO 8601 timestamp.
 	 */
 	async signAction({ userId, action, label }) {
-		await this.#ensureInitialized();
+		return this.#errorHelpers?.tryAsync(
+			async () => {
+				await this.#ensureInitialized();
 
-		const payload = JSON.stringify({
-			userId,
-			action,
-			label,
-			ts: DateCore.now(), // V8.0 Parity: Use ISO 8601 timestamp for consistency.
-		});
+				const payload = JSON.stringify({
+					userId,
+					action,
+					label,
+					ts: DateCore.now(), // V8.0 Parity: Use ISO 8601 timestamp for consistency.
+				});
 
-		const encodedPayload = new TextEncoder().encode(payload);
-		const signatureBuffer = await crypto.subtle.sign(
-			{
-				name: "ECDSA",
-				hash: { name: "SHA-256" },
+				const encodedPayload = new TextEncoder().encode(payload);
+				const signatureBuffer = await crypto.subtle.sign(
+					{
+						name: "ECDSA",
+						hash: { name: "SHA-384" }, // V8.0 Parity: Use stronger hash algorithm consistent with key curve.
+					},
+					this.#keyPair.privateKey,
+					encodedPayload
+				);
+
+				// Convert the signature to a Base64 string for storage/transmission.
+				const signature = btoa(
+					String.fromCharCode(...new Uint8Array(signatureBuffer))
+				);
+
+				this.#metrics?.increment("sign.action");
+
+				return {
+					signature,
+					algorithm: "ECDSA-P384-SHA384",
+					timestamp: DateCore.now(),
+				};
 			},
-			this.#keyPair.privateKey,
-			encodedPayload
+			{
+				component: "NonRepudiation",
+				operation: "signAction",
+				context: { userId, actionType: action?.type },
+			}
 		);
-
-		// Convert the signature to a Base64 string for storage/transmission.
-		const signature = btoa(
-			String.fromCharCode(...new Uint8Array(signatureBuffer))
-		);
-
-		return {
-			signature,
-			algorithm: "ECDSA-P256-SHA256",
-			timestamp: DateCore.now(),
-		};
 	}
 
 	/**
 	 * Verifies a digital signature against a payload.
 	 * @param {string} signature - The Base64-encoded signature.
 	 * @param {object} payload - The original payload object that was signed.
+	 * @param {CryptoKey} [publicKey] - Optional public key to use for verification. Defaults to the instance's key.
 	 * @returns {Promise<boolean>} A promise that resolves to true if the signature is valid, false otherwise.
 	 */
-	async verifySignature(signature, payload) {
-		await this.#ensureInitialized();
+	async verifySignature(signature, payload, publicKey) {
+		return (
+			this.#errorHelpers?.tryAsync(
+				async () => {
+					await this.#ensureInitialized();
 
-		try {
-			const signatureBuffer = Uint8Array.from(atob(signature), (c) =>
-				c.charCodeAt(0)
-			);
-			const encodedPayload = new TextEncoder().encode(
-				JSON.stringify(payload)
-			);
+					const keyToUse = publicKey || this.#keyPair.publicKey;
+					if (!keyToUse) {
+						throw new Error(
+							"Public key for verification is not available."
+						);
+					}
 
-			return await crypto.subtle.verify(
-				{
-					name: "ECDSA",
-					hash: { name: "SHA-256" },
+					const signatureBuffer = Uint8Array.from(
+						atob(signature),
+						(c) => c.charCodeAt(0)
+					);
+					const encodedPayload = new TextEncoder().encode(
+						JSON.stringify(payload)
+					);
+
+					const isValid = await crypto.subtle.verify(
+						{
+							name: "ECDSA",
+							hash: { name: "SHA-384" },
+						},
+						keyToUse,
+						signatureBuffer,
+						encodedPayload
+					);
+
+					this.#metrics?.increment("verify.signature", {
+						result: isValid,
+					});
+					return isValid;
 				},
-				this.#keyPair.publicKey,
-				signatureBuffer,
-				encodedPayload
-			);
-		} catch (error) {
-			console.error(
-				"[NonRepudiation] Signature verification failed:",
-				error
-			);
-			return false;
-		}
+				{
+					component: "NonRepudiation",
+					operation: "verifySignature",
+				}
+			) ?? false
+		); // Return false on any error
 	}
 
 	/**
@@ -165,57 +209,72 @@ export class NonRepudiation {
 	 * @returns {Promise<{signature: string, certFingerprint: string, algorithm: string, timestamp: string}>} A promise that resolves with the signature and certificate info.
 	 */
 	async signWithCertificate({ action, userCert }) {
-		if (!userCert || !userCert.subject || !userCert.domain) {
-			throw new Error("A valid user certificate object is required.");
-		}
+		return this.#errorHelpers?.tryAsync(
+			async () => {
+				if (!userCert || !userCert.subject || !userCert.domain) {
+					throw new Error(
+						"A valid user certificate object is required."
+					);
+				}
 
-		// 1. Derive a user-specific signing key from the keyring using the cert's domain.
-		// In a real system, this might involve interacting with a hardware token or OS keystore.
-		const userKeyPair = await this.#crypto.keyring.derive(
-			"signing",
-			userCert.domain
+				// 1. Derive a user-specific signing key from the keyring using the cert's domain.
+				const userKeyPair = await this.#keyring.derive(
+					"signing",
+					userCert.domain
+				);
+
+				if (!userKeyPair?.privateKey) {
+					throw new Error(
+						`Could not derive signing key for certificate domain: ${userCert.domain}`
+					);
+				}
+
+				// 2. Create the payload to be signed.
+				const payload = JSON.stringify({
+					subject: userCert.subject,
+					action,
+					ts: DateCore.timestamp(),
+				});
+
+				// 3. Sign the payload with the user-specific private key.
+				const encodedPayload = new TextEncoder().encode(payload);
+				const signatureBuffer = await crypto.subtle.sign(
+					{ name: "ECDSA", hash: { name: "SHA-384" } },
+					userKeyPair.privateKey,
+					encodedPayload
+				);
+
+				const signature = btoa(
+					String.fromCharCode(...new Uint8Array(signatureBuffer))
+				);
+
+				// 4. Generate a mock fingerprint for the certificate.
+				const certHashBuffer = await crypto.subtle.digest(
+					"SHA-256",
+					new TextEncoder().encode(JSON.stringify(userCert))
+				);
+				const certHashHex = Array.from(new Uint8Array(certHashBuffer))
+					.map((b) => b.toString(16).padStart(2, "0"))
+					.join("");
+				const certFingerprint = `sha256:${certHashHex}`;
+
+				this.#metrics?.increment("sign.with_cert");
+
+				return {
+					signature,
+					certFingerprint,
+					algorithm: "ECDSA-P384-SHA384",
+					timestamp: DateCore.now(),
+				};
+			},
+			{
+				component: "NonRepudiation",
+				operation: "signWithCertificate",
+				context: {
+					subject: userCert?.subject,
+					domain: userCert?.domain,
+				},
+			}
 		);
-
-		if (!userKeyPair?.privateKey) {
-			throw new Error(
-				`Could not derive signing key for certificate domain: ${userCert.domain}`
-			);
-		}
-
-		// 2. Create the payload to be signed.
-		const payload = JSON.stringify({
-			subject: userCert.subject,
-			action,
-			ts: DateCore.timestamp(),
-		});
-
-		// 3. Sign the payload with the user-specific private key.
-		const encodedPayload = new TextEncoder().encode(payload);
-		const signatureBuffer = await crypto.subtle.sign(
-			{ name: "ECDSA", hash: { name: "SHA-256" } },
-			userKeyPair.privateKey,
-			encodedPayload
-		);
-
-		const signature = btoa(
-			String.fromCharCode(...new Uint8Array(signatureBuffer))
-		);
-
-		// 4. Generate a mock fingerprint for the certificate.
-		const certHashBuffer = await crypto.subtle.digest(
-			"SHA-256",
-			new TextEncoder().encode(JSON.stringify(userCert))
-		);
-		const certHashHex = Array.from(new Uint8Array(certHashBuffer))
-			.map((b) => b.toString(16).padStart(2, "0"))
-			.join("");
-		const certFingerprint = `sha256:${certHashHex}`;
-
-		return {
-			signature,
-			certFingerprint,
-			algorithm: "ECDSA-P256-SHA256",
-			timestamp: DateCore.now(),
-		};
 	}
 }

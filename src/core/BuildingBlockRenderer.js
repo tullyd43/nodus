@@ -6,15 +6,19 @@ import RenderContext from "./RenderContext.js";
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles on composability.
  */
 
-
-
 /**
  * @class BuildingBlockRenderer
- * @classdesc A pure, composable rendering system that builds UI from registered building blocks.
+ * @classdesc A pure, composable rendering system that builds UI from registered building blocks. It is responsible for interpreting declarative composition objects and rendering them into DOM elements.
+ * @class BuildingBlockRenderer
+ * @privateFields {#componentRegistry, #metrics, #errorHelpers}
  */
 export class BuildingBlockRenderer {
-	/** @private @type {import('./ComponentDefinition.js').ComponentDefinitionRegistry|null} */
+	/** @private @type {import('./ComponentDefinition.js').ComponentDefinitionRegistry} */
 	#componentRegistry;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers;
 
 	/**
 	 * @class
@@ -22,8 +26,12 @@ export class BuildingBlockRenderer {
 	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
 	constructor({ stateManager }) {
-		// V8.0 Parity: Directly store the required manager.
+		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from the stateManager.
 		this.#componentRegistry = stateManager.managers.componentRegistry;
+		this.#metrics = stateManager.metricsRegistry?.namespace(
+			"buildingBlockRenderer"
+		);
+		this.#errorHelpers = stateManager.managers.errorHelpers;
 	}
 
 	/**
@@ -34,23 +42,35 @@ export class BuildingBlockRenderer {
 	 * @returns {HTMLElement}
 	 */
 	render(composition, context = {}) {
-		if (typeof composition === "string") {
-			// Single block
-			return this.renderBlock(composition, context);
-		}
+		return this.#errorHelpers.tryOr(
+			() => {
+				this.#metrics?.increment("compositionsRendered");
 
-		if (Array.isArray(composition)) {
-			// List of blocks
-			return this.renderSequence(composition, context);
-		}
+				if (typeof composition === "string") {
+					// Single block
+					return this.#renderBlock(composition, context);
+				}
 
-		if (composition.layout) {
-			// Layout with blocks
-			return this.renderLayout(composition, context);
-		}
+				if (Array.isArray(composition)) {
+					// List of blocks
+					return this.#renderSequence(composition, context);
+				}
 
-		// Direct composition object
-		return this.renderComposition(composition, context);
+				if (composition?.layout) {
+					// Layout with blocks
+					return this.#renderLayout(composition, context);
+				}
+
+				// Direct composition object
+				return this.#renderComposition(composition, context);
+			},
+			(error) => {
+				this.#metrics?.increment("renderErrors");
+				return this.#createErrorElement(
+					`Composition failed: ${error.message}`
+				);
+			}
+		);
 	}
 
 	/**
@@ -61,35 +81,40 @@ export class BuildingBlockRenderer {
 	 * @param {object} [context={}] - The rendering context.
 	 * @returns {HTMLElement}
 	 */
-	renderBlock(blockId, context = {}) {
+	#renderBlock(blockId, context = {}) {
 		const block = this.#componentRegistry?.get(blockId);
 		if (!block) {
-			return this.createErrorElement(`Block not found: ${blockId}`);
+			return this.#createErrorElement(`Block not found: ${blockId}`);
 		}
 
-		try {
-			// V8.0 Parity: Use the full RenderContext to ensure blocks have access to all system state.
-			// The context needs the stateManager, which we can get from the componentRegistry.
-			const renderContext = new RenderContext({
-				stateManager: this.#componentRegistry?.stateManager,
-				...context, // Pass through any existing context properties
-				blockId,
-				config: { ...block.config, ...context.config },
-			});
+		return this.#errorHelpers.tryOr(
+			() => {
+				// V8.0 Parity: Use the full RenderContext to ensure blocks have access to all system state.
+				// The context needs the stateManager, which we can get from the componentRegistry.
+				const renderContext = new RenderContext({
+					stateManager: this.#componentRegistry?.stateManager,
+					...context, // Pass through any existing context properties
+					blockId,
+					config: { ...block.config, ...context.config },
+				});
 
-			if (typeof block.render === "function") {
-				return block.render(renderContext);
-			} else if (typeof block.render === "string") {
-				return this.renderTemplate(block.render, renderContext);
+				if (typeof block.render === "function") {
+					return block.render(renderContext);
+				} else if (typeof block.render === "string") {
+					return this.#renderTemplate(block.render, renderContext);
+				}
+
+				return this.#createErrorElement(
+					`Invalid render method for ${blockId}`
+				);
+			},
+			(error) => {
+				console.error(`Error rendering block ${blockId}:`, error);
+				return this.#createErrorElement(
+					`Render error: ${error.message}`
+				);
 			}
-
-			return this.createErrorElement(
-				`Invalid render method for ${blockId}`
-			);
-		} catch (error) {
-			console.error(`Error rendering block ${blockId}:`, error);
-			return this.createErrorElement(`Render error: ${error.message}`);
-		}
+		);
 	}
 
 	/**
@@ -100,7 +125,7 @@ export class BuildingBlockRenderer {
 	 * @param {object} [context={}] - The rendering context.
 	 * @returns {HTMLElement}
 	 */
-	renderSequence(blocks, context = {}) {
+	#renderSequence(blocks, context = {}) {
 		const container = document.createElement("div");
 		container.className = "block-sequence";
 
@@ -113,9 +138,9 @@ export class BuildingBlockRenderer {
 
 			let element;
 			if (typeof blockConfig === "string") {
-				element = this.renderBlock(blockConfig, blockContext);
+				element = this.#renderBlock(blockConfig, blockContext);
 			} else {
-				element = this.render(blockConfig, blockContext);
+				element = this.render(blockConfig, blockContext); // Recurse with public render
 			}
 
 			if (element) {
@@ -134,18 +159,19 @@ export class BuildingBlockRenderer {
 	 * @param {object} [context={}] - The rendering context.
 	 * @returns {HTMLElement}
 	 */
-	renderLayout(composition, context = {}) {
+	#renderLayout(composition, context = {}) {
 		const { layout, blocks = [], config = {} } = composition;
 
 		const container = document.createElement("div");
 		container.className = `layout-${layout}`;
 
 		// Apply layout styles
-		this.applyLayoutStyles(container, layout, config);
+		this.#applyLayoutStyles(container, layout, config);
 
 		// Render blocks within layout
 		blocks.forEach((blockConfig, index) => {
 			const blockElement = this.render(blockConfig, {
+				// Recurse with public render
 				...context,
 				layoutIndex: index,
 				layoutType: layout,
@@ -154,7 +180,7 @@ export class BuildingBlockRenderer {
 			if (blockElement) {
 				// Apply positioning if specified
 				if (blockConfig.position) {
-					this.applyPositioning(blockElement, blockConfig.position);
+					this.#applyPositioning(blockElement, blockConfig.position);
 				}
 				container.appendChild(blockElement);
 			}
@@ -171,7 +197,7 @@ export class BuildingBlockRenderer {
 	 * @param {object} [context={}] - The rendering context.
 	 * @returns {HTMLElement}
 	 */
-	renderComposition(composition, context = {}) {
+	#renderComposition(composition, context = {}) {
 		const {
 			type = "div",
 			className = "",
@@ -201,7 +227,7 @@ export class BuildingBlockRenderer {
 
 		// Render children
 		children.forEach((child) => {
-			const childElement = this.render(child, context);
+			const childElement = this.render(child, context); // Recurse with public render
 			if (childElement) {
 				element.appendChild(childElement);
 			}
@@ -219,7 +245,7 @@ export class BuildingBlockRenderer {
 	 * @param {object} config - The configuration for the layout.
 	 * @returns {void}
 	 */
-	applyLayoutStyles(container, layout, config) {
+	#applyLayoutStyles(container, layout, config) {
 		const layoutStyles = {
 			grid: {
 				display: "grid",
@@ -253,7 +279,7 @@ export class BuildingBlockRenderer {
 	 * @param {object} position - The positioning configuration.
 	 * @returns {void}
 	 */
-	applyPositioning(element, position) {
+	#applyPositioning(element, position) {
 		if (position.grid) {
 			element.style.gridColumn = `${position.grid.column} / span ${position.grid.width || 1}`;
 			element.style.gridRow = `${position.grid.row} / span ${position.grid.height || 1}`;
@@ -286,34 +312,31 @@ export class BuildingBlockRenderer {
 	 * @param {object} context - The data to inject into the template.
 	 * @returns {HTMLElement}
 	 */
-	renderTemplate(template, context) {
+	#renderTemplate(template, context) {
 		let rendered = template;
 
 		// Variable substitution
 		rendered = rendered.replace(
 			/\{\{(\w+(?:\.\w+)*)\}\}/g,
 			(match, path) => {
-				const value = this.getNestedValue(context, path);
+				const value = this.#getNestedValue(context, path);
 				return value !== undefined ? value : "";
 			}
 		);
 
-		// V8.0 Parity: Use DOMParser for safer HTML creation in browser environments.
-		// Fallback for server-side rendering (SSR) or environments where DOMParser is not available.
+		// V8.0 Parity: Mandate 2.1 - Use DOMParser exclusively for safer HTML creation.
+		// The insecure `innerHTML` fallback is strictly forbidden.
 		if (typeof DOMParser !== "undefined") {
 			const parser = new DOMParser();
 			const doc = parser.parseFromString(rendered, "text/html");
 			const element = doc.body.firstChild;
 
-			// If the template resulted in a single element, return it directly.
-			// Otherwise, return a fragment containing all top-level elements.
 			return doc.body.children.length === 1 ? element : doc.body;
 		} else {
-			// Fallback for non-browser environments.
-			// WARNING: This is less secure and should be used with trusted templates.
-			const wrapper = document.createElement("div");
-			wrapper.innerHTML = rendered;
-			return wrapper.children.length === 1 ? wrapper.firstChild : wrapper;
+			// If DOMParser is not available (e.g., non-browser env), throw an error.
+			throw new Error(
+				"DOMParser is not available. Cannot render HTML template securely."
+			);
 		}
 	}
 
@@ -325,7 +348,7 @@ export class BuildingBlockRenderer {
 	 * @param {string} path - The dot-notation path to the value.
 	 * @returns {*} The nested value, or undefined if not found.
 	 */
-	getNestedValue(obj, path) {
+	#getNestedValue(obj, path) {
 		return path
 			.split(".")
 			.reduce(
@@ -344,7 +367,7 @@ export class BuildingBlockRenderer {
 	 * @param {string} message - The error message to display.
 	 * @returns {HTMLElement}
 	 */
-	createErrorElement(message) {
+	#createErrorElement(message) {
 		const error = document.createElement("div");
 		error.className = "render-error";
 		error.style.cssText = `
@@ -357,113 +380,6 @@ export class BuildingBlockRenderer {
     `;
 		error.textContent = message;
 		return error;
-	}
-
-	/**
-	 * @function createModal
-	 * @description Creates a modal building block.
-	 * @public
-	 * @param {Array|object} content - The content of the modal.
-	 * @param {object} [config={}] - Configuration for the modal.
-	 * @returns {object} A composition object representing the modal.
-	 */
-	createModal(content, config = {}) {
-		const modal = {
-			type: "div",
-			className: "modal-overlay",
-			style: {
-				position: "fixed",
-				top: "0",
-				left: "0",
-				width: "100%",
-				height: "100%",
-				backgroundColor: "rgba(0,0,0,0.5)",
-				display: "flex",
-				alignItems: "center",
-				justifyContent: "center",
-				zIndex: "1000",
-			},
-			events: {
-				click: (e) => {
-					if (e.target === e.currentTarget && config.onClose) {
-						config.onClose();
-					}
-				},
-			},
-			children: [
-				{
-					type: "div",
-					className: "modal-content",
-					style: {
-						backgroundColor: "white",
-						borderRadius: "8px",
-						padding: "24px",
-						maxWidth: config.maxWidth || "600px",
-						maxHeight: config.maxHeight || "80vh",
-						overflow: "auto",
-						...config.style,
-					},
-					children: Array.isArray(content) ? content : [content],
-				},
-			],
-		};
-
-		return modal;
-	}
-
-	/**
-	 * @function createButton
-	 * @description Creates a button building block.
-	 * @public
-	 * @param {string} text - The text content of the button.
-	 * @param {object} [config={}] - Configuration for the button.
-	 * @returns {object} A composition object representing the button.
-	 */
-	createButton(text, config = {}) {
-		return {
-			type: "button",
-			className: `btn ${config.variant || "primary"}`,
-			style: {
-				padding: "8px 16px",
-				border: "none",
-				borderRadius: "4px",
-				cursor: "pointer",
-				backgroundColor:
-					config.variant === "secondary" ? "#6c757d" : "#007bff",
-				color: "white",
-				...config.style,
-			},
-			textContent: text,
-			events: {
-				click: config.onClick || (() => {}),
-			},
-		};
-	}
-
-	/**
-	 * @function createInput
-	 * @description Creates an input building block.
-	 * @public
-	 * @param {object} [config={}] - Configuration for the input.
-	 * @returns {object} A composition object representing the input.
-	 */
-	createInput(config = {}) {
-		return {
-			type: "input",
-			className: "form-input",
-			style: {
-				padding: "8px 12px",
-				border: "1px solid #ddd",
-				borderRadius: "4px",
-				...config.style,
-			},
-			placeholder: config.placeholder || "",
-			value: config.value || "",
-			events: {
-				input: config.onInput || (() => {}),
-				change: config.onChange || (() => {}),
-			},
-		};
 	}
 
 	/**

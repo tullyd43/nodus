@@ -6,6 +6,9 @@
  * It enforces "no read up" and "no write down" rules based on security levels and compartments.
  * This ensures that information flows only in authorized directions within the security lattice.
  */
+/**
+ * @privateFields {#stateManager, #securityManager, #errorHelpers, #metrics, #cache}
+ */
 export class MACEngine {
 	/**
 	 * An ordered array of security classification levels, from lowest to highest.
@@ -33,19 +36,62 @@ export class MACEngine {
 
 	/**
 	 * @private
-	 * @type {import('./SecurityManager.js').default|null}
+	 * @type {import('../HybridStateManager.js').default}
+	 */
+	#stateManager;
+
+	/**
+	 * @private
+	 * @type {import('./SecurityManager.js').SecurityManager|null}
 	 */
 	#securityManager = null;
 
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+
+	/** @private @type {import('../../managers/CacheManager.js').LRUCache|null} */
+	#cache = null;
+
 	/**
 	 * Creates an instance of the MACEngine.
-	 * @param {object} config - The configuration object for the engine.
-	 * @param {import('../HybridStateManager.js').default} config.stateManager - The main state manager instance.
+	 * @param {object} context - The application context.
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
 	constructor({ stateManager }) {
-		// V8.0 Parity: The MACEngine depends on the SecurityManager to get subject and object labels.
-		// It is derived from the stateManager to ensure the correct instance is used.
-		this.#securityManager = stateManager?.managers?.securityManager ?? null;
+		this.#stateManager = stateManager;
+	}
+
+	/**
+	 * Initializes the MACEngine by deriving its dependencies from the state manager.
+	 * This follows Mandate 1.2 for service initialization.
+	 */
+	initialize() {
+		const managers = this.#stateManager.managers;
+		// V8.0 Parity: The MACEngine depends on the SecurityManager to get subject/object labels.
+		this.#securityManager = managers?.securityManager ?? null;
+		this.#errorHelpers = managers?.errorHelpers ?? null;
+		this.#metrics = this.#stateManager.metricsRegistry?.namespace("mac");
+
+		// Mandate 4.1: All caches MUST be bounded.
+		// This cache memoizes MAC check results to avoid re-computation in hot paths.
+		this.#cache = managers.cacheManager.getCache("macChecks", {
+			maxSize: 1024,
+		});
+
+		// V8.0 Parity: Mandate 4.3 - Apply performance measurement decorator to critical methods.
+		// This standardizes metric collection for hot paths.
+		const measure = (fn, name) =>
+			this.#metrics?.measure(name, { component: "MACEngine" })(
+				fn.bind(this)
+			);
+
+		if (this.#metrics) {
+			this.canRead = measure(this.canRead, "canRead");
+			this.canWrite = measure(this.canWrite, "canWrite");
+		}
 	}
 
 	/**
@@ -57,14 +103,31 @@ export class MACEngine {
 	 * @returns {boolean} True if the read operation is permitted, false otherwise.
 	 */
 	canRead(subject, object) {
+		// The @measure decorator handles timing and call counts.
+		const cacheKey = `read::${this.#getCacheKey(subject, object)}`;
+		if (this.#cache?.has(cacheKey)) {
+			this.#metrics?.increment("canRead.cache_hit");
+			return this.#cache.get(cacheKey);
+		}
+
 		const sl = MACEngine.#rank(subject.level);
 		const ol = MACEngine.#rank(object.level);
-		if (sl < 0 || ol < 0) return false;
-		if (sl < ol) return false;
-		return this.#isSuperset(
-			subject.compartments,
-			object.compartments ?? new Set()
-		);
+
+		let result = false;
+		if (sl >= 0 && ol >= 0 && sl >= ol) {
+			result = this.#isSuperset(
+				subject.compartments,
+				object.compartments ?? new Set()
+			);
+		}
+
+		this.#cache?.set(cacheKey, result);
+		this.#metrics?.increment("decision.read", {
+			result,
+			subject_level: subject.level,
+			object_level: object.level,
+		});
+		return result;
 	}
 
 	/**
@@ -76,13 +139,31 @@ export class MACEngine {
 	 * @returns {boolean} True if the write operation is permitted, false otherwise.
 	 */
 	canWrite(subject, object) {
+		// The @measure decorator handles timing and call counts.
+		const cacheKey = `write::${this.#getCacheKey(subject, object)}`;
+		if (this.#cache?.has(cacheKey)) {
+			this.#metrics?.increment("canWrite.cache_hit");
+			return this.#cache.get(cacheKey);
+		}
+
 		const sl = MACEngine.#rank(subject.level);
 		const ol = MACEngine.#rank(object.level);
-		if (sl > ol) return false;
-		return this.#isSubset(
-			subject.compartments,
-			object.compartments ?? new Set()
-		);
+
+		let result = false;
+		if (sl >= 0 && ol >= 0 && sl <= ol) {
+			result = this.#isSubset(
+				subject.compartments,
+				object.compartments ?? new Set()
+			);
+		}
+
+		this.#cache?.set(cacheKey, result);
+		this.#metrics?.increment("decision.write", {
+			result,
+			subject_level: subject.level,
+			object_level: object.level,
+		});
+		return result;
 	}
 
 	/**
@@ -92,7 +173,20 @@ export class MACEngine {
 	 * @throws {Error} If the read operation is denied ("MAC_DENY_READ").
 	 */
 	enforceNoReadUp(subject, object) {
-		if (!this.canRead(subject, object)) throw new Error("MAC_DENY_READ");
+		if (!this.canRead(subject, object)) {
+			const error = new Error(
+				"MAC Policy Violation: Read access denied."
+			);
+			error.code = "MAC_DENY_READ";
+			// V8.0 Parity: Mandate 5.1 - Report specific errors for better diagnostics.
+			this.#errorHelpers?.report(error, {
+				component: "MACEngine",
+				operation: "enforceNoReadUp",
+				subject,
+				object,
+			});
+			throw error;
+		}
 	}
 
 	/**
@@ -102,7 +196,20 @@ export class MACEngine {
 	 * @throws {Error} If the write operation is denied ("MAC_DENY_WRITE").
 	 */
 	enforceNoWriteDown(subject, object) {
-		if (!this.canWrite(subject, object)) throw new Error("MAC_DENY_WRITE");
+		if (!this.canWrite(subject, object)) {
+			const error = new Error(
+				"MAC Policy Violation: Write access denied."
+			);
+			error.code = "MAC_DENY_WRITE";
+			// V8.0 Parity: Mandate 5.1 - Report specific errors for better diagnostics.
+			this.#errorHelpers?.report(error, {
+				component: "MACEngine",
+				operation: "enforceNoWriteDown",
+				subject,
+				object,
+			});
+			throw error;
+		}
 	}
 
 	/**
@@ -160,6 +267,19 @@ export class MACEngine {
 		const setB = b ?? new Set();
 		for (const x of setA) if (!setB.has(x)) return false;
 		return true;
+	}
+
+	/**
+	 * Generates a canonical cache key from subject and object labels.
+	 * @param {object} subject - The subject's security label.
+	 * @param {object} object - The object's security label.
+	 * @returns {string} A stable cache key.
+	 * @private
+	 */
+	#getCacheKey(subject, object) {
+		const sComp = [...(subject.compartments ?? [])].sort().join("+");
+		const oComp = [...(object.compartments ?? [])].sort().join("+");
+		return `${subject.level}|${sComp}::${object.level}|${oComp}`;
 	}
 }
 

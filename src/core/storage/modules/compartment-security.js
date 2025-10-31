@@ -9,16 +9,22 @@
  * inclusion in specific compartments. It supports inheritance (e.g., access to NATO
  * implies access to NATO_RESTRICTED) and complex rule evaluation.
  *
+ * @privateFields {#stateManager, #compartmentRules, #inheritanceGraph, #options, #securityManager, #forensicLogger, #metrics}
  * @module CompartmentSecurity
  */
 export default class CompartmentSecurity {
+	/** @private @type {import('../../HybridStateManager.js').default} */
+	#stateManager;
 	/** @private @type {Map<string, object>} */
 	#compartmentRules = new Map();
-	/** @private @type {Map<string, Set<string>>} */
-	#inheritanceGraph = new Map();
+	/**
+	 * @private
+	 * @description V8.0 Parity: Mandate 4.1 - Use a bounded cache for the inheritance graph to prevent memory leaks.
+	 * @type {import('../../../utils/LRUCache.js').LRUCache|null}
+	 */
+	#inheritanceGraph = null;
 	/** @private @type {object} */
 	#options;
-
 	/** @private @type {import('../../security/SecurityManager.js').default|null} */
 	#securityManager = null;
 	/** @private @type {import('../../ForensicLogger.js').default|null} */
@@ -36,10 +42,11 @@ export default class CompartmentSecurity {
 	 * @param {object} [context.options={}] - Configuration options for the module.
 	 */
 	constructor({ stateManager, options = {} }) {
+		this.#stateManager = stateManager;
 		// V8.0 Parity: Derive dependencies from the stateManager.
-		this.#securityManager = stateManager?.managers?.securityManager;
-		this.#forensicLogger = stateManager?.managers?.forensicLogger;
-		this.#metrics = stateManager?.metricsRegistry?.namespace(
+		this.#securityManager = this.#stateManager?.managers?.securityManager;
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
+		this.#metrics = this.#stateManager?.metricsRegistry?.namespace(
 			"compartmentSecurity"
 		);
 
@@ -56,6 +63,12 @@ export default class CompartmentSecurity {
 	 * @returns {Promise<this>} The initialized instance.
 	 */
 	async init() {
+		// V8.0 Parity: Mandate 4.1 - Obtain a bounded cache from the central CacheManager.
+		this.#inheritanceGraph =
+			this.#stateManager?.managers?.cacheManager?.getCache(
+				"compartmentInheritance"
+			);
+
 		// Initialize standard compartment rules
 		await this.#initializeStandardCompartments();
 		return this;
@@ -105,6 +118,7 @@ export default class CompartmentSecurity {
 
 	/**
 	 * Gets all compartments the user can access, including those derived from inheritance rules.
+	 * @param {object} [userContext] - The user's security context. If not provided, the current user's context is used.
 	 * @returns {Set<string>} A set of all accessible compartment names.
 	 */
 	getAccessibleCompartments() {
@@ -136,11 +150,14 @@ export default class CompartmentSecurity {
 	 * @param {string} childCompartment - The name of the child compartment that will be inherited.
 	 */
 	addInheritanceRule(parentCompartment, childCompartment) {
-		if (!this.#inheritanceGraph.has(parentCompartment)) {
-			this.#inheritanceGraph.set(parentCompartment, new Set());
+		let children = this.#inheritanceGraph?.get(parentCompartment);
+		if (!children) {
+			children = new Set();
 		}
-
-		this.#inheritanceGraph.get(parentCompartment).add(childCompartment);
+		this.#inheritanceGraph?.set(
+			parentCompartment,
+			children.add(childCompartment)
+		);
 
 		this.#audit("inheritance_rule_added", {
 			parent: parentCompartment,
@@ -164,8 +181,9 @@ export default class CompartmentSecurity {
 
 	// Private methods
 	/**
-	 * The core logic for checking access to a single compartment.
+	 * The core logic for checking if a user has access to a single compartment, including direct, inherited, and rule-based access.
 	 * @private
+	 * @param {string} compartment - The compartment name to check.
 	 * @param {string} compartment - The compartment name.
 	 * @returns {Promise<boolean>} True if access is granted.
 	 */
@@ -207,7 +225,7 @@ export default class CompartmentSecurity {
 	 * It performs a breadth-first search (BFS) on the inheritance graph.
 	 * @private
 	 * @param {string[]} userCompartments - The set of compartments the user has direct access to.
-	 * @returns {Promise<Set<string>>} A set of derived compartments.
+	 * @returns {Set<string>} A set of derived compartments.
 	 */
 	#deriveAccessibleCompartments(userCompartments) {
 		const derived = new Set();
@@ -222,7 +240,7 @@ export default class CompartmentSecurity {
 
 		while (queue.length > 0) {
 			const current = queue.shift();
-			const children = this.#inheritanceGraph.get(current);
+			const children = this.#inheritanceGraph?.get(current);
 
 			if (children) {
 				for (const child of children) {
@@ -243,7 +261,7 @@ export default class CompartmentSecurity {
 	 * For example, ensures 'HUMINT' and 'SIGINT' are not accessed together if a rule forbids it.
 	 * @private
 	 * @param {string[]} compartments - The array of compartments being requested.
-	 * @returns {boolean} True if the combination is valid.
+	 * @returns {boolean} `true` if the combination is valid, `false` otherwise.
 	 */
 	#validateCompartmentCombination(compartments) {
 		// Check for mutually exclusive compartments
@@ -284,8 +302,9 @@ export default class CompartmentSecurity {
 	/**
 	 * Evaluates specific rules defined for a compartment, such as time restrictions or clearance levels.
 	 * @private
-	 * @param {string} compartment - The compartment being checked.
+	 * @param {string} compartment - The name of the compartment being checked.
 	 * @param {object} rules - The rule object for the compartment.
+	 * @param {object} userContext - The user's security context.
 	 * @returns {Promise<boolean>} True if all rules pass.
 	 */
 	async #evaluateCompartmentRules(compartment, rules, userContext) {
@@ -344,35 +363,36 @@ export default class CompartmentSecurity {
 
 	/**
 	 * Evaluates special, complex conditions for compartment access.
+	 * V8.0 Parity: Mandate 2.2 - This now delegates evaluation to the central, declarative ConditionRegistry
+	 * to prevent arbitrary code execution paths and enforce a serializable rule structure.
 	 * @private
-	 * @param {object} condition - The condition object to evaluate.
+	 * @param {object} condition - The declarative condition object to evaluate.
+	 * @param {object} userContext - The user's security context.
 	 * @returns {Promise<boolean>} True if the condition is met.
 	 */
 	async #evaluateSpecialCondition(condition, userContext) {
-		switch (condition.type) {
-			case "dual_person_integrity":
-				// Requires two-person authorization
-				return (
-					condition.authorizedBy && condition.authorizedBy.length >= 2
-				);
+		const conditionRegistry =
+			this.#stateManager?.managers?.conditionRegistry;
 
-			case "facility_requirement":
-				// Requires access from specific facility
-				return condition.allowedFacilities?.includes(
-					userContext.facility
-				);
-
-			case "time_window":
-				// Requires access within specific time window
-				const now = Date.now();
-				return now >= condition.startTime && now <= condition.endTime;
-
-			default:
-				console.warn(
-					`[CompartmentSecurity] Unknown condition type: ${condition.type}`
-				);
-				return false;
+		if (!conditionRegistry) {
+			this.#audit("condition_eval_failed", {
+				reason: "ConditionRegistry not available.",
+				condition,
+			});
+			return false;
 		}
+
+		// The evaluation context combines the user's context with any other relevant data.
+		const evaluationContext = {
+			user: userContext,
+			system: {
+				timestamp: Date.now(),
+			},
+			// Any other data needed by the condition can be added here.
+		};
+
+		// Delegate the entire evaluation to the secure, declarative registry.
+		return conditionRegistry.evaluate(condition, evaluationContext);
 	}
 
 	/**
@@ -396,14 +416,21 @@ export default class CompartmentSecurity {
 		this.addAccessRule("NUCLEAR", {
 			minimumClearance: "secret",
 			timeRestrictions: { startHour: 6, endHour: 18 },
+			// V8.0 Parity: Mandate 2.2 - Convert procedural checks to declarative conditions.
 			specialConditions: [
-				{ type: "dual_person_integrity", required: true },
+				{
+					type: "property_comparison",
+					property: "user.authorizedBy.length",
+					operator: "gte",
+					value: 2,
+				},
 			],
 		});
 
 		// COSMIC compartment (highest NATO level)
 		this.addAccessRule("COSMIC", {
 			minimumClearance: "cosmic_top_secret",
+			// V8.0 Parity: Mandate 2.2 - Convert procedural checks to declarative conditions.
 			specialConditions: [
 				{
 					type: "facility_requirement",

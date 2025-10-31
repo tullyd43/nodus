@@ -11,6 +11,8 @@ import { StorageError } from "../../../utils/ErrorHelpers.js";
  * and optional payload compression.
  *
  * @module BatchSync
+ *
+ * @privateFields {#config, #pendingBatches, #syncQueue, #batchProcessorInterval, #stateManager, #forensicLogger, #errorHelpers, #metrics}
  */
 export default class BatchSync {
 	/** @private @type {object} */
@@ -19,12 +21,16 @@ export default class BatchSync {
 	#pendingBatches = new Map();
 	/** @private @type {Array<object>} */
 	#syncQueue = [];
+	/** @private @type {number|null} */
+	#batchProcessorInterval = null;
 	/** @private @type {import('../../HybridStateManager.js').default} */
 	#stateManager;
 	/** @private @type {import('../../ForensicLogger.js').default|null} */
 	#forensicLogger = null;
 	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
 	#errorHelpers = null;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
 
 	/** @public @type {string} */
 	name = "BatchSync";
@@ -44,12 +50,15 @@ export default class BatchSync {
 	 * @param {boolean} [options.enableCompression=true] - Whether to enable payload compression.
 	 * @param {number} [options.retryAttempts=3] - The number of times to retry a failed batch.
 	 * @param {number} [options.parallelBatches=3] - The number of batches to process in parallel.
+	 * @param {number} [options.offlineQueueLimit=5000] - The maximum number of items to hold in the offline queue.
 	 */
 	constructor({ stateManager, options = {} }) {
 		this.#stateManager = stateManager;
 		// V8.0 Parity: Derive dependencies from the stateManager.
 		this.#forensicLogger = stateManager?.managers?.forensicLogger;
 		this.#errorHelpers = stateManager?.managers?.errorHelpers;
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("batchSync");
 
 		this.#config = {
 			batchSize: options.batchSize || 100,
@@ -58,6 +67,7 @@ export default class BatchSync {
 			enableCompression: options.enableCompression !== false,
 			retryAttempts: options.retryAttempts || 3,
 			parallelBatches: options.parallelBatches || 3,
+			offlineQueueLimit: options.offlineQueueLimit || 5000,
 			...options,
 		};
 	}
@@ -71,6 +81,18 @@ export default class BatchSync {
 		// Start batch processing timer
 		this.#startBatchProcessor();
 		this.#audit("init", { config: this.#config });
+		return this;
+	}
+
+	/**
+	 * Stops the background batch processor and cleans up resources.
+	 * @returns {Promise<this>}
+	 */
+	async destroy() {
+		if (this.#batchProcessorInterval) {
+			clearInterval(this.#batchProcessorInterval);
+			this.#batchProcessorInterval = null;
+		}
 		return this;
 	}
 
@@ -135,6 +157,7 @@ export default class BatchSync {
 	 * @returns {Promise<{pulled: number, items: Array<object>, hasMore: boolean, nextToken: string|null}>} The pulled data and pagination info.
 	 */
 	async pull(options) {
+		const startTime = performance.now();
 		const { entityTypes = [], since, limit } = options;
 		this.#audit("pull_start", { entityTypes, since, limit });
 
@@ -154,6 +177,15 @@ export default class BatchSync {
 				hasMore: response.hasMore || false,
 				nextToken: response.nextToken,
 			};
+
+			// Mandate 4.3: Metrics are Not Optional
+			const duration = performance.now() - startTime;
+			this.#metrics?.increment("pulls.total");
+			this.#metrics?.increment("pulls.itemsPulled", result.pulled);
+			this.#metrics?.updateAverage("pulls.latency", duration);
+			if (result.hasMore) {
+				this.#metrics?.increment("pulls.paginated");
+			}
 
 			this.#audit("pull_complete", { pulled: result.pulled });
 			return result;
@@ -176,25 +208,40 @@ export default class BatchSync {
 	 * @param {string} [operation='update'] - The operation type for this item (e.g., 'create', 'update', 'delete').
 	 */
 	queueItem(item, operation = "update") {
+		// Mandate 4.1: Enforce a limit on the offline queue to prevent unbounded memory growth.
+		if (this.#syncQueue.length >= this.#config.offlineQueueLimit) {
+			this.#metrics?.increment("queue.itemsDropped");
+			this.#errorHelpers?.report(
+				new StorageError("Offline sync queue is full. Dropping item.", {
+					context: {
+						itemId: item.id,
+						queueLimit: this.#config.offlineQueueLimit,
+					},
+				})
+			);
+			return;
+		}
+
 		this.#syncQueue.push({
 			item,
 			operation,
 			timestamp: Date.now(),
 		});
+		this.#metrics?.increment("queue.itemsQueued");
 
 		// Auto-flush if queue is full
 		if (this.#syncQueue.length >= this.#config.batchSize) {
-			this.#flushQueue();
+			this.flushQueue();
 		}
 	}
 
 	/**
-	 * Manually flushes all items currently in the offline queue by processing them as a push operation.
-	 * @private
+	 * Manually flushes all items currently in the offline queue by processing them as a push operation. This is useful for "sync now" functionality.
 	 * @returns {Promise<object>} The result of the push operation.
 	 */
-	async #flushQueue() {
-		if (this.#syncQueue.length === 0) return;
+	async flushQueue() {
+		if (this.#syncQueue.length === 0)
+			return { pushed: 0, failed: 0, batches: 0, results: [] };
 
 		const items = this.#syncQueue.splice(0);
 		const result = await this.push({
@@ -202,6 +249,7 @@ export default class BatchSync {
 			operation: "mixed", // Mixed operations in queue
 		});
 
+		this.#metrics?.set("queue.lastFlushed", Date.now());
 		this.#audit("queue_flushed", { pushed: result.pushed });
 		return result;
 	}
@@ -239,9 +287,8 @@ export default class BatchSync {
 	 * @returns {object} An object containing performance and state metrics for the batch sync process.
 	 */
 	getStats() {
-		const metrics = this.#getMetrics();
 		return {
-			...(metrics?.getAllAsObject() || {}),
+			...(this.#metrics?.getAllAsObject() || {}),
 			queueSize: this.#syncQueue.length,
 			pendingBatches: this.#pendingBatches.size,
 		};
@@ -253,7 +300,7 @@ export default class BatchSync {
 	 * @private
 	 */
 	#startBatchProcessor() {
-		setInterval(() => {
+		this.#batchProcessorInterval = setInterval(() => {
 			this.#processAgedBatches();
 		}, 5000); // Check every 5 seconds
 	}
@@ -520,15 +567,13 @@ export default class BatchSync {
 	 * @param {boolean} compressed - Whether the batch was compressed.
 	 */
 	#updateBatchMetrics(itemCount, processingTime, compressed) {
-		const metrics = this.#getMetrics();
-		metrics?.increment("batchesProcessed");
-		metrics?.increment("itemsProcessed", itemCount);
-		metrics?.updateAverage("averageProcessingTime", processingTime);
+		this.#metrics?.increment("batchesProcessed");
+		this.#metrics?.increment("itemsProcessed", itemCount);
+		this.#metrics?.updateAverage("averageProcessingTime", processingTime);
 		if (compressed) {
-			metrics?.set("compressionRatio", 0.7); // Simulate 30% compression
+			this.#metrics?.increment("batchesCompressed");
 		}
 	}
-
 	/**
 	 * Generates a unique identifier for a batch.
 	 * @private
@@ -536,14 +581,6 @@ export default class BatchSync {
 	 */
 	#generateBatchId() {
 		return `batch_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-	}
-
-	/**
-	 * Gets the namespaced metrics registry.
-	 * @private
-	 */
-	#getMetrics() {
-		return this.#stateManager?.metricsRegistry?.namespace("batchSync");
 	}
 
 	/**

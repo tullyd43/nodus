@@ -6,16 +6,64 @@
 
 /**
  * @class RenderContext
- * @classdesc Encapsulates all contextual information needed for a render operation.
- * This includes environmental data (viewport, theme), user data (ID, permissions),
- * and component-specific data (ID, configuration). It provides a consistent interface
- * for components and adaptation rules to access runtime metadata.
+ * @privateFields {#stateManager, #policies, #viewport, #theme, #locale, #inputMethod, #userId, #userRole, #userPermissions, #device, #networkLatency, #componentId, #data, #config, #containerWidth, #containerHeight, #containerArea, #intent, #purpose, #entityType, #entityId, #entity, #uiContext, #adaptationName, #timestamp, #priority}
+ * @classdesc An immutable snapshot of all contextual information needed for a render operation.
+ * It provides a consistent, read-only interface for components and adaptation rules to access runtime metadata,
+ * including environmental data (viewport, theme), user data (ID, permissions), and component-specific data (ID, configuration).
  */
 export class RenderContext {
-	/** @private @type {import('./HybridStateManager.js').default|null} */
+	/** @private @type {import('./HybridStateManager.js').default|null} The central state manager. */
 	#stateManager = null;
 	/** @private @type {import('./SystemPolicies_Cached.js').SystemPolicies|null} */
 	#policies = null;
+	/** @private @type {{width: number, height: number, pixelRatio: number, orientation: string}} */
+	#viewport;
+	/** @private @type {string} */
+	#theme;
+	/** @private @type {string} */
+	#locale;
+	/** @private @type {'touch'|'mouse'} */
+	#inputMethod;
+	/** @private @type {string|null} */
+	#userId;
+	/** @private @type {string} */
+	#userRole;
+	/** @private @type {string[]} */
+	#userPermissions;
+	/** @private @type {object} */
+	#device;
+	/** @private @type {number|null} */
+	#networkLatency;
+	/** @private @type {string|null} */
+	#componentId;
+	/** @private @type {object} */
+	#data;
+	/** @private @type {object} */
+	#config;
+	/** @private @type {number} */
+	#containerWidth;
+	/** @private @type {number} */
+	#containerHeight;
+	/** @private @type {number} */
+	#containerArea;
+	/** @private @type {string|null} */
+	#intent;
+	/** @private @type {string|null} */
+	#purpose;
+	/** @private @type {string|null} */
+	#entityType;
+	/** @private @type {string|null} */
+	#entityId;
+	/** @private @type {object|null} */
+	#entity;
+	/** @private @type {object} */
+	#uiContext;
+	/** @private @type {string|null} */
+	#adaptationName;
+	/** @private @type {number} */
+	#timestamp;
+	/** @private @type {number} */
+	#priority;
 
 	/**
 	 * Creates an instance of RenderContext.
@@ -24,78 +72,152 @@ export class RenderContext {
 	 * @param {object} [options={}] - Additional or override properties for the context.
 	 */
 	constructor({ stateManager, ...options } = {}) {
+		// V8.0 Parity: Mandate 1.2 - The stateManager MUST be assigned first.
 		this.#stateManager = stateManager || null;
+
+		// V8.0 Parity: Derive dependent managers from the stateManager.
 		const securityManager = this.#stateManager?.managers?.securityManager;
 		const userContext = securityManager?.getSubject() || {};
-
-		// V8.0 Parity: Remove direct eventFlow dependency. Use stateManager.emit/on.
-		// V8.0 Parity: Access policies manager directly.
-		this.#policies = this.#stateManager?.managers?.policies || null;
+		this.#policies = this.#stateManager?.managers.policies || null;
 
 		// Environment context
-		/** @public @type {{width: number, height: number, pixelRatio: number, orientation: string}} */
-		this.viewport = options.viewport || this.#getViewportInfo();
-		/** @public @type {string} */
-		this.theme = options.theme || "dark";
-		/** @public @type {string} */
-		this.locale = options.locale || "en";
-		/** @public @type {'touch'|'mouse'} */
-		this.inputMethod = options.inputMethod || this.#detectInputMethod();
+		this.#viewport = options.viewport || this.#getViewportInfo();
+		this.#theme = options.theme || "dark";
+		this.#locale = options.locale || "en";
+		this.#inputMethod = options.inputMethod || this.#detectInputMethod();
 
 		// User context
-		// V8.0 Parity: User context is now derived from the securityManager.
-		/** @public @type {string|null} */
-		this.userId = userContext.userId || null;
-		/** @public @type {string} */
-		this.userRole = userContext.role || "guest";
-		/** @public @type {string[]} */
-		this.userPermissions = userContext.permissions || [];
+		this.#userId = userContext.userId || null;
+		this.#userRole = userContext.role || "guest";
+		this.#userPermissions = userContext.permissions || [];
 
 		// Device capabilities
-		/** @public @type {object} */
-		this.device = this.#getDeviceCapabilities();
-		/** @public @type {number|null} */
-		this.networkLatency = options.networkLatency || null;
+		this.#device = options.device || this.#getDeviceCapabilities();
+		this.#networkLatency = options.networkLatency || null;
 
 		// Component context (for current render)
-		/** @public @type {string|null} */
-		this.componentId = options.componentId || null;
-		/** @public @type {object} */
-		this.data = options.data || {};
-		/** @public @type {object} */
-		this.config = options.config || {};
+		this.#componentId = options.componentId || null;
+		this.#data = options.data || {};
+		this.#config = options.config || {};
 
 		// Container context
-		/** @public @type {number} */
-		this.containerWidth = options.containerWidth || window.innerWidth;
-		/** @public @type {number} */
-		this.containerHeight = options.containerHeight || window.innerHeight;
-		/** @public @type {number} */
-		this.containerArea = this.containerWidth * this.containerHeight;
+		this.#containerWidth = options.containerWidth || window.innerWidth;
+		this.#containerHeight = options.containerHeight || window.innerHeight;
+		this.#containerArea = this.#containerWidth * this.#containerHeight;
 
 		// Adaptive context
-		/** @public @type {string|null} */
-		this.intent = options.intent || null;
-		/** @public @type {string|null} */
-		this.purpose = options.purpose || null;
-		/** @public @type {string|null} */
-		this.entityType = options.entityType || null;
-		/** @public @type {string|null} */
-		this.entityId = options.entityId || null;
-		/** @public @type {object|null} */
-		this.entity = options.entity || null;
+		this.#intent = options.intent || null;
+		this.#purpose = options.purpose || null;
+		this.#entityType = options.entityType || null;
+		this.#entityId = options.entityId || null;
+		this.#entity = options.entity || null;
 
 		// UI context (can contain transient state)
-		/** @public @type {object} */
-		this.uiContext = options.uiContext || {};
+		this.#uiContext = options.uiContext || {};
 
 		// Render metadata
-		/** @public @type {string|null} */
-		this.adaptationName = options.adaptationName || null;
-		/** @public @type {number} */
-		this.timestamp = Date.now();
-		/** @public @type {number} */
-		this.priority = options.priority || 0;
+		this.#adaptationName = options.adaptationName || null;
+		this.#timestamp = Date.now();
+		this.#priority = options.priority || 0;
+	}
+
+	// --- Public Getters for Read-Only Access ---
+
+	/** @returns {{width: number, height: number, pixelRatio: number, orientation: string}} */
+	get viewport() {
+		return this.#viewport;
+	}
+	/** @returns {string} */
+	get theme() {
+		return this.#theme;
+	}
+	/** @returns {string} */
+	get locale() {
+		return this.#locale;
+	}
+	/** @returns {'touch'|'mouse'} */
+	get inputMethod() {
+		return this.#inputMethod;
+	}
+	/** @returns {string|null} */
+	get userId() {
+		return this.#userId;
+	}
+	/** @returns {string} */
+	get userRole() {
+		return this.#userRole;
+	}
+	/** @returns {string[]} */
+	get userPermissions() {
+		return this.#userPermissions;
+	}
+	/** @returns {object} */
+	get device() {
+		return this.#device;
+	}
+	/** @returns {number|null} */
+	get networkLatency() {
+		return this.#networkLatency;
+	}
+	/** @returns {string|null} */
+	get componentId() {
+		return this.#componentId;
+	}
+	/** @returns {object} */
+	get data() {
+		return this.#data;
+	}
+	/** @returns {object} */
+	get config() {
+		return this.#config;
+	}
+	/** @returns {number} */
+	get containerWidth() {
+		return this.#containerWidth;
+	}
+	/** @returns {number} */
+	get containerHeight() {
+		return this.#containerHeight;
+	}
+	/** @returns {number} */
+	get containerArea() {
+		return this.#containerArea;
+	}
+	/** @returns {string|null} */
+	get intent() {
+		return this.#intent;
+	}
+	/** @returns {string|null} */
+	get purpose() {
+		return this.#purpose;
+	}
+	/** @returns {string|null} */
+	get entityType() {
+		return this.#entityType;
+	}
+	/** @returns {string|null} */
+	get entityId() {
+		return this.#entityId;
+	}
+	/** @returns {object|null} */
+	get entity() {
+		return this.#entity;
+	}
+	/** @returns {object} */
+	get uiContext() {
+		return this.#uiContext;
+	}
+	/** @returns {string|null} */
+	get adaptationName() {
+		return this.#adaptationName;
+	}
+	/** @returns {number} */
+	get timestamp() {
+		return this.#timestamp;
+	}
+	/** @returns {number} */
+	get priority() {
+		return this.#priority;
 	}
 
 	/**
@@ -107,7 +229,7 @@ export class RenderContext {
 		return (
 			// V8.0 Parity: Access stateManager via private field.
 			this.#stateManager?.clientState.entities.get(entityId) ||
-			this.uiContext.entities?.find?.((e) => e.id === entityId) ||
+			this.#uiContext.entities?.find?.((e) => e.id === entityId) ||
 			null
 		);
 	}
@@ -132,30 +254,30 @@ export class RenderContext {
 	 */
 	toObject() {
 		return {
-			viewport: this.viewport,
-			theme: this.theme,
-			locale: this.locale,
-			inputMethod: this.inputMethod,
-			userId: this.userId,
-			userRole: this.userRole,
-			userPermissions: this.userPermissions,
-			device: this.device,
-			networkLatency: this.networkLatency,
-			componentId: this.componentId,
-			data: this.data,
-			config: this.config,
-			containerWidth: this.containerWidth,
-			containerHeight: this.containerHeight,
-			containerArea: this.containerArea,
-			intent: this.intent,
-			purpose: this.purpose,
-			entityType: this.entityType,
-			entityId: this.entityId,
-			entity: this.entity,
-			adaptationName: this.adaptationName,
-			timestamp: this.timestamp,
-			uiContext: this.uiContext,
-			priority: this.priority,
+			viewport: this.#viewport,
+			theme: this.#theme,
+			locale: this.#locale,
+			inputMethod: this.#inputMethod,
+			userId: this.#userId,
+			userRole: this.#userRole,
+			userPermissions: this.#userPermissions,
+			device: this.#device,
+			networkLatency: this.#networkLatency,
+			componentId: this.#componentId,
+			data: this.#data,
+			config: this.#config,
+			containerWidth: this.#containerWidth,
+			containerHeight: this.#containerHeight,
+			containerArea: this.#containerArea,
+			intent: this.#intent,
+			purpose: this.#purpose,
+			entityType: this.#entityType,
+			entityId: this.#entityId,
+			entity: this.#entity,
+			adaptationName: this.#adaptationName,
+			timestamp: this.#timestamp,
+			uiContext: this.#uiContext,
+			priority: this.#priority,
 		};
 	}
 
@@ -214,6 +336,7 @@ export class RenderContext {
 
 		for (const prop of requiredProperties) {
 			if (this[prop] === undefined || this[prop] === null) {
+				// Getter access
 				missing.push(prop);
 			}
 		}
@@ -231,8 +354,8 @@ export class RenderContext {
 	 */
 	hasPermission(permission) {
 		return (
-			this.userPermissions.includes(permission) ||
-			this.userRole === "super_admin"
+			this.#userPermissions.includes(permission) ||
+			this.#userRole === "super_admin"
 		);
 	}
 
@@ -244,13 +367,43 @@ export class RenderContext {
 	canAccessDomain(domain) {
 		// V8.0 Parity: Delegate domain access checks to the policies manager.
 		// This centralizes authorization logic instead of hardcoding roles here.
+		if (!this.#policies) return false;
+
+		// Check for a direct policy first, then fall back to role-based access.
+		const directAccess = this.#policies.getPolicy(
+			"access_control",
+			`domain.${domain}`
+		);
+		if (directAccess === true) return true;
+
+		const roleDomains = this.#policies.getPolicy(
+			"roles",
+			`${this.#userRole}.domains`
+		);
+		return Array.isArray(roleDomains) && roleDomains.includes(domain);
+	}
+
+	/**
+	 * Evaluates a given policy against the current user's security context.
+	 * This method delegates to the SystemPolicies manager, which can handle
+	 * checks against security classifications, named policies, or other rules.
+	 * @param {string} policyName - The policy to evaluate (e.g., 'can_export_data').
+	 * @returns {boolean} `true` if the policy allows access, `false` otherwise.
+	 */
+	evaluatePolicy(policyName) {
+		if (!this.#policies) {
+			console.warn(
+				"[RenderContext] SystemPolicies manager not available. Defaulting to deny."
+			);
+			return false;
+		}
+
+		// The `getPolicy` method in SystemPolicies can handle various checks.
+		// For access control, we check if the policy evaluates to `true`.
+		// The `this` context is passed for more complex, context-aware policy rules.
 		return (
-			// V8.0 Parity: Access policies via private field.
-			this.#policies?.getPolicy("access_control", `domain.${domain}`) ===
-				true ||
-			this.#policies
-				?.getPolicy("roles", `${this.userRole}.domains`)
-				?.includes(domain)
+			this.#policies.getPolicy("access_control", policyName, this) ===
+			true
 		);
 	}
 
@@ -298,7 +451,7 @@ export class RenderContext {
 		const root = document.documentElement;
 
 		Object.entries(variables).forEach(([property, value]) => {
-			root.style.setProperty(property, value);
+			root?.style.setProperty(property, value);
 		});
 	}
 
@@ -323,7 +476,7 @@ export class RenderContext {
 	 */
 	getCurrentBreakpoint() {
 		const breakpoints = this.getBreakpoints();
-		const width = this.containerWidth;
+		const width = this.#containerWidth;
 
 		if (width >= breakpoints.xxl) return "xxl";
 		if (width >= breakpoints.xl) return "xl";

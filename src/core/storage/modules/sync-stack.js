@@ -1,5 +1,7 @@
 // src/core/storage/modules/sync-stack.js
 // SyncStack — a thin orchestrator over pluggable sync strategies.
+
+import { AppError } from "../../../utils/ErrorHelpers.js";
 // No private class fields (avoids eslint/parser issues). Fully JSDoc’d.
 
 /**
@@ -21,67 +23,44 @@
  * @property {boolean} [enableConflictResolution=true]
  */
 
+/**
+ * @module SyncStack
+ * @description Orchestrates multiple synchronization modules into a cohesive pipeline.
+ * @privateFields {#syncModules, #syncStatus, #stateManager, #metrics, #forensicLogger, #errorHelpers}
+ */
 export default class SyncStack {
 	/** @private @type {SyncModule[]} */
 	#syncModules;
-	/** @private @type {SyncStackOptions} */
-	#config;
 	/** @private @type {Map<string, any>} */
 	#syncStatus = new Map();
-	/** @private @type {any} */
-	#conflictResolver = null;
 	/** @private @type {import('../../HybridStateManager.js').default|null} */
 	#stateManager;
 	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics;
-
-	/**
-	 * @private
-	 * @static
-	 * @class Simple conflict resolver (pluggable later)
-	 */
-	static #ConflictResolver = class {
-		constructor(options = {}) {
-			this.options = options;
-		}
-		/**
-		 * @param {{pulled:any[]}} result
-		 * @returns {Promise<any[]>}
-		 */
-		async resolveConflicts(result) {
-			// Stub: no-op. In a real impl, decide merges here.
-			return [];
-		}
-	};
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').default|null} */
+	#errorHelpers;
 
 	constructor({ stateManager, syncModules = [], options = {} }) {
 		this.#stateManager = stateManager;
-		this.#syncModules = syncModules;
-		this.#config = {
-			maxRetries: 3,
-			retryDelay: 1000,
-			batchSize: 50,
-			offlineQueueLimit: 1000,
-			enableConflictResolution: true,
-			...options,
-		};
+		// V8.0 Parity: Instantiate modules here to ensure they get the stateManager context.
+		this.#syncModules = syncModules.map(
+			(ModuleClass) => new ModuleClass({ stateManager, options })
+		);
 
+		// V8.0 Parity: Mandate 1.2 - Derive dependencies from stateManager.
 		this.#metrics =
 			this.#stateManager?.metricsRegistry?.namespace("syncStack");
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
 	}
 
 	async init() {
 		for (const mod of this.#syncModules) {
 			if (typeof mod?.init === "function") {
-				// V8.0 Parity: The stateManager is now passed in the constructor of each module,
-				// so the legacy bindStateManager call is no longer needed.
 				await mod.init();
 			}
-		}
-		if (this.#config.enableConflictResolution) {
-			this.#conflictResolver = new SyncStack.#ConflictResolver(
-				this.#config
-			);
 		}
 		console.log("[SyncStack] Sync stack initialized");
 	}
@@ -99,6 +78,11 @@ export default class SyncStack {
 			operation: op,
 		});
 
+		this.#audit("sync_started", {
+			syncId,
+			operation: op,
+		});
+
 		try {
 			let result;
 			if (op === "push") {
@@ -110,14 +94,20 @@ export default class SyncStack {
 			}
 
 			return result;
-		} catch (err) {
+		} catch (error) {
+			const appError = new AppError("Sync operation failed", {
+				cause: error,
+				context: { syncId, operation: op },
+			});
+			this.#errorHelpers?.handleError(appError);
+
 			this.#syncStatus.set(syncId, {
 				status: "failed",
 				startTime,
 				endTime: performance.now(),
-				error: String(err), // Corrected incomplete line
+				error: appError.message,
 			});
-			throw err;
+			throw appError;
 		} finally {
 			const endTime = performance.now();
 			const currentStatus = this.#syncStatus.get(syncId);
@@ -125,6 +115,11 @@ export default class SyncStack {
 				currentStatus.status = "completed";
 			}
 			currentStatus.endTime = endTime;
+			this.#audit(`sync_${currentStatus.status}`, {
+				syncId,
+				duration: endTime - startTime,
+				error: currentStatus.error,
+			});
 			this.#updateSyncMetrics(
 				currentStatus.status === "completed",
 				endTime - startTime
@@ -179,12 +174,9 @@ export default class SyncStack {
 	async #performBidirectionalSync(options = {}) {
 		const pullResult = await this.#performPull(options);
 
-		let conflicts = [];
-		if (this.#conflictResolver) {
-			conflicts =
-				await this.#conflictResolver.resolveConflicts(pullResult);
-			this.#metrics?.increment("conflictsResolved", conflicts.length);
-		}
+		// V8.0 Parity: Conflict resolution is now an internal, auditable step.
+		const conflicts = await this.#resolveConflicts(pullResult);
+		this.#metrics?.increment("conflictsResolved", conflicts.length);
 
 		const pushResult = await this.#performPush(options);
 		return {
@@ -193,6 +185,24 @@ export default class SyncStack {
 			push: pushResult,
 			conflicts,
 		};
+	}
+
+	/**
+	 * A simple, internal conflict resolver. In a real implementation, this would
+	 * use declarative rules from a registry.
+	 * @private
+	 * @param {object} pullResult - The result from the pull operation.
+	 * @returns {Promise<any[]>} - An array of resolved conflicts.
+	 */
+	async #resolveConflicts(pullResult) {
+		// Stub: no-op. In a real impl, decide merges here based on declarative rules.
+		const conflicts = [];
+		if (conflicts.length > 0) {
+			this.#audit("conflicts_resolved", {
+				count: conflicts.length,
+			});
+		}
+		return conflicts;
 	}
 
 	#generateSyncId() {
@@ -204,5 +214,20 @@ export default class SyncStack {
 		this.#metrics?.updateAverage("averageSyncTime", durationMs);
 		this.#metrics?.set("lastSyncTime", Date.now());
 		if (!success) this.#metrics?.increment("syncErrors");
+	}
+
+	/**
+	 * Logs an audit event using the ForensicLogger.
+	 * @private
+	 * @param {string} eventType - The type of event to log.
+	 * @param {object} data - The data associated with the event.
+	 */
+	#audit(eventType, data) {
+		if (this.#forensicLogger) {
+			this.#forensicLogger.logAuditEvent(
+				`SYNC_STACK_${eventType.toUpperCase()}`,
+				data
+			);
+		}
 	}
 }

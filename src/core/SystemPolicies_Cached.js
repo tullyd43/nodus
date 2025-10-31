@@ -160,6 +160,7 @@ const POLICY_DEPENDENCIES = {
  * @class SystemPolicies
  * @classdesc Manages system-wide policies with a multi-tier caching strategy (in-memory, state manager, localStorage, API)
  * to ensure high performance and resilience. It handles loading, validation, persistence, and background synchronization of policies.
+ * @privateFields {#stateManager, #metrics, #errorHelpers, #forensicLogger, #config, #policies, #cache}
  */
 export class SystemPolicies {
 	// V8.0 Parity: Declare all private fields at the top of the class.
@@ -167,6 +168,10 @@ export class SystemPolicies {
 	#stateManager;
 	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics = null;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+	/** @private @type {import('./ForensicLogger.js').ForensicLogger|null} */
+	#forensicLogger = null;
 	/** @private @type {object} */
 	#config;
 	/** @private @type {object|null} */
@@ -181,6 +186,12 @@ export class SystemPolicies {
 	constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 		this.#config = stateManager.config.policiesConfig || {};
+
+		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from the stateManager in the constructor.
+		this.#metrics =
+			this.#stateManager.metricsRegistry?.namespace("systemPolicies");
+		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
+		this.#forensicLogger = this.#stateManager.managers.forensicLogger;
 	}
 
 	/**
@@ -188,9 +199,6 @@ export class SystemPolicies {
 	 * @returns {Promise<void>}
 	 */
 	async initialize() {
-		// V8.0 Parity: Derive managers from stateManager during initialization.
-		this.#metrics =
-			this.#stateManager.metricsRegistry.namespace("systemPolicies");
 		const cacheManager = this.#stateManager.managers.cacheManager;
 
 		// V8.0 Parity: Use the central CacheManager to get a dedicated cache instance.
@@ -199,11 +207,11 @@ export class SystemPolicies {
 				ttl: this.#config.cacheTTL || 300000, // 5 minutes default
 				onEvict: (key, value, reason) => {
 					console.log(`Policy cache eviction: ${key} (${reason})`);
-					this.#metrics.increment("cacheEvictions");
+					this.#metrics?.increment("cacheEvictions");
 				},
 				onExpire: (key) => {
 					console.log(`Policy cache expiration: ${key}`);
-					this.backgroundRefresh(key);
+					this.#backgroundRefresh(key);
 				},
 			});
 		}
@@ -214,7 +222,7 @@ export class SystemPolicies {
 
 			// Validate all policies
 			if (this.#config.validationEnabled !== false) {
-				await this.validateAllPolicies();
+				await this.#validateAllPolicies();
 			}
 
 			// Set up background sync if API is available
@@ -222,7 +230,7 @@ export class SystemPolicies {
 				this.#config.persistenceEnabled !== false &&
 				this.#config.apiEndpoint
 			) {
-				this.setupBackgroundSync(this.#config.syncInterval || 60000); // 1 minute default
+				this.#setupBackgroundSync(this.#config.syncInterval || 60000); // 1 minute default
 			}
 
 			console.log("SystemPolicies initialized:", {
@@ -241,128 +249,76 @@ export class SystemPolicies {
 	}
 
 	/**
-	 * Loads policies using a multi-tier caching strategy: memory, StateManager, localStorage, and finally API.
-	 * @static
+	 * Loads policies using a multi-tier caching strategy: memory, persistent storage, and finally API.
 	 * @returns {Promise<void>}
 	 */
 	async loadPolicies() {
-		const startTime = performance.now();
-		try {
-			// Tier 1: Memory cache
-			const cached = this.getCachedPolicies();
-			if (cached) {
-				this.#policies = cached;
-				this.#metrics?.increment("cacheHits");
-				console.log("Policies loaded from memory cache");
-				return;
-			}
-
-			// Tier 2: Persistent storage (via HybridStateManager)
-			if (
-				this.#config.persistenceEnabled !== false &&
-				this.#stateManager.storage.ready
-			) {
-				const stored = await this.#stateManager.storage.instance.get(
-					"system_settings",
-					"system_policies"
-				);
-				if (stored?.policies) {
-					this.#policies = this.mergePolicies(
-						DEFAULT_POLICIES,
-						stored.policies
-					);
-					this.setCachedPolicies(this.#policies);
-					this.#metrics?.increment("cacheMisses"); // A miss for memory cache, but a hit for persistent storage
-					console.log("Policies loaded from persistent storage");
+		return this.#errorHelpers?.tryOr(
+			async () => {
+				// Tier 1: Memory cache
+				const cached = this.getCachedPolicies();
+				if (cached) {
+					this.#policies = cached;
+					this.#metrics?.increment("cacheHits");
+					console.log("Policies loaded from memory cache");
 					return;
 				}
-			}
 
-			// Tier 4: API fetch (if available)
-			if (this.#config.apiEndpoint) {
-				try {
-					const apiPolicies = await this.fetchPoliciesFromAPI();
-					this.#policies = this.mergePolicies(
-						DEFAULT_POLICIES,
-						apiPolicies
-					);
-					this.setCachedPolicies(this.#policies);
-					await this.savePolicies();
-					this.#metrics?.increment("apiCalls");
-					console.log("Policies loaded from API");
-					return;
-				} catch (apiError) {
-					console.warn("Failed to load policies from API:", apiError);
+				// Tier 2: Persistent storage (via HybridStateManager)
+				if (
+					this.#config.persistenceEnabled !== false &&
+					this.#stateManager.storage.ready
+				) {
+					const stored =
+						await this.#stateManager.storage.instance.get(
+							"system_settings",
+							"system_policies"
+						);
+					if (stored?.policies) {
+						this.#policies = this.#mergePolicies(
+							DEFAULT_POLICIES,
+							stored.policies
+						);
+						this.setCachedPolicies(this.#policies);
+						this.#metrics?.increment("cacheMisses"); // A miss for memory cache, but a hit for persistent storage
+						console.log("Policies loaded from persistent storage");
+						return;
+					}
 				}
-			}
 
-			// Fallback: Use defaults
-			this.#policies = JSON.parse(JSON.stringify(DEFAULT_POLICIES));
-			this.setCachedPolicies(this.#policies);
-			await this.savePolicies();
-			console.log("Policies initialized with defaults");
-		} finally {
-			this.metrics?.set(
-				"lastSyncDuration",
-				performance.now() - startTime
-			);
-			this.metrics?.set("lastSync", new Date().toISOString());
-		}
-	}
+				// Tier 4: API fetch (if available)
+				if (this.#config.apiEndpoint) {
+					try {
+						const apiPolicies = await this.#fetchPoliciesFromAPI();
+						this.#policies = this.#mergePolicies(
+							DEFAULT_POLICIES,
+							apiPolicies
+						);
+						this.setCachedPolicies(this.#policies);
+						await this.savePolicies();
+						this.#metrics?.increment("apiCalls");
+						console.log("Policies loaded from API");
+						return;
+					} catch (apiError) {
+						console.warn(
+							"Failed to load policies from API:",
+							apiError
+						);
+					}
+				}
 
-	/**
-	 * Fetches the latest policies from the remote API endpoint.
-	 * @returns {Promise<object>} The policies object from the API.
-	 */
-	async fetchPoliciesFromAPI() {
-		const response = await fetch(this.#config.apiEndpoint, {
-			method: "GET",
-			headers: {
-				"Content-Type": "application/json",
-				// Add authentication headers if needed
-				...(this.getAuthHeaders && this.getAuthHeaders()),
+				// Fallback: Use defaults
+				this.#policies = JSON.parse(JSON.stringify(DEFAULT_POLICIES));
+				this.setCachedPolicies(this.#policies);
+				await this.savePolicies();
+				console.log("Policies initialized with defaults");
 			},
-		});
-
-		if (!response.ok) {
-			throw new Error(
-				`API fetch failed: ${response.status} ${response.statusText}`
-			);
-		}
-
-		const data = await response.json();
-		return data.policies || data; // Handle different API response formats
-	}
-
-	/**
-	 * Saves the current policies to the remote API endpoint.
-	 * @param {object} policies - The policies object to save.
-	 * @returns {Promise<void>}
-	 */
-	async savePoliciesAPI(policies) {
-		if (!this.#config.apiEndpoint) return;
-
-		try {
-			const response = await fetch(this.#config.apiEndpoint, {
-				method: "PUT",
-				headers: {
-					"Content-Type": "application/json",
-					...(this.getAuthHeaders && this.getAuthHeaders()),
-				},
-				body: JSON.stringify({ policies }),
-			});
-
-			if (!response.ok) {
-				throw new Error(
-					`API save failed: ${response.status} ${response.statusText}`
-				);
+			null,
+			{
+				component: "SystemPolicies",
+				operation: "loadPolicies",
 			}
-
-			console.log("Policies saved to API successfully");
-		} catch (error) {
-			console.error("Failed to save policies to API:", error);
-			throw error;
-		}
+		);
 	}
 
 	/**
@@ -396,49 +352,6 @@ export class SystemPolicies {
 	}
 
 	/**
-	 * Triggers a background refresh of policies when a cache entry expires.
-	 * @param {string} key - The cache key that expired.
-	 * @returns {Promise<void>}
-	 */
-	async backgroundRefresh(key) {
-		if (key === "system_policies") {
-			try {
-				console.log("Background refresh triggered for policies");
-				this.#metrics.increment("backgroundRefreshes");
-				await this.loadPolicies();
-				this.emitPolicyEvent("policies_refreshed", {
-					timestamp: new Date().toISOString(),
-					trigger: "background_refresh",
-				});
-			} catch (error) {
-				this.#metrics.increment("backgroundRefreshErrors");
-				console.error("Background refresh failed:", error);
-			}
-		}
-	}
-
-	/**
-	 * Sets up a periodic interval to check for policy updates from the server.
-	 * @param {number} interval - The synchronization interval in milliseconds.
-	 */
-	setupBackgroundSync(interval) {
-		setInterval(async () => {
-			try {
-				const cacheAge = this.#cache
-					? this.#cache.getAge("system_policies")
-					: Infinity;
-
-				if (cacheAge > 300000) {
-					// 5 minutes
-					await this.loadPolicies();
-				}
-			} catch (error) {
-				console.error("Background sync failed:", error);
-			}
-		}, interval);
-	}
-
-	/**
 	 * Saves the current policies to all configured persistence layers (cache, localStorage, API).
 	 * @returns {Promise<void>}
 	 */
@@ -464,13 +377,13 @@ export class SystemPolicies {
 
 			// Save to API (async, don't block)
 			if (this.#config.apiEndpoint) {
-				this.savePoliciesAPI(this.#policies).catch((error) => {
+				this.#savePoliciesAPI(this.#policies).catch((error) => {
 					console.error("Background API save failed:", error);
 				});
 			}
 
 			// Emit save event
-			this.emitPolicyEvent("policies_saved", {
+			this.#emitPolicyEvent("policies_saved", {
 				timestamp: new Date().toISOString(),
 				domains: Object.keys(this.#policies),
 			});
@@ -487,12 +400,12 @@ export class SystemPolicies {
 		// Try cache first
 		const cached = this.getCachedPolicies();
 		if (cached) {
-			this.#metrics.increment("cacheHits");
+			this.#metrics?.increment("cacheHits");
 			return JSON.parse(JSON.stringify(cached));
 		}
 
 		// Fallback to loaded policies
-		this.#metrics.increment("cacheMisses");
+		this.#metrics?.increment("cacheMisses");
 		return this.#policies ? JSON.parse(JSON.stringify(this.#policies)) : {};
 	}
 
@@ -508,7 +421,7 @@ export class SystemPolicies {
 		if (this.#cache) {
 			const cached = this.#cache.get(cacheKey);
 			if (cached) {
-				this.#metrics.increment("cacheHits");
+				this.#metrics?.increment("cacheHits");
 				return { ...cached };
 			}
 		}
@@ -522,7 +435,7 @@ export class SystemPolicies {
 			this.#cache.set(cacheKey, result, 60000); // 1 minute TTL for domain-specific cache
 		}
 
-		this.#metrics.increment("cacheMisses");
+		this.#metrics?.increment("cacheMisses");
 		return result;
 	}
 
@@ -539,7 +452,7 @@ export class SystemPolicies {
 		if (this.#cache) {
 			const cached = this.#cache.get(cacheKey);
 			if (cached !== undefined) {
-				this.#metrics.increment("cacheHits");
+				this.#metrics?.increment("cacheHits");
 				return JSON.parse(JSON.stringify(cached));
 			}
 		}
@@ -551,7 +464,7 @@ export class SystemPolicies {
 			this.#cache.set(cacheKey, result, 30000); // 30 seconds TTL for individual policies
 		}
 
-		this.#metrics.increment("cacheMisses");
+		this.#metrics?.increment("cacheMisses");
 		return result;
 	}
 
@@ -572,7 +485,7 @@ export class SystemPolicies {
 
 		// Validate the update
 		if (this.#config.validationEnabled !== false) {
-			const validation = this.validatePolicy(policyPath, value, context);
+			const validation = this.#validatePolicy(policyPath, value, context);
 			if (!validation.valid) {
 				throw new Error(
 					`Policy validation failed: ${validation.message}`
@@ -581,7 +494,7 @@ export class SystemPolicies {
 		}
 
 		// Check dependencies
-		const depCheck = this.checkDependencies(domain, key, value);
+		const depCheck = this.#checkDependencies(domain, key, value);
 		if (!depCheck.valid) {
 			throw new Error(
 				`Policy dependency check failed: ${depCheck.message}`
@@ -599,13 +512,24 @@ export class SystemPolicies {
 			this.#policies[domain][key] = value;
 
 			// Invalidate related cache entries
-			this.invalidatePolicyCache(domain, key);
+			this.#invalidatePolicyCache(domain, key); // Corrected to be a private method call
 
 			// Save to persistent storage
 			await this.savePolicies();
 
+			// V8.0 Parity: Mandate 2.4 - Log the policy change as a forensic event.
+			await this.#forensicLogger?.logAuditEvent(
+				"POLICY_UPDATED",
+				{
+					policy: policyPath,
+					oldValue,
+					newValue: value,
+				},
+				context
+			);
+
 			// Emit change event
-			this.emitPolicyEvent("policy_updated", {
+			this.#emitPolicyEvent("policy_updated", {
 				domain,
 				key,
 				oldValue,
@@ -624,28 +548,10 @@ export class SystemPolicies {
 			}
 
 			// Re-invalidate cache to ensure consistency
-			this.invalidatePolicyCache(domain, key);
+			this.#invalidatePolicyCache(domain, key); // Corrected to be a private method call
 
 			throw error;
 		}
-	}
-
-	/**
-	 * Invalidates specific cache entries related to a policy change to ensure consistency.
-	 * @param {string} domain - The domain of the changed policy.
-	 * @param {string} key - The key of the changed policy.
-	 */
-	invalidatePolicyCache(domain, key) {
-		if (!this.#cache) return;
-
-		// Invalidate specific policy cache
-		this.#cache.delete(`policy_${domain}_${key}`);
-
-		// Invalidate domain cache
-		this.#cache.delete(`domain_policies_${domain}`);
-
-		// Invalidate main policies cache
-		this.#cache.delete("system_policies");
 	}
 
 	/**
@@ -656,7 +562,7 @@ export class SystemPolicies {
 		const cacheStats = this.#cache ? this.#cache.getStatistics() : null;
 
 		return {
-			...this.#metrics.getAllAsObject(),
+			...this.#metrics?.getAllAsObject(),
 			cacheStatistics: cacheStats,
 		};
 	}
@@ -676,65 +582,9 @@ export class SystemPolicies {
 		// Reload policies
 		await this.loadPolicies();
 
-		this.emitPolicyEvent("policies_force_refreshed", {
+		this.#emitPolicyEvent("policies_force_refreshed", {
 			timestamp: new Date().toISOString(),
 		});
-	}
-
-	// ... All other existing methods remain the same ...
-	// (validatePolicy, checkDependencies, mergePolicies, etc.)
-
-	/**
-	 * Validates a single policy value against its registered validator.
-	 * @param {string} policyPath - The full path of the policy (e.g., 'system.enable_debug_mode').
-	 * @param {*} value - The value to validate.
-	 * @param {object} [context={}] - Additional context for the validation.
-	 * @returns {{valid: boolean, message?: string}} The validation result.
-	 */
-	validatePolicy(policyPath, value, context = {}) {
-		const validator = POLICY_VALIDATORS[policyPath];
-		if (!validator) {
-			return { valid: true }; // No validator = allow
-		}
-
-		// Add environment and other context
-		const fullContext = {
-			environment: this.#config.environment || "development",
-			...context,
-		};
-
-		return validator(value, fullContext);
-	}
-
-	/**
-	 * Checks if enabling a specific policy meets its dependency requirements.
-	 * @param {string} domain - The domain of the policy.
-	 * @param {string} key - The key of the policy.
-	 * @param {*} value - The new value of the policy.
-	 * @returns {{valid: boolean, message?: string}} The dependency check result.
-	 */
-	checkDependencies(domain, key, value) {
-		const policyPath = `${domain}.${key}`;
-		const dependencies = POLICY_DEPENDENCIES[policyPath];
-
-		if (!dependencies || !value) {
-			return { valid: true }; // No dependencies or policy being disabled
-		}
-
-		// Check if all dependencies are enabled
-		for (const depPath of dependencies) {
-			const [depDomain, depKey] = depPath.split(".");
-			const depValue = this.getPolicy(depDomain, depKey);
-
-			if (!depValue) {
-				return {
-					valid: false,
-					message: `Required dependency not enabled: ${depPath}`,
-				};
-			}
-		}
-
-		return { valid: true };
 	}
 
 	/**
@@ -746,42 +596,6 @@ export class SystemPolicies {
 	getPolicyDependencies(domain, key) {
 		const policyPath = `${domain}.${key}`;
 		return POLICY_DEPENDENCIES[policyPath] || [];
-	}
-
-	/**
-	 * Deeply merges a stored policies object into a defaults object.
-	 * @param {object} defaults - The default policies object.
-	 * @param {object} stored - The stored policies object to merge.
-	 * @returns {object} The merged policies object.
-	 */
-	mergePolicies(defaults, stored) {
-		const merged = JSON.parse(JSON.stringify(defaults));
-
-		for (const [domain, domainPolicies] of Object.entries(stored)) {
-			if (merged[domain]) {
-				Object.assign(merged[domain], domainPolicies);
-			} else {
-				merged[domain] = domainPolicies;
-			}
-		}
-
-		return merged;
-	}
-
-	/**
-	 * Emits a policy event to all registered listeners and the global event system.
-	 * @param {string} type - The type of the event (e.g., 'policy_updated').
-	 * @param {object} data - The data payload for the event.
-	 */
-	emitPolicyEvent(type, data) {
-		const event = {
-			type,
-			data,
-			timestamp: Date.now(),
-		};
-
-		// Align with V8.0: Use the state manager's event bus
-		this.#stateManager?.emit("policyEvent", event);
 	}
 
 	/**
@@ -826,6 +640,236 @@ export class SystemPolicies {
 			this.#cache = null;
 		}
 		this.#policies = null;
+	}
+
+	// --- Private Helper Methods ---
+
+	/**
+	 * Fetches the latest policies from the remote API endpoint.
+	 * @private
+	 * @returns {Promise<object>} The policies object from the API.
+	 */
+	async #fetchPoliciesFromAPI() {
+		const response = await fetch(this.#config.apiEndpoint, {
+			method: "GET",
+			headers: {
+				"Content-Type": "application/json",
+				// Add authentication headers if needed
+				...(this.getAuthHeaders && this.getAuthHeaders()),
+			},
+		});
+
+		if (!response.ok) {
+			throw new Error(
+				`API fetch failed: ${response.status} ${response.statusText}`
+			);
+		}
+
+		const data = await response.json();
+		return data.policies || data; // Handle different API response formats
+	}
+
+	/**
+	 * Saves the current policies to the remote API endpoint.
+	 * @private
+	 * @param {object} policies - The policies object to save.
+	 * @returns {Promise<void>}
+	 */
+	async #savePoliciesAPI(policies) {
+		if (!this.#config.apiEndpoint) return;
+
+		try {
+			const response = await fetch(this.#config.apiEndpoint, {
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/json",
+					...(this.getAuthHeaders && this.getAuthHeaders()),
+				},
+				body: JSON.stringify({ policies }),
+			});
+
+			if (!response.ok) {
+				throw new Error(
+					`API save failed: ${response.status} ${response.statusText}`
+				);
+			}
+
+			console.log("Policies saved to API successfully");
+		} catch (error) {
+			console.error("Failed to save policies to API:", error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Triggers a background refresh of policies when a cache entry expires.
+	 * @private
+	 * @param {string} key - The cache key that expired.
+	 * @returns {Promise<void>}
+	 */
+	async #backgroundRefresh(key) {
+		if (key === "system_policies") {
+			try {
+				console.log("Background refresh triggered for policies");
+				this.#metrics?.increment("backgroundRefreshes");
+				await this.loadPolicies();
+				this.#emitPolicyEvent("policies_refreshed", {
+					timestamp: new Date().toISOString(),
+					trigger: "background_refresh",
+				});
+			} catch (error) {
+				this.#metrics?.increment("backgroundRefreshErrors");
+				console.error("Background refresh failed:", error);
+			}
+		}
+	}
+
+	/**
+	 * Sets up a periodic interval to check for policy updates from the server.
+	 * @private
+	 * @param {number} interval - The synchronization interval in milliseconds.
+	 */
+	#setupBackgroundSync(interval) {
+		setInterval(async () => {
+			try {
+				const cacheAge = this.#cache
+					? this.#cache.getAge("system_policies")
+					: Infinity;
+
+				if (cacheAge > 300000) {
+					// 5 minutes
+					await this.loadPolicies();
+				}
+			} catch (error) {
+				console.error("Background sync failed:", error);
+			}
+		}, interval);
+	}
+
+	/**
+	 * Invalidates specific cache entries related to a policy change to ensure consistency.
+	 * @param {string} domain - The domain of the changed policy.
+	 * @param {string} key - The key of the changed policy.
+	 */
+	#invalidatePolicyCache(domain, key) {
+		if (!this.#cache) return;
+
+		// Invalidate specific policy cache
+		this.#cache.delete(`policy_${domain}_${key}`);
+
+		// Invalidate domain cache
+		this.#cache.delete(`domain_policies_${domain}`);
+
+		// Invalidate main policies cache
+		this.#cache.delete("system_policies");
+	}
+
+	/**
+	 * Validates a single policy value against its registered validator.
+	 * @private
+	 * @param {string} policyPath - The full path of the policy (e.g., 'system.enable_debug_mode').
+	 * @param {*} value - The value to validate.
+	 * @param {object} [context={}] - Additional context for the validation.
+	 * @returns {{valid: boolean, message?: string}} The validation result.
+	 */
+	#validatePolicy(policyPath, value, context = {}) {
+		const validator = POLICY_VALIDATORS[policyPath];
+		if (!validator) {
+			return { valid: true }; // No validator = allow
+		}
+
+		// Add environment and other context
+		const fullContext = {
+			environment: this.#config.environment || "development",
+			...context,
+		};
+
+		return validator(value, fullContext);
+	}
+
+	/**
+	 * Checks if enabling a specific policy meets its dependency requirements.
+	 * @private
+	 * @param {string} domain - The domain of the policy.
+	 * @param {string} key - The key of the policy.
+	 * @param {*} value - The new value of the policy.
+	 * @returns {{valid: boolean, message?: string}} The dependency check result.
+	 */
+	#checkDependencies(domain, key, value) {
+		const policyPath = `${domain}.${key}`;
+		const dependencies = POLICY_DEPENDENCIES[policyPath];
+
+		if (!dependencies || !value) {
+			return { valid: true }; // No dependencies or policy being disabled
+		}
+
+		// Check if all dependencies are enabled
+		for (const depPath of dependencies) {
+			const [depDomain, depKey] = depPath.split(".");
+			const depValue = this.getPolicy(depDomain, depKey);
+
+			if (!depValue) {
+				return {
+					valid: false,
+					message: `Required dependency not enabled: ${depPath}`,
+				};
+			}
+		}
+
+		return { valid: true };
+	}
+
+	/**
+	 * Deeply merges a stored policies object into a defaults object.
+	 * @private
+	 * @param {object} defaults - The default policies object.
+	 * @param {object} stored - The stored policies object to merge.
+	 * @returns {object} The merged policies object.
+	 */
+	#mergePolicies(defaults, stored) {
+		const merged = JSON.parse(JSON.stringify(defaults));
+
+		for (const [domain, domainPolicies] of Object.entries(stored)) {
+			if (merged[domain]) {
+				Object.assign(merged[domain], domainPolicies);
+			} else {
+				merged[domain] = domainPolicies;
+			}
+		}
+
+		return merged;
+	}
+
+	/**
+	 * Emits a policy event to all registered listeners and the global event system.
+	 * @private
+	 * @param {string} type - The type of the event (e.g., 'policy_updated').
+	 * @param {object} data - The data payload for the event.
+	 */
+	#emitPolicyEvent(type, data) {
+		const event = {
+			type,
+			data,
+			timestamp: Date.now(),
+		};
+
+		// Align with V8.0: Use the state manager's event bus
+		this.#stateManager?.emit("policyEvent", event);
+	}
+
+	/**
+	 * Validates all loaded policies against their validators.
+	 * @private
+	 * @returns {Promise<void>}
+	 */
+	async #validateAllPolicies() {
+		for (const domain in this.#policies) {
+			for (const key in this.#policies[domain]) {
+				const policyPath = `${domain}.${key}`;
+				const value = this.#policies[domain][key];
+				this.#validatePolicy(policyPath, value);
+			}
+		}
 	}
 }
 

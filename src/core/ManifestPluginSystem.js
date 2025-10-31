@@ -1,5 +1,6 @@
 import { scanForForbiddenPatterns } from "../utils/ArbitraryCodeValidator.js";
 import { PluginError } from "../utils/ErrorHelpers.js";
+
 /**
  * @file ManifestPluginSystem.js
  * @description Replaces a class-based PluginRegistry with a declarative, manifest-driven plugin loading system.
@@ -7,13 +8,25 @@ import { PluginError } from "../utils/ErrorHelpers.js";
  */
 
 /**
+ * @privateFields {#stateManager, #metrics, #errorHelpers, #forensicLogger, #componentRegistry, #actionHandlerRegistry, #loadedPlugins, #pluginManifests, #loadingPromises, #dependencyGraph, #hooks}
  * @class ManifestPluginSystem
  * @classdesc Orchestrates the entire lifecycle of plugins, from discovery and loading based on manifest files
  * to component registration and dependency management.
  */
 export class ManifestPluginSystem {
-	/** @type {import('./HybridStateManager.js').default} */
-	stateManager;
+	// V8.0 Parity: Mandate 3.1 & 3.2 - All internal properties MUST be private.
+	/** @private @type {import('./HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+	/** @private @type {import('./ForensicLogger.js').ForensicLogger|null} */
+	#forensicLogger = null;
+	/** @private @type {import('./ComponentDefinition.js').ComponentDefinitionRegistry|null} */
+	#componentRegistry = null;
+	/** @private @type {import('./ActionHandlerRegistry.js').ActionHandlerRegistry|null} */
+	#actionHandlerRegistry = null;
 	/** @private @type {Map<string, object>} */
 	#loadedPlugins = new Map();
 	/** @private @type {Map<string, object>} */
@@ -44,10 +57,15 @@ export class ManifestPluginSystem {
 	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
 	 */
 	constructor({ stateManager }) {
-		this.stateManager = stateManager;
+		this.#stateManager = stateManager;
 
-		// Align with V8.0: Use the central metrics registry
-		this.metrics = stateManager?.metricsRegistry?.namespace("pluginSystem");
+		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from the stateManager.
+		this.#metrics =
+			this.#stateManager.metricsRegistry?.namespace("pluginSystem");
+		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
+		this.#forensicLogger = this.#stateManager.managers.forensicLogger;
+		this.#componentRegistry = this.#stateManager.managers.componentRegistry;
+		this.#actionHandlerRegistry = this.#stateManager.managers.actionHandler;
 	}
 
 	/**
@@ -55,20 +73,27 @@ export class ManifestPluginSystem {
 	 * @returns {Promise<void>}
 	 */
 	async initialize() {
-		try {
-			// Load plugin manifests from stored entities
-			await this.loadPluginManifests();
+		return this.#errorHelpers.tryOr(
+			async () => {
+				// Load plugin manifests from stored entities
+				await this.#loadPluginManifests();
 
-			// Load enabled plugins
-			await this.#loadEnabledPlugins();
+				// Load enabled plugins
+				await this.#loadEnabledPlugins();
 
-			console.log(
-				`ManifestPluginSystem initialized with ${this.loadedPlugins.size} plugins`
-			);
-		} catch (error) {
-			console.error("Failed to initialize plugin system:", error);
-			throw error;
-		}
+				console.log(
+					`ManifestPluginSystem initialized with ${this.#loadedPlugins.size} plugins`
+				);
+			},
+			(error) => {
+				this.#forensicLogger?.logAuditEvent("PLUGIN_SYSTEM_FAILURE", {
+					operation: "initialize",
+					error: error.message,
+					severity: "critical",
+				});
+			},
+			{ component: "ManifestPluginSystem", operation: "initialize" }
+		);
 	}
 
 	/**
@@ -76,22 +101,28 @@ export class ManifestPluginSystem {
 	 * @private
 	 * @returns {Promise<void>}
 	 */
-	async loadPluginManifests() {
-		try {
-			// Use the correct storage query method as per the V8.0 Global Contracts
-			const manifestEntities =
-				await this.stateManager.storage.instance.query(
-					"objects",
-					"entity_type",
-					"plugin_manifest"
-				);
+	async #loadPluginManifests() {
+		return this.#errorHelpers.tryOr(
+			async () => {
+				// Use the correct storage query method as per the V8.0 Global Contracts
+				const manifestEntities =
+					await this.#stateManager.storage.instance.query(
+						"objects",
+						"entity_type",
+						"plugin_manifest"
+					);
 
-			for (const entity of manifestEntities) {
-				this.registerManifest(entity.data);
+				for (const entity of manifestEntities) {
+					this.registerManifest(entity.data);
+				}
+			},
+			(error) => {
+				this.#forensicLogger?.logAuditEvent("PLUGIN_SYSTEM_FAILURE", {
+					operation: "loadPluginManifests",
+					error: error.message,
+				});
 			}
-		} catch (error) {
-			console.error("Failed to load plugin manifests:", error);
-		}
+		);
 	}
 
 	/**
@@ -141,44 +172,52 @@ export class ManifestPluginSystem {
 	 * @returns {Promise<object>} A promise that resolves with the loaded plugin instance.
 	 */
 	async loadPlugin(pluginId, options = {}) {
-		const startTime = performance.now();
+		return this.#errorHelpers.tryOr(
+			async () => {
+				const startTime = performance.now();
 
-		try {
-			// Check if already loaded
-			if (this.#loadedPlugins.has(pluginId)) {
-				return this.#loadedPlugins.get(pluginId);
+				// Check if already loaded
+				if (this.#loadedPlugins.has(pluginId)) {
+					return this.#loadedPlugins.get(pluginId);
+				}
+
+				// Check if currently loading
+				if (this.#loadingPromises.has(pluginId)) {
+					return await this.#loadingPromises.get(pluginId);
+				}
+
+				// Get manifest
+				const manifest = this.#pluginManifests.get(pluginId);
+				if (!manifest) {
+					throw new PluginError(
+						`Plugin manifest not found: ${pluginId}`
+					);
+				}
+
+				// Create loading promise
+				const loadingPromise = this.#doLoadPlugin(manifest, options);
+				this.#loadingPromises.set(pluginId, loadingPromise);
+
+				const plugin = await loadingPromise;
+
+				// Record metrics
+				const loadTime = performance.now() - startTime;
+				this.#recordLoadTime(loadTime);
+
+				this.#loadingPromises.delete(pluginId);
+				return plugin;
+			},
+			(error) => {
+				this.#metrics?.increment("failedLoads");
+				this.#runHooks("onError", { pluginId, error });
+				this.#forensicLogger?.logAuditEvent("PLUGIN_LOAD_FAILURE", {
+					pluginId,
+					error: error.message,
+				});
+				this.#loadingPromises.delete(pluginId);
+				throw error; // Re-throw to allow caller to handle it.
 			}
-
-			// Check if currently loading
-			if (this.#loadingPromises.has(pluginId)) {
-				return await this.#loadingPromises.get(pluginId);
-			}
-
-			// Get manifest
-			const manifest = this.#pluginManifests.get(pluginId);
-			if (!manifest) {
-				throw new Error(`Plugin manifest not found: ${pluginId}`);
-			}
-
-			// Create loading promise
-			const loadingPromise = this.#doLoadPlugin(manifest, options);
-			this.#loadingPromises.set(pluginId, loadingPromise);
-
-			const plugin = await loadingPromise;
-
-			// Record metrics
-			const loadTime = performance.now() - startTime;
-			this.#recordLoadTime(loadTime);
-
-			return plugin;
-		} catch (error) {
-			this.metrics?.increment("failedLoads");
-			this.#runHooks("onError", { pluginId, error });
-			console.error(`Failed to load plugin ${pluginId}:`, error);
-			throw error;
-		} finally {
-			this.#loadingPromises.delete(pluginId);
-		}
+		);
 	}
 
 	/**
@@ -218,13 +257,17 @@ export class ManifestPluginSystem {
 		};
 
 		this.#loadedPlugins.set(pluginId, plugin);
-		this.metrics?.increment("pluginsLoaded");
+		this.#metrics?.increment("pluginsLoaded");
 
 		// Run after load hooks
 		this.#runHooks("afterLoad", { plugin });
 
+		this.#forensicLogger?.logAuditEvent("PLUGIN_LOAD_SUCCESS", {
+			pluginId,
+		});
+
 		// Emit plugin loaded event
-		this.stateManager.emit?.("pluginLoaded", { pluginId, plugin });
+		this.#stateManager.emit("pluginLoaded", { pluginId, plugin });
 
 		return plugin;
 	}
@@ -255,8 +298,8 @@ export class ManifestPluginSystem {
 		const context = {
 			pluginId: manifest.id,
 			manifest,
-			stateManager: this.stateManager, // V8.0 Parity: Pass stateManager as the source of truth
-			managers: this.stateManager.managers, // Pass all system managers to the plugin
+			stateManager: this.#stateManager, // V8.0 Parity: Pass stateManager as the source of truth
+			managers: this.#stateManager.managers, // Pass all system managers to the plugin
 
 			// Registration methods
 			registerComponent: (id, definition) =>
@@ -272,7 +315,7 @@ export class ManifestPluginSystem {
 
 			// Utility methods
 			emit: (event, data) =>
-				this.stateManager.emit?.(
+				this.#stateManager.emit?.(
 					`plugin:${manifest.id}:${event}`,
 					data
 				),
@@ -338,21 +381,31 @@ export class ManifestPluginSystem {
 	 * @param {object} manifest - The manifest of the plugin being loaded.
 	 */
 	async #loadFrontendRuntime(runtimeUrl, manifest) {
-		// V8.0 Parity: Mandate 2.1 - Scan for forbidden code patterns before execution.
+		// V8.0 Parity: Mandate 2.1 - Scan for forbidden code patterns before execution
+		const response = await fetch(runtimeUrl);
+		if (!response.ok) {
+			throw new PluginError(
+				`Failed to fetch plugin runtime: ${response.statusText}`,
+				{ pluginId: manifest.id }
+			);
+		}
+		const codeString = await response.text();
+
 		// This check should only run in non-production environments to avoid performance overhead.
-		if (this.stateManager.config.environment !== "production") {
-			const response = await fetch(runtimeUrl);
-			if (!response.ok) {
-				throw new Error(
-					`Failed to fetch plugin runtime: ${response.statusText}`
-				);
-			}
-			const codeString = await response.text();
-			const violations = scanForForbiddenPatterns(codeString, {
-				ignoreComments: true,
-			});
+		if (this.#stateManager.config.environment !== "production") {
+			const violations = scanForForbiddenPatterns(codeString);
 
 			if (violations.length > 0) {
+				// V8.0 Parity: Mandate 2.4 - Log the security violation before throwing.
+				this.#forensicLogger?.logAuditEvent(
+					"PLUGIN_SECURITY_VIOLATION",
+					{
+						pluginId: manifest.id,
+						violations: violations.map((v) => v.message),
+						severity: "critical",
+					}
+				);
+
 				const errorMessages = violations
 					.map((v) => `- ${v.message} (severity: ${v.severity})`)
 					.join("\n");
@@ -361,14 +414,18 @@ export class ManifestPluginSystem {
 					{
 						pluginId: manifest.id,
 						severity: "critical",
-						showToUser: true,
+						showToUser: true, // This is a user-facing security error
 					}
 				);
 			}
 		}
 
-		// Dynamic import of the plugin module
-		const module = await import(runtimeUrl);
+		// If validation passes, create a blob URL to import the module.
+		// This ensures the code is treated as a standard ES module.
+		const blob = new Blob([codeString], { type: "application/javascript" });
+		const blobUrl = URL.createObjectURL(blob);
+		const module = await import(blobUrl);
+		URL.revokeObjectURL(blobUrl); // Clean up the blob URL after import
 		return module;
 	}
 
@@ -453,10 +510,9 @@ export class ManifestPluginSystem {
 	 * @param {object} definition - The component's definition.
 	 */
 	#registerComponent(pluginId, componentId, definition) {
-		const componentRegistry = this.stateManager.managers.componentRegistry;
-		if (!componentRegistry) return;
+		if (!this.#componentRegistry) return;
 
-		componentRegistry.register({
+		this.#componentRegistry.register({
 			id: `${pluginId}.${componentId}`,
 			...definition,
 			pluginId,
@@ -471,13 +527,15 @@ export class ManifestPluginSystem {
 	 * @param {object} definition - The action's definition.
 	 */
 	#registerAction(pluginId, actionId, definition) {
-		const actionHandlerRegistry = this.stateManager.managers.actionHandler;
-		if (!actionHandlerRegistry) return;
+		if (!this.#actionHandlerRegistry) return;
 
-		actionHandlerRegistry.register(`${pluginId}.${actionId}`, (action) => {
-			// This needs a runtime execution context from the plugin
-			console.log(`Executing plugin action: ${pluginId}.${actionId}`);
-		});
+		this.#actionHandlerRegistry.register(
+			`${pluginId}.${actionId}`,
+			(action) => {
+				// This needs a runtime execution context from the plugin
+				console.log(`Executing plugin action: ${pluginId}.${actionId}`);
+			}
+		);
 	}
 
 	/**
@@ -488,10 +546,9 @@ export class ManifestPluginSystem {
 	 * @param {object} definition - The widget's definition.
 	 */
 	#registerWidget(pluginId, widgetId, definition) {
-		const componentRegistry = this.stateManager.managers.componentRegistry;
-		if (!componentRegistry) return;
+		if (!this.#componentRegistry) return;
 
-		componentRegistry.register({
+		this.#componentRegistry.register({
 			id: `${pluginId}.${widgetId}`,
 			...definition,
 			pluginId,
@@ -507,10 +564,9 @@ export class ManifestPluginSystem {
 	 */
 	#registerFieldRenderer(pluginId, field, definition) {
 		// This would register with a hypothetical FieldRendererRegistry manager
-		const componentRegistry = this.stateManager.managers.componentRegistry;
-		if (!componentRegistry) return;
+		if (!this.#componentRegistry) return;
 
-		componentRegistry.register({
+		this.#componentRegistry.register({
 			id: `field-renderer.${pluginId}.${field}`,
 			...definition,
 		});
@@ -536,10 +592,9 @@ export class ManifestPluginSystem {
 	 * @returns {object[]} A list of matching widget definitions.
 	 */
 	getWidgetsForEntityType(entityType) {
-		const componentRegistry = this.stateManager.managers.componentRegistry;
-		if (!componentRegistry) return [];
+		if (!this.#componentRegistry) return [];
 
-		return componentRegistry
+		return this.#componentRegistry
 			.getForEntityTypes(entityType)
 			.filter((def) => def.category === "widget");
 	}
@@ -551,8 +606,7 @@ export class ManifestPluginSystem {
 	 */
 	getActionsForEntityType(entityType) {
 		// This would query the ActionHandlerRegistry in a real implementation
-		const actionHandlerRegistry = this.stateManager.managers.actionHandler;
-		if (!actionHandlerRegistry) return [];
+		if (!this.#actionHandlerRegistry) return [];
 
 		// Placeholder: This logic would need to be more sophisticated
 		return [];
@@ -566,8 +620,7 @@ export class ManifestPluginSystem {
 	 */
 	async render(widgetConfig) {
 		const widgetId = widgetConfig.component || widgetConfig.widget;
-		const widget =
-			this.stateManager.managers.componentRegistry?.get(widgetId);
+		const widget = this.#componentRegistry?.get(widgetId);
 
 		if (!widget) {
 			console.warn(`Widget not found: ${widgetId}`);
@@ -596,7 +649,7 @@ export class ManifestPluginSystem {
 	 */
 	async executeAction(actionId, context) {
 		// This would execute via the ActionHandlerRegistry
-		const action = this.stateManager.managers.actionHandler?.get(actionId);
+		const action = this.#actionHandlerRegistry?.get(actionId);
 
 		if (!action) {
 			throw new Error(`Action not found: ${actionId}`);
@@ -726,7 +779,7 @@ export class ManifestPluginSystem {
 			this.#runHooks("afterUnload", { pluginId });
 
 			// Emit plugin unloaded event
-			this.stateManager.emit?.("pluginUnloaded", { pluginId });
+			this.#stateManager.emit("pluginUnloaded", { pluginId });
 
 			return true;
 		} catch (error) {
@@ -742,11 +795,10 @@ export class ManifestPluginSystem {
 	 */
 	#removePluginComponents(pluginId) {
 		// Remove from all registries
-		const componentRegistry = this.stateManager.managers.componentRegistry;
-		if (componentRegistry) {
-			for (const [id, def] of componentRegistry.definitions) {
+		if (this.#componentRegistry) {
+			for (const [id, def] of this.#componentRegistry.getAll()) {
 				if (def.pluginId === pluginId) {
-					componentRegistry.unregister(id);
+					this.#componentRegistry.unregister(id);
 				}
 			}
 		}
@@ -761,7 +813,10 @@ export class ManifestPluginSystem {
 	#renderMissingWidget(widgetId) {
 		const div = document.createElement("div");
 		div.className = "plugin-widget-missing";
-		div.innerHTML = `<p>Widget not found: ${widgetId}</p>`;
+		const p = document.createElement("p");
+		// V8.0 Parity: Mandate 2.1 - Use textContent to prevent XSS.
+		p.textContent = `Widget not found: ${widgetId}`;
+		div.appendChild(p);
 		return div;
 	}
 
@@ -775,10 +830,13 @@ export class ManifestPluginSystem {
 	#renderErrorWidget(widgetId, error) {
 		const div = document.createElement("div");
 		div.className = "plugin-widget-error";
-		div.innerHTML = `
-      <p><strong>Widget Error: ${widgetId}</strong></p>
-      <p>${error.message}</p>
-    `;
+		const p1 = document.createElement("p");
+		const strong = document.createElement("strong");
+		strong.textContent = `Widget Error: ${widgetId}`;
+		p1.appendChild(strong);
+		const p2 = document.createElement("p");
+		p2.textContent = error.message;
+		div.append(p1, p2);
 		return div;
 	}
 
@@ -829,7 +887,7 @@ export class ManifestPluginSystem {
 	 * @param {number} loadTime - The loading time in milliseconds.
 	 */
 	#recordLoadTime(loadTime) {
-		this.metrics?.updateAverage("averageLoadTime", loadTime);
+		this.#metrics?.updateAverage("averageLoadTime", loadTime);
 	}
 
 	/**
@@ -855,12 +913,11 @@ export class ManifestPluginSystem {
 	 */
 	getStatistics() {
 		return {
-			...this.metrics?.getAllAsObject(),
+			...(this.#metrics?.getAllAsObject() || {}),
 			pluginsLoaded: this.#loadedPlugins.size,
 			availableManifests: this.#pluginManifests.size,
 			registeredComponents:
-				this.stateManager.managers.componentRegistry?.definitions
-					.size || 0,
+				this.#componentRegistry?.definitions.size || 0,
 		};
 	}
 
@@ -873,8 +930,7 @@ export class ManifestPluginSystem {
 			manifests: Array.from(this.#pluginManifests.values()),
 			loadedPlugins: Array.from(this.#loadedPlugins.keys()),
 			components: Array.from(
-				this.stateManager.managers.componentRegistry?.definitions.keys() ||
-					[]
+				this.#componentRegistry?.definitions.keys() || []
 			),
 		};
 	}

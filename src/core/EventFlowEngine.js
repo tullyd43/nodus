@@ -4,6 +4,7 @@
 import { BoundedStack } from "../utils/BoundedStack.js";
 
 /**
+ * @privateFields {#stateManager, #flows, #executionStack, #maxExecutionDepth, #eventQueue, #processing, #triggerIndex, #metrics, #conditionRegistry, #actionHandler, #errorHelpers}
  * @class EventFlowEngine
  * @classdesc Orchestrates a declarative, entity-driven event processing system.
  * It replaces a traditional event bus with a more powerful system where "flows"
@@ -11,7 +12,6 @@ import { BoundedStack } from "../utils/BoundedStack.js";
  */
 export class EventFlowEngine {
 	// V8.0 Parity: Use private fields for true encapsulation.
-	/** @private @type {import('./HybridStateManager.js').HybridStateManager} */
 	#stateManager;
 	/** @private @type {Map<string, object>} */
 	#flows;
@@ -92,7 +92,7 @@ export class EventFlowEngine {
 		});
 
 		this.#registerDefaultFlows();
-		console.info(
+		console.log(
 			`EventFlowEngine initialized with ${this.#flows.size} flows`
 		);
 	}
@@ -144,8 +144,8 @@ export class EventFlowEngine {
 	}
 
 	/**
-	 * V8.0 Parity: The `emit` method is removed. The engine now listens to the stateManager.
-	 * This method queues events received from the stateManager for processing.
+	 * Handles events received from the stateManager's central event bus by queuing them for processing.
+	 * The `emit` method is removed as the engine now listens directly to the stateManager.
 	 * @param {string} eventName - The name of the event.
 	 * @param {object} payload - The event data.
 	 * @private
@@ -185,6 +185,7 @@ export class EventFlowEngine {
 	 * Processes a single event by finding and executing all matching flows.
 	 * @private
 	 * @param {object} event - The event object to process.
+	 * @returns {Promise<void>}
 	 */
 	async #processEvent(event) {
 		const startTime = performance.now();
@@ -290,8 +291,6 @@ export class EventFlowEngine {
 		this.#metrics?.increment("flowsExecuted");
 
 		try {
-			// V8.0 Parity: The outer try/catch is redundant as `tryOr` in `processEvent` handles it.
-			// Individual actions and conditions are already wrapped in `tryOr`.
 			const conditionResult = await this.#evaluateConditions(flow, event);
 			const actions =
 				flow.actions[conditionResult] || flow.actions.default || [];
@@ -384,6 +383,7 @@ export class EventFlowEngine {
 	 * @param {object} event - The current event context.
 	 * @param {object} flow - The parent flow.
 	 * @returns {Promise<void>}
+	 * @private
 	 */
 	async #executeAction(action, event, flow) {
 		// V8.0 Parity: Use the action handler from the dedicated manager and error helpers.
@@ -404,7 +404,7 @@ export class EventFlowEngine {
 			await handler(action, event, flow, this.#stateManager);
 			return;
 		}
-		await this.#errorHelpers?.tryOr(
+		await this.#errorHelpers.tryOr(
 			() => handler(action, event, flow, this.#stateManager),
 			null, // Let the global handler manage it
 			{

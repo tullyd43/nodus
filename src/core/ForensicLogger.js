@@ -12,33 +12,45 @@ import { DateCore } from "@utils/DateUtils.js";
  * @description Secure, immutable logging of audit events. This module captures,
  * stores, and can forward security-relevant and operational audit events,
  * providing a tamper-evident and comprehensive record of system activities.
+ * @privateFields {#stateManager, #db, #metrics, #errorHelpers, #config, #ready, #inMemoryBuffer, #bufferFlushInterval, #lastLogHash}
  */
 export class ForensicLogger {
-	/** @private @type {ModernIndexedDB|null} */
+	// V8.0 Parity: Mandate 3.1 - All internal properties MUST be private.
+	/** @private @type {import('./HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('./storage/ModernIndexedDB.js').ModernIndexedDB|null} */
 	#db = null;
-	/** @private @type {boolean} */
-	#ready = false;
+	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+
 	/** @private @type {object} */
 	#config;
+	/** @private @type {boolean} */
+	#ready = false;
 	/**
 	 * A buffer for events before the database is ready or for temporary storage.
 	 * @private
 	 * @type {Array<object>}
 	 */
-	#inMemoryBuffer = []; // Buffer for events before DB is ready or for temporary storage
-	/** @private @type {number|null} */
+	#inMemoryBuffer = [];
+	/** @private @type {ReturnType<typeof setInterval>|null} */
 	#bufferFlushInterval = null;
+	/** @private @type {string|null} */
+	#lastLogHash = null;
 
 	/**
 	 * Creates an instance of ForensicLogger.
 	 * @param {object} context - The application context.
-	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager, providing access to all other managers.
+	 * @param {import('./HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 */
 	constructor({ stateManager }) {
-		this.stateManager = stateManager;
-		// V8.0 Parity: Derive metricsRegistry directly from stateManager.
-		this.metrics =
-			stateManager.metricsRegistry?.namespace("forensicLogger");
+		// V8.0 Parity: Mandate 1.2 & 3.2 - Store stateManager privately and derive all dependencies.
+		this.#stateManager = stateManager;
+		this.#metrics =
+			this.#stateManager.metricsRegistry?.namespace("forensicLogger");
+		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
 
 		const options = stateManager.config.forensicLoggerConfig || {};
 		this.#config = {
@@ -58,8 +70,8 @@ export class ForensicLogger {
 	async initialize() {
 		if (this.#ready) return this;
 		// V8.0 Parity: Use the shared storage instance from HybridStateManager.
-		// Let errors propagate to the bootstrap process.
-		this.#db = this.stateManager.storage.instance;
+		// Let errors propagate to the bootstrap process if storage is missing.
+		this.#db = this.#stateManager.storage.instance;
 		if (!this.#db) {
 			throw new Error("Storage instance not available in stateManager.");
 		}
@@ -96,20 +108,25 @@ export class ForensicLogger {
 	 * @returns {Promise<object>} The structured and signed event envelope.
 	 */
 	async #createEnvelope(type, payload, context = {}) {
-		const securityManager = this.stateManager.managers?.securityManager;
-		const signer = this.stateManager.signer;
+		const securityManager = this.#stateManager.managers?.securityManager;
+		const signer = this.#stateManager.signer;
 
 		if (!securityManager || !signer) {
-			console.warn(
-				"[ForensicLogger] SecurityManager or Signer not available. Audit event will be unsigned and may lack full context."
+			// In a production environment, this should throw an error or halt.
+			// For development, a warning is acceptable.
+			this.#errorHelpers?.handleError(
+				new Error(
+					"SecurityManager or Signer not available. Audit event will be unsigned."
+				),
+				{ severity: "high", component: "ForensicLogger" }
 			);
 		}
 
 		const userContext =
 			context.securitySubject || securityManager?.getSubject() || {};
 
-		// In a real implementation, `previousHash` would be retrieved from the last stored log.
-		const previousHash = "00000000000000000000000000000000"; // Placeholder
+		// Retrieve the hash of the last log entry to form a chain.
+		const previousHash = await this.#getPreviousLogHash();
 
 		// V8.0 Parity: Mandate 2.4 - Create the core data structure of the envelope first.
 		const envelopeData = {
@@ -128,23 +145,32 @@ export class ForensicLogger {
 			payload,
 		};
 
-		let signature = {
+		const signature = {
 			signature: null,
 			algorithm: "unsigned",
 			publicKey: null,
 		};
 
 		// V8.0 Parity: Mandate 2.4 - The signature must cover the envelope's core data.
+		// The signer is expected to handle the JSON stringification and hashing internally.
 		if (signer) {
-			// The signer is expected to handle the JSON stringification and hashing internally.
-			signature = await signer.sign(envelopeData);
+			const {
+				signature: sig,
+				algorithm,
+				publicKey,
+			} = await signer.sign(envelopeData);
+			signature.signature = sig;
+			signature.algorithm = algorithm;
+			signature.publicKey = publicKey;
 		}
 
 		const finalEnvelope = {
 			...envelopeData,
 			signature, // Embed the signature object
+			// The hash of the current envelope is calculated *after* signing.
+			hash: await this.#calculateHash(envelopeData, signature),
 		};
-
+		this.#lastLogHash = finalEnvelope.hash; // Cache the latest hash
 		return finalEnvelope;
 	}
 
@@ -161,12 +187,12 @@ export class ForensicLogger {
 				"[ForensicLogger] Invalid event format, skipping:",
 				event
 			);
-			this.metrics?.increment("errors");
+			this.#metrics?.increment("errors.invalidFormat");
 			return;
 		}
 
 		this.#inMemoryBuffer.push(event);
-		this.metrics?.increment("eventsLogged");
+		this.#metrics?.increment("eventsLogged");
 
 		if (this.#inMemoryBuffer.length >= this.#config.bufferSize) {
 			await this.#flushBuffer();
@@ -176,7 +202,7 @@ export class ForensicLogger {
 			this.#forwardToRemote(event);
 		}
 
-		this.stateManager?.emit?.("auditEventLogged", event);
+		this.#stateManager?.emit?.("auditEventLogged", event);
 	}
 
 	/**
@@ -194,9 +220,9 @@ export class ForensicLogger {
 
 		try {
 			await this.#db.putBulk(this.#config.storeName, eventsToFlush);
-			this.metrics?.increment("eventsFlushedToDB", eventsToFlush.length);
-			this.metrics?.set("lastFlush", new Date().toISOString());
-			this.stateManager?.emit?.("forensicLogFlushed", {
+			this.#metrics?.increment("eventsFlushedToDB", eventsToFlush.length);
+			this.#metrics?.set("lastFlush", new Date().toISOString());
+			this.#stateManager?.emit?.("forensicLogFlushed", {
 				count: eventsToFlush.length,
 			});
 		} catch (error) {
@@ -204,7 +230,7 @@ export class ForensicLogger {
 				"[ForensicLogger] Failed to flush events to IndexedDB:",
 				error
 			);
-			this.stateManager?.emit?.("forensicLogError", {
+			this.#stateManager?.emit?.("forensicLogError", {
 				type: "flush_failed",
 				message: error.message,
 				error,
@@ -212,7 +238,7 @@ export class ForensicLogger {
 			});
 			// Re-add to buffer for retry or handle differently
 			this.#inMemoryBuffer.unshift(...eventsToFlush);
-			this.metrics?.increment("errors");
+			this.#metrics?.increment("errors.flushFailed");
 		}
 	}
 
@@ -238,8 +264,8 @@ export class ForensicLogger {
 					`Remote logging failed: ${response.status} ${response.statusText}`
 				);
 			}
-			this.metrics?.increment("eventsForwarded");
-			this.stateManager?.emit?.("forensicLogForwarded", {
+			this.#metrics?.increment("eventsForwarded");
+			this.#stateManager?.emit?.("forensicLogForwarded", {
 				eventId: event.id,
 			});
 		} catch (error) {
@@ -247,13 +273,13 @@ export class ForensicLogger {
 				`[ForensicLogger] Failed to forward event ${event.id} to remote:`,
 				error
 			);
-			this.stateManager?.emit?.("forensicLogError", {
+			this.#stateManager?.emit?.("forensicLogError", {
 				type: "remote_forward_failed",
 				message: error.message,
 				error,
 				eventId: event.id,
 			});
-			this.metrics?.increment("errors");
+			this.#metrics?.increment("errors.remoteForwardFailed");
 		}
 	}
 
@@ -294,7 +320,7 @@ export class ForensicLogger {
 				"[ForensicLogger] Failed to retrieve audit trail:",
 				error
 			);
-			this.stateManager?.emit?.("forensicLogError", {
+			this.#stateManager?.emit?.("forensicLogError", {
 				type: "retrieve_failed",
 				message: error.message,
 				error,
@@ -340,12 +366,49 @@ export class ForensicLogger {
 	}
 
 	/**
+	 * Retrieves the hash of the most recent log entry from the database.
+	 * @private
+	 * @returns {Promise<string>} The hash of the last log entry, or a default initial hash.
+	 */
+	async #getPreviousLogHash() {
+		if (this.#lastLogHash) {
+			return this.#lastLogHash;
+		}
+
+		if (!this.#db || !this.#ready) {
+			return "0".repeat(64); // Initial hash if DB is not ready
+		}
+
+		try {
+			const lastEvent = await this.#db.getLast(this.#config.storeName);
+			this.#lastLogHash = lastEvent?.hash || "0".repeat(64);
+			return this.#lastLogHash;
+		} catch (error) {
+			console.error(
+				"[ForensicLogger] Could not retrieve last log hash:",
+				error
+			);
+			return "0".repeat(64); // Fallback on error
+		}
+	}
+
+	/**
+	 * Calculates a SHA-256 hash of the log envelope's content.
+	 * @private
+	 * @param {object} envelopeData - The core data of the envelope.
+	 * @param {object} signature - The signature object.
+	 * @returns {Promise<string>} The hex-encoded SHA-256 hash.
+	 */
+	async #calculateHash(envelopeData, signature) {
+		return this.#stateManager.signer.hash({ ...envelopeData, signature });
+	}
+	/**
 	 * Gets current metrics for the ForensicLogger.
 	 * @returns {object} The metrics object.
 	 */
 	getMetrics() {
 		return {
-			...this.metrics?.getAllAsObject(),
+			...this.#metrics?.getAllAsObject(),
 			inMemoryBufferSize: this.#inMemoryBuffer.length,
 			dbReady: this.#ready,
 		};

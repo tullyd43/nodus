@@ -9,6 +9,7 @@
  * This module is a key component of the **Compliance** and **Robustness** pillars.
  *
  * @module StrictValidator
+ * @privateFields {#securityRules, #complianceRules, #businessRules, #stateManager, #metrics, #forensicLogger}
  */
 export default class StrictValidator {
 	/** @private @type {object} */
@@ -17,7 +18,7 @@ export default class StrictValidator {
 	#complianceRules;
 	/** @private @type {object} */
 	#businessRules;
-	/** @private @type {import('../../HybridStateManager.js').default} */
+	/** @private @type {import('../../HybridStateManager.js').default|null} */
 	#stateManager = null;
 	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics = null;
@@ -45,10 +46,12 @@ export default class StrictValidator {
 		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
 
 		// Initialize rule sets.
-		this.#securityRules = StrictValidator.#initializeSecurityRules(options);
+		this.#securityRules =
+			StrictValidator.#_initializeSecurityRules(options);
 		this.#complianceRules =
-			StrictValidator.#initializeComplianceRules(options);
-		this.#businessRules = StrictValidator.#initializeBusinessRules(options);
+			StrictValidator.#_initializeComplianceRules(options);
+		this.#businessRules =
+			StrictValidator.#_initializeBusinessRules(options);
 		console.log("[StrictValidator] Loaded for strict validation");
 	}
 
@@ -74,18 +77,19 @@ export default class StrictValidator {
 		const errors = [];
 		const warnings = [];
 		const validationSteps = [
-			this.#validateSecurity.bind(this),
-			this.#validateCompliance.bind(this),
-			this.#validateBusinessRules.bind(this),
-			this.#validateDataIntegrity.bind(this),
+			this.#_validateSecurity(entity, context),
+			this.#_validateCompliance(entity, context),
+			this.#_validateBusinessRules(entity, context),
+			this.#_validateDataIntegrity(entity, context),
 		];
 
 		// V8.0 Parity: Simplify validation pipeline execution.
-		for (const step of validationSteps) {
-			const result = await step(entity, context);
-			errors.push(...result.errors);
-			warnings.push(...result.warnings);
-		}
+		// Use Promise.all for concurrent execution and cleaner result aggregation.
+		const results = await Promise.all(validationSteps);
+		results.forEach((result) => {
+			errors.push(...(result.errors || []));
+			warnings.push(...(result.warnings || []));
+		});
 
 		const isValid = errors.length === 0;
 		const duration = performance.now() - startTime;
@@ -93,7 +97,7 @@ export default class StrictValidator {
 
 		if (!isValid) {
 			this.#metrics?.increment("validationsFailed");
-			this.#audit("validation_failed", {
+			this.#_audit("validation_failed", {
 				entityId: entity.id,
 				entityType: entity.entity_type,
 				errors,
@@ -153,7 +157,7 @@ export default class StrictValidator {
 
 		if (fieldRule.sensitiveData) {
 			const isSensitiveAndInvalid =
-				!StrictValidator.#validateSensitiveData(value);
+				!StrictValidator.#_validateSensitiveData(value);
 			if (isSensitiveAndInvalid) {
 				errors.push(
 					`Field ${fieldName} contains potentially sensitive data that requires encryption`
@@ -198,7 +202,7 @@ export default class StrictValidator {
 	 * @param {object} entity - The entity to validate.
 	 * @returns {Promise<{errors: string[], warnings: string[]}>} The validation errors and warnings.
 	 */
-	async #validateSecurity(entity, context) {
+	async #_validateSecurity(entity, context) {
 		const errors = [];
 		const warnings = [];
 
@@ -227,7 +231,7 @@ export default class StrictValidator {
 			Array.isArray(entity.compartment_markings)
 		) {
 			for (const compartment of entity.compartment_markings) {
-				if (!StrictValidator.#isValidCompartment(compartment)) {
+				if (!StrictValidator.#_isValidCompartment(compartment)) {
 					errors.push(`Invalid compartment marking: ${compartment}`);
 				}
 			}
@@ -236,7 +240,7 @@ export default class StrictValidator {
 		// 3. Data integrity hash validation (Example, assuming it's a feature)
 		if (entity.integrity_hash) {
 			const calculatedHash =
-				await StrictValidator.#calculateIntegrityHash(entity);
+				await StrictValidator.#_calculateIntegrityHash(entity);
 			if (calculatedHash !== entity.integrity_hash) {
 				errors.push(
 					"Data integrity hash mismatch - possible tampering detected"
@@ -255,13 +259,16 @@ export default class StrictValidator {
 		return { errors, warnings };
 	}
 
-	async #validateCompliance(entity, context) {
+	async #_validateCompliance(entity, context) {
 		const errors = [];
 		const warnings = [];
 
 		// 1. GDPR compliance (if applicable)
 		if (
-			StrictValidator.#containsPersonalData(entity, this.#complianceRules)
+			StrictValidator.#_containsPersonalData(
+				entity,
+				this.#complianceRules
+			)
 		) {
 			if (!entity.gdpr_compliant) {
 				errors.push(
@@ -278,7 +285,7 @@ export default class StrictValidator {
 
 		// 2. HIPAA compliance (if applicable)
 		if (
-			StrictValidator.#containsHealthData(entity, this.#complianceRules)
+			StrictValidator.#_containsHealthData(entity, this.#complianceRules)
 		) {
 			if (!entity.hipaa_compliant) {
 				errors.push(
@@ -314,27 +321,31 @@ export default class StrictValidator {
 		return { errors, warnings };
 	}
 
-	async #validateBusinessRules(entity, context) {
+	async #_validateBusinessRules(entity, context) {
 		const errors = [];
 		const warnings = [];
 
 		// 1. Required fields validation
-		const requiredFields = StrictValidator.#getRequiredFields(
+		const requiredFields = StrictValidator.#_getRequiredFields(
 			entity.entity_type,
 			this.#businessRules
 		);
 		for (const field of requiredFields) {
-			if (!entity[field] || entity[field] === "") {
+			if (
+				entity[field] === undefined ||
+				entity[field] === null ||
+				entity[field] === ""
+			) {
 				errors.push(`Required field missing: ${field}`);
 			}
 		}
 
 		// 2. Field format validation
-		if (entity.email && !StrictValidator.#isValidEmail(entity.email)) {
+		if (entity.email && !StrictValidator.#_isValidEmail(entity.email)) {
 			errors.push("Invalid email format");
 		}
 
-		if (entity.phone && !StrictValidator.#isValidPhone(entity.phone)) {
+		if (entity.phone && !StrictValidator.#_isValidPhone(entity.phone)) {
 			warnings.push("Phone number format may be invalid");
 		}
 
@@ -365,14 +376,14 @@ export default class StrictValidator {
 		return { errors, warnings };
 	}
 
-	async #validateDataIntegrity(entity, context) {
+	async #_validateDataIntegrity(entity, context) {
 		const errors = [];
 		const warnings = [];
 
 		// 1. Check for SQL injection patterns
-		const textFields = StrictValidator.#getTextFields(entity);
+		const textFields = StrictValidator.#_getTextFields(entity);
 		for (const [field, value] of textFields) {
-			if (StrictValidator.#containsSQLInjection(value)) {
+			if (StrictValidator.#_containsSQLInjection(value)) {
 				errors.push(
 					`Potential SQL injection detected in field: ${field}`
 				);
@@ -381,7 +392,7 @@ export default class StrictValidator {
 
 		// 2. Check for XSS patterns
 		for (const [field, value] of textFields) {
-			if (StrictValidator.#containsXSS(value)) {
+			if (StrictValidator.#_containsXSS(value)) {
 				errors.push(
 					`Potential XSS content detected in field: ${field}`
 				);
@@ -399,7 +410,7 @@ export default class StrictValidator {
 
 		// 4. Check for binary data in text fields
 		for (const [field, value] of textFields) {
-			if (StrictValidator.#containsBinaryData(value)) {
+			if (StrictValidator.#_containsBinaryData(value)) {
 				warnings.push(`Field ${field} may contain binary data`);
 			}
 		}
@@ -409,7 +420,7 @@ export default class StrictValidator {
 
 	// Helper methods
 	/** @private @static */
-	static #initializeSecurityRules(options) {
+	static #_initializeSecurityRules(options) {
 		return {
 			requireAuditTrail: options.requireAuditTrail ?? false,
 			fields: {
@@ -435,7 +446,7 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #initializeComplianceRules(options) {
+	static #_initializeComplianceRules(options) {
 		return {
 			gdpr: {
 				personalDataFields: [
@@ -461,7 +472,7 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #initializeBusinessRules(options) {
+	static #_initializeBusinessRules(options) {
 		return {
 			requiredFields: {
 				person: ["name", "entity_type"],
@@ -473,7 +484,7 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #isValidCompartment(compartment) {
+	static #_isValidCompartment(compartment) {
 		const validCompartments = [
 			"NATO",
 			"HUMINT",
@@ -490,7 +501,7 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static async #calculateIntegrityHash(entity) {
+	static async #_calculateIntegrityHash(entity) {
 		// Simple integrity hash calculation
 		const dataToHash = JSON.stringify({
 			id: entity.id,
@@ -509,7 +520,7 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #containsPersonalData(entity, complianceRules) {
+	static #_containsPersonalData(entity, complianceRules) {
 		const personalFields = complianceRules.gdpr.personalDataFields;
 		return personalFields.some(
 			(field) => entity[field] && entity[field] !== ""
@@ -517,7 +528,7 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #containsHealthData(entity, complianceRules) {
+	static #_containsHealthData(entity, complianceRules) {
 		const healthFields = complianceRules.hipaa.healthDataFields;
 		return healthFields.some(
 			(field) => entity[field] && entity[field] !== ""
@@ -525,12 +536,12 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #getRequiredFields(entityType, businessRules) {
+	static #_getRequiredFields(entityType, businessRules) {
 		return businessRules.requiredFields[entityType] || ["entity_type"];
 	}
 
 	/** @private @static */
-	static #isValidEmail(email) {
+	static #_isValidEmail(email) {
 		// A more robust regex could be used, but this is a common, reasonable one.
 		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 		return emailRegex.test(email);
@@ -541,13 +552,13 @@ export default class StrictValidator {
 	 * @private
 	 * @static
 	 */
-	static #isValidPhone(phone) {
+	static #_isValidPhone(phone) {
 		const phoneRegex = /^[+]?[1-9][\d]{0,15}$/;
 		return phoneRegex.test(phone.replace(/[\s\-()]/g, ""));
 	}
 
 	/** @private @static */
-	static #getTextFields(entity) {
+	static #_getTextFields(entity) {
 		const textFields = [];
 		for (const [key, value] of Object.entries(entity)) {
 			if (typeof value === "string" && value.length > 0) {
@@ -558,7 +569,7 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #containsSQLInjection(text) {
+	static #_containsSQLInjection(text) {
 		// This is a basic check. A real-world implementation should be more robust.
 		const sqlPatterns = [
 			/(\b(union|select|insert|update|delete|drop)\b)/i,
@@ -570,7 +581,7 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #containsXSS(text) {
+	static #_containsXSS(text) {
 		// This is a basic check. A real-world implementation should use a library like DOMPurify on the receiving end.
 		const xssPatterns = [
 			/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
@@ -583,14 +594,14 @@ export default class StrictValidator {
 	}
 
 	/** @private @static */
-	static #containsBinaryData(text) {
+	static #_containsBinaryData(text) {
 		// This regex specifically targets non-whitespace ASCII control characters (0x00-0x08, 0x0B-0x0C, 0x0E-0x1F)
 		// and the DEL character (0x7F), which are typically unexpected in clean text fields.
 		return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(text);
 	}
 
 	/** @private @static */
-	static #validateSensitiveData(value) {
+	static #_validateSensitiveData(value) {
 		// This is a placeholder. In a real system, this would check if the data
 		// appears to be unencrypted PII. For this validator, we assume that if
 		// a field is marked as sensitive, it must be passed in an encrypted format.
@@ -623,7 +634,7 @@ export default class StrictValidator {
 	 * @param {string} eventType - The type of event to log.
 	 * @param {object} data - The data associated with the event.
 	 */
-	#audit(eventType, data) {
+	#_audit(eventType, data) {
 		if (this.#forensicLogger) {
 			this.#forensicLogger.logAuditEvent(
 				`STRICT_VALIDATOR_${eventType.toUpperCase()}`,

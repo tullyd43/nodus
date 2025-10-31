@@ -1,5 +1,6 @@
 /**
  * @file forensic_log_migrations.js
+ * @version 1.1.0
  * @description Defines the schema migrations for the ForensicLogger's IndexedDB.
  */
 
@@ -12,22 +13,29 @@ export const forensicLogMigrations = [
 	{
 		version: 1,
 		migrate: (db, transaction, oldVersion) => {
-			// This version is a placeholder for the initial creation.
-			// The main object store is created in ModernIndexedDB if it doesn't exist.
-			// We only need to add migrations for versions > 1.
+			// Version 1: Initial schema creation.
+			// The 'audit_events' object store with 'id' as keyPath is created by ModernIndexedDB.
+			// No additional changes are needed in this migration.
 		},
 	},
 	{
 		version: 2,
 		migrate: (db, transaction, oldVersion) => {
-			// This migration adds new indexes for better query performance.
-			// First, get a reference to the object store.
+			// Version 2: Add essential indexes for querying audit events.
+			// This migration improves performance for common audit scenarios.
 			const store = transaction.objectStore("audit_events");
 
-			// Add an index on the 'type' field for filtering events by type.
+			// Mandate 2.4: Index 'type' for filtering events by category (e.g., 'SECURITY_CONTEXT_SET').
 			store.createIndex("type", "type", { unique: false });
-			// Add an index on the 'userId' field for auditing specific users.
-			store.createIndex("userId", "userId", { unique: false });
+
+			// Mandate 2.4: Index 'userContext.userId' to allow efficient querying of actions performed by a specific user.
+			// This supports creating a complete audit trail for any individual.
+			store.createIndex("userId", "userContext.userId", {
+				unique: false,
+			});
+
+			// Performance Pillar: Index 'timestamp' for fast time-based queries (e.g., "show all events from last 24 hours").
+			store.createIndex("timestamp", "timestamp", { unique: false });
 		},
 	},
 ];

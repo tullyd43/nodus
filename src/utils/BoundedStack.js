@@ -1,5 +1,4 @@
 import { DateCore } from "./DateUtils.js"; // DateCore is now the lean, integrated version
-import { AppError } from "./ErrorHelpers.js";
 
 /**
  * @class BoundedStack
@@ -17,6 +16,8 @@ export class BoundedStack {
 	#stateManager;
 	#metricsRegistry;
 	#name;
+	/** @private */
+	#AppError;
 
 	/**
 	 * Creates an instance of BoundedStack.
@@ -31,14 +32,8 @@ export class BoundedStack {
 			!Number.isInteger(maxSize) ||
 			maxSize <= 0
 		) {
-			throw new AppError(
-				"BoundedStack maxSize must be a positive integer.",
-				{
-					category: "configuration_error",
-					severity: "high",
-					context: { maxSize },
-				}
-			);
+			// AppError might not be available yet, this is a startup error.
+			throw new Error("BoundedStack maxSize must be a positive integer.");
 		}
 
 		this.#maxSize = maxSize;
@@ -56,6 +51,9 @@ export class BoundedStack {
 		} else if (metricsRegistry) {
 			this.#metricsRegistry = metricsRegistry;
 		}
+
+		this.#AppError =
+			this.#stateManager?.managers?.errorHelpers?.AppError || Error;
 	}
 
 	/**

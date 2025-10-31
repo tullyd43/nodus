@@ -1,6 +1,8 @@
 // modules/aes-crypto.js
 // AES crypto module for enterprise security
 
+import { AppError } from "../../../utils/ErrorHelpers.js";
+
 /**
  * @description
  * Provides enterprise-grade cryptographic services using the Web Crypto API.
@@ -11,18 +13,26 @@
  * @module AESCrypto
  * @see https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto
  * @see https://en.wikipedia.org/wiki/Galois/Counter_Mode
- * Provides enterprise-grade encryption using AES-GCM. It derives a key from user credentials
- * and uses it for symmetric encryption and decryption operations.
+ *
+ * @privateFields {#key, #keyVersion, #ready, #stateManager, #metrics, #forensicLogger, #errorHelpers, #securityManager}
  */
 export default class AESCrypto {
 	/** @private @type {CryptoKey|null} */
 	#key = null;
 	/** @private @type {number} */
 	#keyVersion = 1;
-	/** @private */
+	/** @private @type {boolean} */
 	#ready = false;
 	/** @private @type {import('../../HybridStateManager.js').default|null} */
 	#stateManager = null;
+	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {import('../../ForensicLogger.js').default|null} */
+	#forensicLogger = null;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers = null;
+	/** @private @type {import('../../security/SecurityManager.js').default|null} */
+	#securityManager = null;
 
 	/**
 	 * Creates an instance of AESCrypto.
@@ -31,6 +41,13 @@ export default class AESCrypto {
 	 */
 	constructor({ stateManager }) {
 		this.#stateManager = stateManager;
+		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
+		this.#metrics =
+			this.#stateManager?.metricsRegistry?.namespace("aesCrypto");
+		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
+		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
+		this.#securityManager = this.#stateManager?.managers?.securityManager;
+
 		console.log("[AESCrypto] Loaded for enterprise-grade encryption");
 	}
 
@@ -40,7 +57,7 @@ export default class AESCrypto {
 	 */
 	async init() {
 		// V8.0 Parity: The authContext is now derived from the stateManager's securityManager.
-		this.#key = await this.#deriveKey();
+		this.#key = await this.#deriveKey(this.#keyVersion);
 		this.#ready = true;
 		console.log("[AESCrypto] Enterprise crypto initialized");
 		return this;
@@ -49,15 +66,14 @@ export default class AESCrypto {
 	/**
 	 * Encrypts data using AES-GCM.
 	 * @param {any} data - The plaintext data to encrypt.
-	 * @returns {Promise<{data: Uint8Array, iv: Uint8Array, version: number, alg: string, encrypted: boolean}>} An envelope object containing the ciphertext (`data`), initialization vector (`iv`), and metadata.
+	 * @returns {Promise<{data: string, iv: string, version: number, alg: string, encrypted: boolean}>} An envelope object containing the base64-encoded ciphertext (`data`), initialization vector (`iv`), and metadata.
 	 * @throws {Error} If the crypto module is not initialized or if encryption fails.
 	 */
 	async encrypt(data) {
-		if (!this.#ready) throw new Error("Crypto not initialized");
+		if (!this.#ready)
+			throw new AppError("AESCrypto module is not initialized.");
 
-		const metrics = this.#getMetrics();
 		const startTime = performance.now();
-
 		try {
 			const plaintext = new TextEncoder().encode(JSON.stringify(data));
 			const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -69,22 +85,27 @@ export default class AESCrypto {
 			);
 
 			const result = {
-				data: new Uint8Array(encryptedData),
-				iv,
+				data: this.#bufferToBase64(encryptedData),
+				iv: this.#bufferToBase64(iv),
 				version: this.#keyVersion,
 				alg: "AES-GCM-256",
 				encrypted: true,
 			};
 
-			metrics?.increment("encryptionCount");
-			metrics?.updateAverage("latency", performance.now() - startTime);
+			this.#metrics?.increment("encryptionCount");
+			this.#metrics?.updateAverage(
+				"latency",
+				performance.now() - startTime
+			);
 
 			return result;
 		} catch (error) {
-			console.error("AES encryption failed:", error);
-			throw new Error(
-				`AES encryption failed. Ensure data is serializable. Error: ${error.message}`
-			);
+			const appError = new AppError("AES encryption failed.", {
+				cause: error,
+				context: { isSerializable: typeof data === "object" },
+			});
+			this.#errorHelpers?.handleError(appError);
+			throw appError;
 		}
 	}
 
@@ -92,35 +113,43 @@ export default class AESCrypto {
 	 * Decrypts data using AES-GCM.
 	 * @param {object} encryptedData - The encrypted data object.
 	 * @param {Uint8Array} encryptedData.data - The encrypted ciphertext.
-	 * @param {Uint8Array} encryptedData.iv - The initialization vector used for encryption.
+	 * @param {string} encryptedData.iv - The base64-encoded initialization vector used for encryption.
 	 * @returns {Promise<any>} The decrypted plaintext data.
 	 * @throws {Error} If the crypto module is not initialized or if decryption fails.
 	 */
 	async decrypt(encryptedData) {
-		if (!this.#ready) throw new Error("Crypto not initialized");
+		if (!this.#ready)
+			throw new AppError("AESCrypto module is not initialized.");
 
-		const metrics = this.#getMetrics();
 		const startTime = performance.now();
-
 		try {
+			const key = await this.#getKeyForVersion(encryptedData.version);
+			const iv = this.#base64ToBuffer(encryptedData.iv);
+			const data = this.#base64ToBuffer(encryptedData.data);
+
 			const decryptedData = await crypto.subtle.decrypt(
-				{ name: "AES-GCM", iv: encryptedData.iv },
-				this.#key,
-				encryptedData.data
+				{ name: "AES-GCM", iv },
+				key,
+				data
 			);
 
 			const plaintext = new TextDecoder().decode(decryptedData);
 			const result = JSON.parse(plaintext);
 
-			metrics?.increment("decryptionCount");
-			metrics?.updateAverage("latency", performance.now() - startTime);
+			this.#metrics?.increment("decryptionCount");
+			this.#metrics?.updateAverage(
+				"latency",
+				performance.now() - startTime
+			);
 
 			return result;
 		} catch (error) {
-			console.error("AES decryption failed:", error);
-			throw new Error(
-				`AES decryption failed. This may be due to a wrong key, corrupted data, or invalid IV. Error: ${error.message}`
-			);
+			const appError = new AppError("AES decryption failed.", {
+				cause: error,
+				context: { keyVersion: encryptedData.version },
+			});
+			this.#errorHelpers?.handleError(appError);
+			throw appError;
 		}
 	}
 
@@ -172,12 +201,24 @@ export default class AESCrypto {
 	 * @returns {Promise<{oldVersion: number, newVersion: number}>} An object containing the old and new key versions.
 	 */
 	async rotateKeys() {
+		const startTime = performance.now();
 		const oldVersion = this.#keyVersion;
 		this.#keyVersion++;
-		this.#key = await this.#deriveKey();
-		console.log(
-			`[AESCrypto] Keys rotated from v${oldVersion} to v${this.#keyVersion}`
-		);
+		this.#key = await this.#deriveKey(this.#keyVersion);
+
+		const duration = performance.now() - startTime;
+
+		// Mandate 2.4: All Auditable Events MUST Use a Unified Envelope
+		this.#forensicLogger?.logAuditEvent("AES_KEY_ROTATION", {
+			oldVersion,
+			newVersion: this.#keyVersion,
+			duration,
+		});
+
+		// Mandate 4.3: Metrics are Not Optional
+		this.#metrics?.increment("keyRotations");
+		this.#metrics?.updateAverage("keyRotationTime", duration);
+
 		return { oldVersion, newVersion: this.#keyVersion };
 	}
 	/**
@@ -217,19 +258,19 @@ export default class AESCrypto {
 	/**
 	 * Derives a 256-bit AES-GCM key from the user's password using PBKDF2.
 	 * @private
+	 * @param {number} keyVersion - The version of the key to derive.
 	 * @returns {Promise<CryptoKey>} The derived cryptographic key.
 	 */
-	async #deriveKey() {
-		const securityManager = this.#stateManager?.managers?.securityManager;
-		if (!securityManager?.hasValidContext()) {
-			throw new Error(
+	async #deriveKey(keyVersion) {
+		if (!this.#securityManager?.hasValidContext()) {
+			throw new AppError(
 				"A valid security context is required to derive the encryption key."
 			);
 		}
 
 		// In a real system, a more secure secret would be retrieved from the security context,
 		// not a password. For this example, we'll use the user ID as part of the salt.
-		const userId = securityManager.userId;
+		const userId = this.#securityManager.getSubject().userId;
 		const secret = `user-session-secret-for-${userId}`; // Placeholder for a real secret
 
 		const keyMaterial = await crypto.subtle.importKey(
@@ -244,7 +285,7 @@ export default class AESCrypto {
 			{
 				name: "PBKDF2",
 				salt: new TextEncoder().encode(
-					`aes-salt-${userId}-v${this.#keyVersion}`
+					`aes-salt-${userId}-v${keyVersion}`
 				),
 				iterations: 100000,
 				hash: "SHA-256",
@@ -254,6 +295,23 @@ export default class AESCrypto {
 			false,
 			["encrypt", "decrypt"]
 		);
+	}
+
+	/**
+	 * Retrieves the correct key for a given version. For simplicity, this implementation
+	 * re-derives older keys on-the-fly. A production system might cache recent old keys.
+	 * @private
+	 * @param {number} version - The key version to retrieve.
+	 * @returns {Promise<CryptoKey>} The cryptographic key for the specified version.
+	 */
+	async #getKeyForVersion(version) {
+		if (version === this.#keyVersion) {
+			return this.#key;
+		}
+		// For decryption of older data, re-derive the old key.
+		// A real-world implementation might use a KeyRotation manager to cache old keys.
+		this.#metrics?.increment("oldKeyDerivations");
+		return this.#deriveKey(version);
 	}
 
 	/**
@@ -292,10 +350,33 @@ export default class AESCrypto {
 	}
 
 	/**
-	 * Gets the namespaced metrics registry.
+	 * Converts an ArrayBuffer to a Base64 string.
 	 * @private
+	 * @param {ArrayBuffer} buffer The buffer to convert.
+	 * @returns {string} The Base64 encoded string.
 	 */
-	#getMetrics() {
-		return this.#stateManager?.metricsRegistry?.namespace("aesCrypto");
+	#bufferToBase64(buffer) {
+		return btoa(
+			new Uint8Array(buffer).reduce(
+				(s, b) => s + String.fromCharCode(b),
+				""
+			)
+		);
+	}
+
+	/**
+	 * Converts a Base64 string to an ArrayBuffer.
+	 * @private
+	 * @param {string} base64 The Base64 string to convert.
+	 * @returns {ArrayBuffer} The decoded buffer.
+	 */
+	#base64ToBuffer(base64) {
+		const binaryString = atob(base64);
+		const len = binaryString.length;
+		const bytes = new Uint8Array(len);
+		for (let i = 0; i < len; i++) {
+			bytes[i] = binaryString.charCodeAt(i);
+		}
+		return bytes.buffer;
 	}
 }

@@ -1,10 +1,10 @@
 /**
- * @file Defines the schema for the `plugin.json` manifest files.
+ * @file PluginManifestSchema.js
  * @module PluginManifestSchema
- * @description This file provides a comprehensive schema definition for the declarative plugin system.
- * It outlines the structure and validation rules for plugin manifests, ensuring consistency, security, and robustness
- * in alignment with the V8 Parity Mandate.
- * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} for architectural rules.
+ * @description Defines the canonical schema for `plugin.json` manifest files. This schema is a critical
+ * enforcement mechanism for the V8 Parity Mandate, ensuring all plugins are declarative, secure, and
+ * composable. It dictates the structure for metadata, component definitions, dependencies, and security policies.
+ * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} - Mandate 2.2: Logic MUST be Declarative and Schematized.
  */
 
 /**
@@ -98,6 +98,11 @@ export const PluginManifestSchema = {
 							required: true,
 							description: "The display name of the widget.",
 						},
+						category: {
+							type: "string",
+							description:
+								"Category for UI grouping (e.g., 'dashboard', 'utility').",
+						},
 						description: {
 							type: "string",
 							description: "Widget description",
@@ -105,7 +110,7 @@ export const PluginManifestSchema = {
 						supportedEntityTypes: {
 							// V8.0 Parity: Consistent naming with ComponentDefinition
 							type: "array",
-							items: { type: "string" },
+							items: { type: "string" }, // Renamed from supportedEntityTypes for consistency
 							description: "Entity types this widget can display",
 						},
 						adaptations: {
@@ -172,7 +177,7 @@ export const PluginManifestSchema = {
 						supportedEntityTypes: {
 							// V8.0 Parity: Consistent naming with ComponentDefinition
 							type: "array",
-							items: { type: "string" },
+							items: { type: "string" }, // Renamed from supportedEntityTypes for consistency
 							description: "Entity types this action applies to",
 						},
 						category: {
@@ -189,7 +194,7 @@ export const PluginManifestSchema = {
 									type: "array",
 									items: { type: "string" },
 									description:
-										"An array of declarative rule objects evaluated by the ConditionRegistry. All conditions must pass.",
+										"An array of declarative rule objects evaluated by the ConditionRegistry. All conditions must pass for the action to be visible.",
 									examples: [
 										[
 											{
@@ -197,8 +202,6 @@ export const PluginManifestSchema = {
 												property: "entity.status",
 												value: "active",
 											},
-										],
-										[
 											{
 												type: "user_has_permission",
 												permissions: [
@@ -245,7 +248,8 @@ export const PluginManifestSchema = {
 				},
 			},
 
-			field_renderers: {
+			fieldRenderers: {
+				// V8.0 Parity: camelCase
 				type: "array",
 				items: {
 					type: "object",
@@ -285,7 +289,8 @@ export const PluginManifestSchema = {
 				},
 			},
 
-			command_handlers: {
+			commandHandlers: {
+				// V8.0 Parity: camelCase
 				type: "array",
 				items: {
 					type: "object",
@@ -311,7 +316,8 @@ export const PluginManifestSchema = {
 				},
 			},
 
-			event_flows: {
+			eventFlows: {
+				// V8.0 Parity: camelCase
 				type: "array",
 				items: {
 					type: "object",
@@ -370,7 +376,7 @@ export const PluginManifestSchema = {
 					properties: {
 						name: { type: "string", required: true },
 						version: { type: "string" },
-						cdn_url: { type: "string", format: "url" },
+						cdnUrl: { type: "string", format: "url" }, // V8.0 Parity: camelCase
 					},
 				},
 				description:
@@ -382,7 +388,8 @@ export const PluginManifestSchema = {
 				description:
 					"Backend service dependencies (e.g., API endpoints).",
 			},
-			api_version: {
+			apiVersion: {
+				// V8.0 Parity: camelCase
 				type: "string",
 				description: "Required platform API version",
 			},
@@ -399,9 +406,10 @@ export const PluginManifestSchema = {
 				description:
 					"The URL to the main JavaScript module for the plugin. This module must export an `initialize(context)` function.",
 			},
+			// V8.0 Parity: Mandate 2.1 - The 'inline' property is explicitly removed from the schema to forbid it.
 		},
 		description:
-			"Defines the execution environment for the plugin. The `inline` runtime is removed for security reasons as per V8.0 mandates.",
+			"Defines the execution environment for the plugin. Only an external `entrypoint` is permitted for security.",
 	},
 
 	// Security configuration
@@ -421,12 +429,13 @@ export const PluginManifestSchema = {
 		description: "Whether to run plugin in sandbox",
 	},
 
-	content_security_policy: {
+	contentSecurityPolicy: {
+		// V8.0 Parity: camelCase
 		type: "object",
 		properties: {
-			script_src: { type: "array", items: { type: "string" } },
-			style_src: { type: "array", items: { type: "string" } },
-			connect_src: { type: "array", items: { type: "string" } },
+			scriptSrc: { type: "array", items: { type: "string" } }, // V8.0 Parity: camelCase
+			styleSrc: { type: "array", items: { type: "string" } }, // V8.0 Parity: camelCase
+			connectSrc: { type: "array", items: { type: "string" } }, // V8.0 Parity: camelCase
 		},
 	},
 
@@ -478,7 +487,8 @@ export const PluginManifestSchema = {
 					},
 				},
 			},
-			demo_url: {
+			demoUrl: {
+				// V8.0 Parity: camelCase
 				type: "string",
 				format: "url",
 				description: "A URL to a live demo or detailed documentation.",
@@ -492,7 +502,8 @@ export const PluginManifestSchema = {
 					},
 					price: { type: "number" },
 					currency: { type: "string" },
-					billing_period: {
+					billingPeriod: {
+						// V8.0 Parity: camelCase
 						type: "string",
 						enum: ["one-time", "monthly", "yearly"],
 					},
@@ -522,7 +533,8 @@ export const PluginManifestSchema = {
 			uninstall: {
 				type: "object",
 				properties: {
-					cleanup_scripts: {
+					cleanupScripts: {
+						// V8.0 Parity: camelCase
 						type: "array",
 						items: { type: "string" },
 					},
@@ -621,10 +633,10 @@ export const ExampleManifests = {
 				{
 					name: "google-apis",
 					version: "^1.0.0",
-					cdn_url: "https://apis.google.com/js/api.js",
+					cdnUrl: "https://apis.google.com/js/api.js",
 				},
 			],
-			api_version: "6.0",
+			apiVersion: "6.0",
 		},
 
 		permissions: ["calendar.read", "calendar.write", "user.profile.read"],
@@ -676,7 +688,7 @@ export const ExampleManifests = {
 				},
 			],
 
-			event_flows: [
+			eventFlows: [
 				{
 					id: "calendar_sync_flow",
 					name: "Calendar Sync Flow",
@@ -719,7 +731,7 @@ export const ExampleManifests = {
 			category: "integration",
 			tags: ["google", "calendar", "sync", "productivity"],
 			pricing: { model: "freemium" },
-			demo_url: "https://docs.example.com/plugins/google-calendar",
+			demoUrl: "https://docs.example.com/plugins/google-calendar",
 		},
 	},
 };
@@ -850,7 +862,7 @@ export function createManifestTemplate(type = "simple") {
 			components: {
 				widgets: [],
 				actions: [],
-				event_flows: [],
+				eventFlows: [],
 			},
 			runtime: {
 				entrypoint: "",

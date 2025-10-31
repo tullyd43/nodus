@@ -9,6 +9,7 @@
  * security clearances, and organizational policies. It directly supports the **Compliance** pillar.
  *
  * @module EnterpriseSecurity
+ * @privateFields {#accessCache, #stateManager, #securityManager, #forensicLogger, #metrics, #policyManager}
  */
 export default class EnterpriseSecurity {
 	/** @private @type {import('../../../utils/LRUCache.js').LRUCache|null} */
@@ -38,16 +39,7 @@ export default class EnterpriseSecurity {
 		this.#securityManager = stateManager?.managers?.securityManager;
 		this.#forensicLogger = stateManager?.managers?.forensicLogger;
 		this.#policyManager = stateManager?.managers?.policies;
-	}
-
-	/**
-	 * Initializes the security module.
-	 * @param {object} context - The application context.
-	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
-	 * @returns {Promise<this>} The initialized instance.
-	 */
-	async init() {
-		// V8.0 Parity: Use the centralized CacheManager and MetricsRegistry.
+		// V8.0 Parity: Mandate 3.1 - Initialize all private fields in the constructor.
 		this.#metrics =
 			this.#stateManager?.metricsRegistry?.namespace(
 				"enterpriseSecurity"
@@ -56,6 +48,14 @@ export default class EnterpriseSecurity {
 			this.#stateManager?.managers?.cacheManager?.getCache(
 				"enterpriseSecurityAccess"
 			);
+	}
+
+	/**
+	 * Initializes the security module.
+	 * @returns {Promise<this>} The initialized instance.
+	 */
+	async init() {
+		// Initialization logic can be added here if needed in the future.
 		return this;
 	}
 

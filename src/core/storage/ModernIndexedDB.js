@@ -10,6 +10,7 @@ import { StorageError } from "../../utils/ErrorHelpers.js";
 
 /**
  * A modern, promise-based wrapper for IndexedDB with support for schema migrations.
+ * @privateFields {#dbName, #storeName, #version, #db, #isReady, #migrations, #stateManager}
  */
 export class ModernIndexedDB {
 	/** @private @type {string} */
@@ -147,24 +148,21 @@ export class ModernIndexedDB {
 	 * @returns {Promise<any>}
 	 */
 	async #trace(operationName, operationFn) {
+		const measure = this.#stateManager?.managers?.metricsRegistry?.measure;
 		const errorHelpers = this.#stateManager?.managers?.errorHelpers;
-		if (!errorHelpers) return operationFn(); // Fallback if error helpers aren't ready
 
-		return errorHelpers.captureAsync(
-			async () => {
-				const startTime = performance.now();
-				const result = await operationFn();
-				const latency = performance.now() - startTime;
-				const metrics =
-					this.#stateManager?.metricsRegistry?.namespace("indexeddb");
-				metrics?.updateAverage(`${operationName}_latency`, latency);
-				metrics?.increment(`${operationName}_count`);
-				return result;
-			},
-			{ component: `ModernIndexedDB.${operationName}` }
-		);
+		// Mandate 4.3: Use the metrics decorator/wrapper for performance measurement.
+		if (measure && errorHelpers) {
+			const measuredFn = measure(`indexeddb.${operationName}`)(
+				operationFn
+			);
+			return errorHelpers.captureAsync(measuredFn, {
+				component: `ModernIndexedDB.${operationName}`,
+			});
+		}
+
+		return operationFn(); // Fallback if core services are not ready.
 	}
-
 	/**
 	 * Creates and manages an IndexedDB transaction.
 	 * @private
@@ -177,16 +175,14 @@ export class ModernIndexedDB {
 		if (!this.#isReady) throw new StorageError("Database not initialized.");
 
 		return new Promise((resolve, reject) => {
-			const metrics =
-				this.#stateManager?.metricsRegistry?.namespace("indexeddb");
+			const metrics = this.#getMetrics();
 			const transaction = this.#db.transaction(storeNames, mode, {
 				durability: "strict",
 			});
 
-			transaction.oncomplete = () => {
-				metrics?.increment(`transaction.complete.${mode}`);
-			};
+			transaction.oncomplete = () => {};
 
+			// Errors are now primarily handled by #promisifyRequest and #trace
 			transaction.onerror = (event) => {
 				metrics?.increment(`transaction.error.${mode}`);
 				this.#audit("DB_TRANSACTION_ERROR", {
@@ -328,6 +324,16 @@ export class ModernIndexedDB {
 			request.onerror = () => reject(request.error);
 		});
 	}
+
+	/**
+	 * Gets the namespaced metrics registry instance.
+	 * @private
+	 * @returns {import('../utils/MetricsRegistry.js').MetricsRegistry|null}
+	 */
+	#getMetrics() {
+		return this.#stateManager?.metricsRegistry?.namespace("indexeddb");
+	}
+
 	/**
 	 * Logs an audit event if the forensic logger is available.
 	 * @private

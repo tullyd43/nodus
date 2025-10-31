@@ -10,6 +10,8 @@ import { StorageError } from "../../../utils/ErrorHelpers.js";
  * enabling reliable local storage and retrieval of all core data structures. It handles
  * database creation, schema upgrades, and all CRUD (Create, Read, Update, Delete) operations.
  *
+ * @privateFields {#db, #dbName, #version, #stores, #ready, #transactions, #stateManager, #metrics, #forensicLogger, #errorHelpers}
+ *
  * @module IndexedDBAdapter
  * @see https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API
  */
@@ -33,6 +35,8 @@ export default class IndexedDBAdapter {
 	#metrics;
 	/** @private @type {import('../../ForensicLogger.js').default|null} */
 	#forensicLogger;
+	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	#errorHelpers;
 
 	/**
 	 * Creates an instance of IndexedDBAdapter.
@@ -44,6 +48,7 @@ export default class IndexedDBAdapter {
 		this.#stateManager = stateManager;
 		// V8.0 Parity: Derive dependencies from the stateManager.
 		this.#forensicLogger = stateManager?.managers?.forensicLogger;
+		this.#errorHelpers = stateManager?.managers?.errorHelpers;
 
 		this.#metrics =
 			this.#stateManager?.metricsRegistry?.namespace("indexeddbAdapter");
@@ -83,7 +88,10 @@ export default class IndexedDBAdapter {
 
 		this.#db = await this.#openDatabase();
 		this.#ready = true;
-		this.#audit("db_ready", { dbName: this.#dbName, version: this.#version });
+		this.#audit("db_ready", {
+			dbName: this.#dbName,
+			version: this.#version,
+		});
 		return this;
 	}
 
@@ -94,24 +102,11 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<IDBValidKey>} A promise that resolves with the key of the stored item.
 	 */
 	async put(storeName, item) {
-		const startTime = performance.now();
-
-		try {
-			const result = await this.#performTransaction(
-				storeName,
-				"readwrite",
-				(store) => store.put(item)
+		return this.#measure("put", "writes", async () => {
+			return this.#performTransaction(storeName, "readwrite", (store) =>
+				store.put(item)
 			);
-
-			this.#updateMetrics("writes", performance.now() - startTime);
-			return result;
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Put operation failed", { cause: error })
-			);
-			throw error;
-		}
+		});
 	}
 
 	/**
@@ -121,31 +116,22 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<IDBValidKey[]>} A promise that resolves with an array of keys for the stored items.
 	 */
 	async putBulk(storeName, items) {
-		const startTime = performance.now();
-
-		try {
-			const results = await this.#performTransaction(
-				storeName,
-				"readwrite",
-				(store) => {
-					const promises = items.map((item) => store.put(item));
-					return Promise.all(promises);
-				}
-			);
-
-			this.#updateMetrics(
-				"writes",
-				performance.now() - startTime,
-				items.length
-			);
-			return results;
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Bulk put operation failed", { cause: error })
-			);
-			throw error;
-		}
+		return this.#measure(
+			"putBulk",
+			"writes",
+			async () => {
+				return this.#performTransaction(
+					storeName,
+					"readwrite",
+					(store) => {
+						for (const item of items) {
+							store.put(item);
+						}
+					}
+				);
+			},
+			items.length
+		);
 	}
 
 	/**
@@ -155,24 +141,11 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<object|undefined>} A promise that resolves with the retrieved item, or undefined if not found.
 	 */
 	async get(storeName, key) {
-		const startTime = performance.now();
-
-		try {
-			const result = await this.#performTransaction(
-				storeName,
-				"readonly",
-				(store) => store.get(key)
+		return this.#measure("get", "reads", async () => {
+			return this.#performTransaction(storeName, "readonly", (store) =>
+				store.get(key)
 			);
-
-			this.#updateMetrics("reads", performance.now() - startTime);
-			return result;
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Get operation failed", { cause: error })
-			);
-			throw error;
-		}
+		});
 	}
 
 	/**
@@ -182,31 +155,22 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<object[]>} A promise that resolves with an array of the found items.
 	 */
 	async getBulk(storeName, keys) {
-		const startTime = performance.now();
-
-		try {
-			const results = await this.#performTransaction(
-				storeName,
-				"readonly",
-				(store) => {
-					const promises = keys.map((key) => store.get(key));
-					return Promise.all(promises);
-				}
-			);
-
-			this.#updateMetrics(
-				"reads",
-				performance.now() - startTime,
-				keys.length
-			);
-			return results.filter((result) => result !== undefined);
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Bulk get operation failed", { cause: error })
-			);
-			throw error;
-		}
+		return this.#measure(
+			"getBulk",
+			"reads",
+			async () => {
+				const results = await this.#performTransaction(
+					storeName,
+					"readonly",
+					(store) => {
+						const promises = keys.map((key) => store.get(key));
+						return Promise.all(promises);
+					}
+				);
+				return results.filter((result) => result !== undefined);
+			},
+			keys.length
+		);
 	}
 
 	/**
@@ -217,28 +181,16 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<object[]>} A promise that resolves with an array of all items in the store.
 	 */
 	async getAll(storeName, query = null, count = null) {
-		const startTime = performance.now();
-
-		try {
+		return this.#measure("getAll", "reads", async () => {
 			const results = await this.#performTransaction(
 				storeName,
 				"readonly",
 				(store) => store.getAll(query, count)
 			);
-
-			this.#updateMetrics(
-				"reads",
-				performance.now() - startTime,
-				results.length
-			);
+			// The itemCount for the metric will be based on the result length.
+			this.#updateMetrics("reads", 0, results.length, false); // duration is handled by #measure
 			return results;
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("GetAll operation failed", { cause: error })
-			);
-			throw error;
-		}
+		});
 	}
 
 	/**
@@ -248,21 +200,17 @@ export default class IndexedDBAdapter {
 	 * @param {IDBValidKey|IDBKeyRange} query - The key or key range to query within the index.
 	 * @param {object} [options={}] - Additional options.
 	 * @param {boolean} [options.keys=false] - If true, retrieves only the keys instead of the full objects.
+	 * @param {number} [options.count] - The maximum number of items to retrieve.
 	 * @returns {Promise<any[]>} A promise that resolves with an array of matching items or keys.
+	 * @deprecated Use the more flexible `query` method instead.
 	 */
 	async queryByIndex(storeName, indexName, query, options = {}) {
-		const startTime = performance.now();
-
-		try {
+		return this.#measure("queryByIndex", "reads", async () => {
 			const results = await this.#performTransaction(
 				storeName,
 				"readonly",
 				(store) => {
-					if (!this.#db.objectStoreNames.contains(storeName)) {
-						throw new Error(`Store not found: ${storeName}`);
-					}
 					const index = store.index(indexName);
-
 					if (options.keys) {
 						return index.getAllKeys(query, options.count);
 					} else {
@@ -270,20 +218,43 @@ export default class IndexedDBAdapter {
 					}
 				}
 			);
-
-			this.#updateMetrics(
-				"reads",
-				performance.now() - startTime,
-				results.length
-			);
+			this.#updateMetrics("reads", 0, results.length, false);
 			return results;
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Index query failed", { cause: error })
+		});
+	}
+
+	/**
+	 * Performs a query against an object store or one of its indexes.
+	 * @param {string} storeName - The name of the object store.
+	 * @param {object} [options={}] - Query options.
+	 * @param {string} [options.index] - The name of the index to query. If not provided, queries the primary key.
+	 * @param {IDBKeyRange} [options.range] - The key range to query.
+	 * @param {IDBCursorDirection} [options.direction='next'] - The direction of the cursor.
+	 * @param {number} [options.limit] - The maximum number of results to return.
+	 * @param {number} [options.offset] - The number of results to skip.
+	 * @returns {Promise<any[]>} A promise that resolves with an array of matching items.
+	 */
+	async query(storeName, options = {}) {
+		return this.#measure("query", "reads", async () => {
+			const results = [];
+			await this.iterate(
+				storeName,
+				(value) => {
+					results.push(value);
+					if (options.limit && results.length >= options.limit) {
+						return false; // Stop iteration
+					}
+				},
+				{
+					index: options.index,
+					range: options.range,
+					direction: options.direction,
+					offset: options.offset,
+				}
 			);
-			throw error;
-		}
+			this.#updateMetrics("reads", 0, results.length, false);
+			return results;
+		});
 	}
 
 	/**
@@ -293,24 +264,11 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<void>} A promise that resolves when the deletion is complete.
 	 */
 	async delete(storeName, key) {
-		const startTime = performance.now();
-
-		try {
-			const result = await this.#performTransaction(
-				storeName,
-				"readwrite",
-				(store) => store.delete(key)
+		return this.#measure("delete", "deletes", async () => {
+			return this.#performTransaction(storeName, "readwrite", (store) =>
+				store.delete(key)
 			);
-
-			this.#updateMetrics("deletes", performance.now() - startTime);
-			return result;
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Delete operation failed", { cause: error })
-			);
-			throw error;
-		}
+		});
 	}
 
 	/**
@@ -320,33 +278,22 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<void[]>} A promise that resolves when all deletions are complete.
 	 */
 	async deleteBulk(storeName, keys) {
-		const startTime = performance.now();
-
-		try {
-			const results = await this.#performTransaction(
-				storeName,
-				"readwrite",
-				(store) => {
-					const promises = keys.map((key) => store.delete(key));
-					return Promise.all(promises);
-				}
-			);
-
-			this.#updateMetrics(
-				"deletes",
-				performance.now() - startTime,
-				keys.length
-			);
-			return results;
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Bulk delete operation failed", {
-					cause: error,
-				})
-			);
-			throw error;
-		}
+		return this.#measure(
+			"deleteBulk",
+			"deletes",
+			async () => {
+				return this.#performTransaction(
+					storeName,
+					"readwrite",
+					(store) => {
+						for (const key of keys) {
+							store.delete(key);
+						}
+					}
+				);
+			},
+			keys.length
+		);
 	}
 
 	/**
@@ -355,19 +302,12 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<void>} A promise that resolves when the store is cleared.
 	 */
 	async clear(storeName) {
-		try {
+		return this.#measure("clear", "deletes", async () => {
 			await this.#performTransaction(storeName, "readwrite", (store) =>
 				store.clear()
 			);
-
 			this.#audit("store_cleared", { storeName });
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Clear operation failed", { cause: error })
-			);
-			throw error;
-		}
+		});
 	}
 
 	/**
@@ -377,21 +317,11 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<number>} A promise that resolves with the total number of items.
 	 */
 	async count(storeName, query = null) {
-		try {
-			const count = await this.#performTransaction(
-				storeName,
-				"readonly",
-				(store) => store.count(query)
+		return this.#measure("count", "reads", async () => {
+			return this.#performTransaction(storeName, "readonly", (store) =>
+				store.count(query)
 			);
-
-			return count;
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Count operation failed", { cause: error })
-			);
-			throw error;
-		}
+		});
 	}
 
 	/**
@@ -402,49 +332,56 @@ export default class IndexedDBAdapter {
 	 * @returns {Promise<void>} A promise that resolves when iteration is complete.
 	 */
 	async iterate(storeName, callback, options = {}) {
-		try {
+		return this.#measure("iterate", "reads", async () => {
 			await this.#performTransaction(
 				storeName,
 				"readonly",
 				(store) =>
 					new Promise((resolve, reject) => {
-						const request = store.openCursor(
-							options.query,
-							options.direction
+						const source = options.index
+							? store.index(options.index)
+							: store;
+						const request = source.openCursor(
+							options.range,
+							options.direction || "next"
 						);
+						let advanced = false;
 
 						request.onsuccess = (event) => {
 							const cursor = event.target.result;
-
 							if (cursor) {
+								if (options.offset && !advanced) {
+									advanced = true;
+									cursor.advance(options.offset);
+									return;
+								}
+
 								try {
 									const shouldContinue = callback(
 										cursor.value,
 										cursor.key
 									);
+
 									if (shouldContinue !== false) {
 										cursor.continue();
 									} else {
 										resolve();
 									}
 								} catch (error) {
+									this.#audit("iteration_callback_error", {
+										storeName,
+										error: error.message,
+									});
 									reject(error);
 								}
 							} else {
 								resolve(); // No more entries
 							}
 						};
-
 						request.onerror = () => reject(request.error);
 					})
 			);
-		} catch (error) {
-			this.#metrics?.increment("errors");
-			this.#stateManager?.managers?.errorHelpers?.handleError(
-				new StorageError("Iteration failed", { cause: error })
-			);
-			throw error;
-		}
+		});
 	}
 
 	/**
@@ -610,16 +547,47 @@ export default class IndexedDBAdapter {
 	 * @param {number} duration - The duration of the operation in milliseconds.
 	 * @param {number} [itemCount=1] - The number of items affected by the operation.
 	 */
-	#updateMetrics(operation, duration, itemCount = 1) {
+	#updateMetrics(operation, duration, itemCount = 1, updateAvg = true) {
 		this.#metrics?.increment(operation, itemCount);
 
-		const avgField =
-			operation === "reads"
-				? "averageReadTime"
-				: operation === "writes"
-					? "averageWriteTime"
-					: null;
+		if (updateAvg) {
+			const avgField =
+				operation === "reads"
+					? "averageReadTime"
+					: operation === "writes"
+						? "averageWriteTime"
+						: operation === "deletes"
+							? "averageDeleteTime"
+							: null;
 
-		if (avgField) this.#metrics?.updateAverage(avgField, duration);
+			if (avgField) this.#metrics?.updateAverage(avgField, duration);
+		}
+	}
+
+	/**
+	 * Wraps a database operation to provide standardized metrics and error handling.
+	 * @private
+	 * @param {string} methodName - The name of the public method being called.
+	 * @param {'reads'|'writes'|'deletes'} metricType - The type of metric to record.
+	 * @param {Function} operationFn - The async function performing the database operation.
+	 * @param {number} [itemCount=1] - The number of items being processed.
+	 * @returns {Promise<any>} The result of the operation.
+	 */
+	async #measure(methodName, metricType, operationFn, itemCount = 1) {
+		const startTime = performance.now();
+		try {
+			const result = await operationFn();
+			const duration = performance.now() - startTime;
+			this.#updateMetrics(metricType, duration, itemCount);
+			return result;
+		} catch (error) {
+			this.#metrics?.increment("errors");
+			const storageError = new StorageError(
+				`${methodName} operation failed`,
+				{ cause: error, context: { method: methodName } }
+			);
+			this.#errorHelpers?.handleError(storageError);
+			throw storageError;
+		}
 	}
 }
