@@ -1,0 +1,111 @@
+/**
+ * @file GridHistoryInspector.js
+ * @description Minimal overlay to visualize grid history state (undo/redo sizes and last op).
+ */
+
+export class GridHistoryInspector {
+	#stateManager;
+	#el = null;
+	#visible = false;
+
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
+	}
+
+	initialize() {
+		this.#build();
+		// Hotkey: Alt+H toggle (avoids F12 conflicts)
+		const onKey = (e) => {
+			if (e.altKey && e.key?.toLowerCase() === "h") {
+				e.preventDefault();
+				this.toggle();
+			}
+		};
+		document.addEventListener("keydown", onKey);
+		// Auto-update on relevant events
+		const update = () => this.#render();
+		this.#stateManager?.on?.("operationRecorded", update);
+		this.#stateManager?.on?.("layoutRestored", update);
+	}
+
+	toggle() {
+		this.#visible = !this.#visible;
+		if (!this.#el) this.#build();
+		this.#el.style.display = this.#visible ? "block" : "none";
+		if (this.#visible) this.#render();
+	}
+
+	#build() {
+		if (this.#el) return;
+		const el = document.createElement("div");
+		el.id = "grid-history-inspector";
+		el.style.cssText = `
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 10000;
+      background: rgba(30,30,30,0.9);
+      color: #fff;
+      padding: 12px 14px;
+      border-radius: 8px;
+      font: 12px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+      display: none;
+      min-width: 200px;
+    `;
+		el.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+        <strong>Grid History</strong>
+        <button id="ghi-close" style="background:#444;color:#fff;border:0;border-radius:4px;padding:4px 6px;cursor:pointer">×</button>
+      </div>
+      <div id="ghi-body">
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <button id="ghi-undo-btn" title="Undo (Ctrl/Cmd+Z)" style="background:#2b7cff;color:#fff;border:0;border-radius:4px;padding:6px 8px;cursor:pointer">Undo</button>
+          <button id="ghi-redo-btn" title="Redo (Ctrl/Cmd+Y)" style="background:#2b7cff;color:#fff;border:0;border-radius:4px;padding:6px 8px;cursor:pointer">Redo</button>
+        </div>
+        <div>Undo: <span id="ghi-undo">0</span></div>
+        <div>Redo: <span id="ghi-redo">0</span></div>
+        <div>Last: <span id="ghi-last">—</span></div>
+        <div style="margin-top:6px">Recent:</div>
+        <ul id="ghi-recent" style="margin:6px 0 0 16px; padding:0; list-style:disc; opacity:0.9"></ul>
+        <div style="margin-top:8px; opacity:0.8;">Toggle: Alt+H</div>
+      </div>
+    `;
+		el.querySelector('#ghi-close').addEventListener('click', () => this.toggle()); // prettier-ignore
+		el.querySelector('#ghi-undo-btn').addEventListener('click', () => { try { this.#stateManager?.undo?.(); this.#render(); } catch { /* noop */ } }); // prettier-ignore
+		el.querySelector('#ghi-redo-btn').addEventListener('click', () => { try { this.#stateManager?.redo?.(); this.#render(); } catch { /* noop */ } }); // prettier-ignore
+		document.body.appendChild(el);
+		this.#el = el;
+	}
+
+	#render() {
+		if (!this.#el || !this.#visible) return;
+		try {
+			const info = this.#stateManager?.getHistoryInfo?.() || {
+				undoSize: 0,
+				redoSize: 0,
+				lastType: null,
+				recent: [],
+			};
+			this.#el.querySelector("#ghi-undo").textContent = String(
+				info.undoSize ?? 0
+			);
+			this.#el.querySelector("#ghi-redo").textContent = String(
+				info.redoSize ?? 0
+			);
+			this.#el.querySelector("#ghi-last").textContent =
+				info.lastType || "—";
+			const ul = this.#el.querySelector("#ghi-recent");
+			ul.replaceChildren();
+			(info.recent || []).forEach((t) => {
+				const li = document.createElement("li");
+				li.textContent = t;
+				ul.appendChild(li);
+			});
+		} catch {
+			/* noop */
+		}
+	}
+}
+
+export default GridHistoryInspector;

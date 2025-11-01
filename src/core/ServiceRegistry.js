@@ -19,11 +19,14 @@ import { ForensicLogger } from "./ForensicLogger.js";
 import { ManifestPluginSystem } from "./ManifestPluginSystem.js";
 import { OptimizationAccessControl } from "./OptimizationAccessControl.js";
 import { CrossDomainSolution } from "./security/cds.js";
+import { InMemoryKeyring } from "./security/Keyring.js";
 import { NonRepudiation } from "./security/NonRepudiation.js";
+import { StorageLoader } from "./storage/StorageLoader.js";
 import GridPolicyService from "../grid/GridPolicyIntegration.js";
 import { SecurityManager } from "./security/SecurityManager.js";
 import { ValidationLayer } from "./storage/ValidationLayer.js";
 import { SystemPolicies } from "./SystemPolicies_Cached.js";
+import { TenantPolicyService } from "./TenantPolicyService.js";
 import { CompleteGridSystem } from "../grid/CompleteGridSystem.js";
 import { EnhancedGridRenderer } from "../grid/EnhancedGridRenderer.js";
 import { CacheManager } from "../managers/CacheManager.js";
@@ -41,10 +44,11 @@ import { MetricsReporter } from "../utils/MetricsReporter.js";
  */
 const FOUNDATIONAL_SERVICES = {
 	errorHelpers: ErrorHelpers, // Note: Static class
+	cacheManager: CacheManager,
 	metricsRegistry: MetricsRegistry,
 	idManager: IdManager,
-	cacheManager: CacheManager,
 	securityManager: SecurityManager,
+	keyring: InMemoryKeyring,
 	nonRepudiation: NonRepudiation, // For signing
 };
 
@@ -76,6 +80,7 @@ const APPLICATION_SERVICES = {
 	enhancedGridRenderer: EnhancedGridRenderer,
 	completeGridSystem: CompleteGridSystem,
 	gridPolicyService: GridPolicyService,
+	tenantPolicyService: TenantPolicyService,
 };
 
 /**
@@ -87,6 +92,7 @@ const SPECIALIZED_SERVICES = {
 	cds: CrossDomainSolution,
 	optimizationAccessControl: OptimizationAccessControl,
 	metricsReporter: MetricsReporter,
+	storageLoader: StorageLoader,
 };
 
 /**
@@ -108,12 +114,15 @@ const SERVICE_CONSTRUCTORS = {
 export class ServiceRegistry {
 	/** @private @type {import('./HybridStateManager.js').default} */
 	#stateManager;
+	#env;
 
 	/**
 	 * @param {import('./HybridStateManager.js').default} stateManager
 	 */
 	constructor(stateManager) {
 		this.#stateManager = stateManager;
+		// Capture Vite env if present for build-time flags
+		try { this.#env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {}; } catch { this.#env = {}; }
 	}
 
 	/**
@@ -129,10 +138,11 @@ export class ServiceRegistry {
 		const INITIALIZATION_ORDER = [
 			// 1. Foundational: No internal dependencies.
 			"errorHelpers",
+			"cacheManager",
 			"metricsRegistry",
 			"idManager",
-			"cacheManager",
 			"securityManager",
+			"keyring",
 			"nonRepudiation",
 			// 2. Core Logic: Depends on foundational services.
 			"forensicLogger",
@@ -147,8 +157,8 @@ export class ServiceRegistry {
 			"adaptiveRenderer",
 			"extensionManager",
 			"enhancedGridRenderer", // CompleteGridSystem depends on EnhancedGridRenderer
+			"gridPolicyService", // Ensure policy service is available before grid system
 			"completeGridSystem", // Depends on other grid services being available.
-			"gridPolicyService",
 		];
 
 		for (const serviceName of INITIALIZATION_ORDER) {
@@ -179,16 +189,16 @@ export class ServiceRegistry {
 
 		try {
 			// Create a unified context object to pass to all service constructors.
-			const context = {
-				stateManager: this.#stateManager,
-			};
+			const context = { stateManager: this.#stateManager };
 
-			// Handle static classes vs. instantiable classes
-			const instance =
-				typeof ServiceClass === "function" &&
-				ServiceClass.prototype?.constructor
-					? new ServiceClass(context)
-					: ServiceClass;
+			// Handle static classes vs. instantiable classes, with optional options resolver
+			let instance;
+			if (typeof ServiceClass === 'function' && ServiceClass.prototype?.constructor) {
+				const opts = this.#resolveServiceOptions(serviceName);
+				instance = opts ? new ServiceClass(context, opts) : new ServiceClass(context);
+			} else {
+				instance = ServiceClass;
+			}
 
 			// Assign the instance to the stateManager's managers object.
 			this.#stateManager.managers[serviceName] = instance;
@@ -208,6 +218,33 @@ export class ServiceRegistry {
 			delete this.#stateManager.managers[serviceName];
 			throw error; // Re-throw to halt bootstrap if a critical service fails.
 		}
+	}
+
+	/**
+	 * Returns optional options for specific services based on DevOps/admin configuration.
+	 * Reads from Vite env and a global window.NODUS_CONFIG if present.
+	 * @private
+	 */
+	#resolveServiceOptions(serviceName) {
+		try {
+			const wcfg = (typeof window !== 'undefined' && window.NODUS_CONFIG) ? window.NODUS_CONFIG : {};
+			if (serviceName === 'completeGridSystem') {
+				const bool = (v, fallback) => {
+					if (v === true || v === false) return v;
+					if (typeof v === 'string') return v.toLowerCase() === 'true';
+					return fallback;
+				};
+				return {
+					enablePolicies: bool(wcfg?.grid?.enablePolicies ?? this.#env?.VITE_GRID_ENABLE_POLICIES, true),
+					enableAnalytics: bool(wcfg?.grid?.enableAnalytics ?? this.#env?.VITE_GRID_ENABLE_ANALYTICS, true),
+					enableToasts: bool(wcfg?.grid?.enableToasts ?? this.#env?.VITE_GRID_ENABLE_TOASTS, true),
+					enableAI: bool(wcfg?.grid?.enableAI ?? this.#env?.VITE_GRID_ENABLE_AI, true),
+					enableNesting: bool(wcfg?.grid?.enableNesting ?? this.#env?.VITE_GRID_ENABLE_NESTING, false),
+					enableHistoryInspector: bool(wcfg?.grid?.enableHistoryInspector ?? this.#env?.VITE_GRID_HISTORY_INSPECTOR, true),
+				};
+			}
+			return null;
+		} catch { return null; }
 	}
 
 	/**

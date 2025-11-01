@@ -1,66 +1,42 @@
-Of course. Based on the developer mandates and the work already completed, here is a comprehensive plan to finish the V8 Parity refactor.
+Here’s what I’d do next, aligning to your Feature Development Philosophy (composability, policy‑driven behavior, security by default, observability, and resilience).
 
-This plan is broken down by the mandates, outlining the remaining tasks, the files to be modified, and the rationale behind each change.
+Policies and Governance
 
-Phase 1: Core Architecture & Security
-This phase focuses on completing the foundational mandates related to the service architecture, security, and declarative logic.
+Register dashboard policies: add system.enable_developer_dashboard and system.developer_dashboard_permission to SystemPolicies with defaults, validators, and descriptions so they’re discoverable and controllable via policy UI.
+Standardize feature flags: document and register flags for dev HUD, virtual list, and grid analytics (e.g., ui.enable_virtual_list, grid.enable_analytics) with validators.
+Security and Compliance
 
-1. Mandate 1.2 & 1.3: Finalize Service Registry Integration
+Signer readiness policy: add security.allow_unsigned_audit_in_dev (default true in dev, false in prod). ForensicLogger uses this to suppress or enforce signatures; switch from debug fallback when policy disallows unsigned.
+Action audit hardening: ensure every ActionDispatcher path performs MAC checks, emits structured audit envelopes, and rate‑limits via the is_rate_limited condition.
+Performance and Resilience
 
-Objective: Eliminate all remaining direct instantiations of core services and ensure every module receives its dependencies from the stateManager context, as provided by the ServiceRegistry.
-Tasks:
-Refactor Core Services: Modify the constructors of all core services (EmbeddingManager, QueryService, LRUCache, SecurityManager, etc.) to remove direct imports of other core services like ErrorHelpers. Instead, they will derive these dependencies from the stateManager.managers object passed in their constructor.
-Update ServiceRegistry.js: Add OptimizationAccessControl to the SERVICE_CONSTRUCTORS map to ensure it is managed centrally.
-Run Linter: Execute eslint . --fix across the project to automatically catch and report any remaining violations of the nodus-rules/no-direct-core-instantiation rule.
-2. Mandate 2.1: Implement Arbitrary Code Execution Validator
+Metrics wrap, safely: adopt the “optional measure” guard everywhere we decorate methods (storage, renderers, policies). Keep measure unbound‑safe; never block the hot path if metrics are not ready.
+Grid init health: keep initialization idempotent; track and emit grid.init_duration and grid.ready events so failures are visible without crashing.
+Event bus stability: keep subscriptions on stateManager.on(...) only; avoid engine‑internal APIs for listeners.
+Storage and Migrations
 
-Objective: Prevent security vulnerabilities by scanning loaded plugin modules for forbidden code patterns like eval() and innerHTML.
-Tasks:
-Create ArbitraryCodeValidator.js: Develop a new utility module that exports a function scanForForbiddenPatterns(codeString). This function will use regular expressions to detect eval(), new Function(), setTimeout(string), and .innerHTML =.
-Update ManifestPluginSystem.js: In the #loadFrontendRuntime method, after fetching the plugin's code but before executing it, use the new validator to scan the code. If forbidden patterns are found, throw a SecurityError and prevent the plugin from loading. This check should only run in non-production environments to avoid performance overhead.
-3. Mandate 2.2: Schematize Declarative Logic
+IndexedDB migrations: formalize store definitions and version bump history (audit_events, system_settings). Add a dev tool to dump schema and reset stores via a policy or HMR hook.
+StorageLoader validations: before handing instances to ModularOfflineStorage, assert required methods (get, put, putBulk). Fail fast with a clear StorageError.
+Observability and Diagnostics
 
-Objective: Enforce a strict, serializable structure for all declarative conditions used in event flows and component visibility.
-Tasks:
-Create ConditionSchema.json: Define a formal JSON Schema that specifies the structure for a valid condition object (e.g., must have a type property, and specific properties for each type like property_equals).
-Update ConditionRegistry.js:
-Implement a validate(conditionDef) method that uses a JSON Schema validator (a simple, dependency-free one can be written) to check condition definitions against ConditionSchema.json.
-Modify the register method to call validate() on the provided schema and examples to ensure all registered conditions are well-defined.
-Modify the evaluate method to validate the incoming conditionDef before processing, preventing malformed rules from executing.
-4. Mandate 2.4: Implement Unified Audit Envelope
+Startup pipeline metrics: emit metrics event for bootstrap and per‑module init durations (policies, eventFlow, grid, dashboard). Wire this into MetricsReporter with a “bootstrap” channel.
+Error taxonomy: keep ErrorHelpers emitting structured, low‑noise events. Ensure all “expected in dev” messages are debug‑level and once‑only.
+UI/UX Composability
 
-Objective: Standardize the structure of all audit log entries to be uniform, signed, and tamper-evident.
-Tasks:
-Update ForensicLogger.js:
-Create a new private method #createEnvelope(type, payload, userContext).
-This method will construct the standard log object, including a unique ID, timestamp, the previous log's hash (for chaining), user context, and the payload.
-It will then use the stateManager.signer to sign the envelope's contents and add the signature to the object.
-Refactor logAuditEvent to use #createEnvelope before saving the event.
-Update NonRepudiation.js: Ensure the signAction method can handle the structured envelope from the ForensicLogger.
-Phase 2: Performance & Code Quality
-This phase focuses on implementing performance-related mandates and enforcing code structure and documentation standards.
+VirtualList UX: lazy‑instantiate on visibility (IntersectionObserver). Support optional itemSize: (i) => number for dynamic rows. Expose a small adapter that binds to a selector on HybridState for large lists.
+Light reactivity bridge: optional tiny EventBridge hook (in addition to BindEngine) for [data-bind] elements app‑wide; non‑intrusive and policy‑guarded.
+Cache Strategy
 
-5. Mandate 4.1 & 3.1: Enforce Bounded Caches & Private Fields
+Invalidation semantics: document supported patterns (prefix, regex). Add a minimal unit test for CacheManager.invalidate and LRUCache.invalidate; ensure we don’t evict unintended namespaces.
+Dev Ergonomics
 
-Objective: Convert all remaining unbounded caches to use the bounded LRUCache and ensure all classes adhere to the private field convention.
-Tasks:
-Refactor OptimizationAccessControl.js:
-The #sessions map is an unbounded cache. Replace it with an LRUCache instance obtained from the CacheManager (this.#stateManager.managers.cacheManager.getCache('authSessions', ...)).
-Convert all internal properties (roles, userRoles, sessions) to private fields (#roles, #userRoles, #sessions).
-Update the constructor to accept the stateManager context and derive its dependencies.
-Review All Core Classes: Systematically review every file in src/core and src/managers to ensure all internal properties and methods are private (#) and declared at the top of the class body. Add the @privateFields JSDoc block where required (Mandate 3.5).
-6. Mandate 4.3: Implement Metrics Decorator
+Scoped debug namespace: we already use window.Nodus; extend with a read‑only “capability map” (e.g., { hasSigner, hasIndexedDB, policies: {...} }) to quickly inspect readiness without exposing mutators.
+HMR cleanup: we’re already doing disposal; add a noop guard for any remaining late timers (e.g., ForensicLogger flush) on teardown.
+Documentation
 
-Objective: Standardize performance metric reporting for critical methods using a decorator pattern.
-Tasks:
-Update MetricsRegistry.js: Add a new method measure(metricName, tags = {}). This method will return a decorator function.
-Implement Decorator Logic: The returned decorator will wrap the original method. It will record the start time, execute the method, record the end time, and call this.metrics.timer(metricName, duration, tags) with the result.
-Apply Decorator: Apply the new decorator to performance-critical methods, such as HybridStateManager.saveEntity, QueryService.search, and AdaptiveRenderer.render. Since JavaScript decorators are still experimental, this can be implemented as a higher-order function wrapper for now. Example: this.saveEntity = this.#metrics.measure('saveEntity')(this.saveEntity.bind(this));
-7. Mandate 5.1 & 5.3: Finalize Documentation and Linting
-
-Objective: Ensure the entire codebase is fully documented and free of linting errors before final review.
-Tasks:
-JSDoc Pass: Go through every file modified during the refactor and ensure all classes, methods (public and private), and properties have complete and accurate JSDoc comments.
-Generate Docs: Run the jsdoc -c jsdoc.json command to generate the API documentation and verify there are no errors.
-Pre-commit Hooks: Configure Husky to run eslint . and jsdoc -c jsdoc.json on a pre-commit hook. This enforces Mandate 5.3, preventing non-compliant code from being committed.
-By following this plan, all remaining mandates will be addressed, resulting in a fully compliant, secure, and maintainable V8 Parity architecture.
+Update docs around:
+New policy keys and their defaults.
+The bootstrap lifecycle and idempotency guarantees.
+Dev‑only features (HUD, dashboard) and how to enable in staging (policies + permission).
+Storage schema and version migration notes.
+If you want, I can implement the policy registrations and validators for:

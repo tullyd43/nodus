@@ -1,105 +1,11 @@
 /**
  * @file GridPolicyIntegration.js
- * @description Defines grid-specific policies and provides a managed service for accessing them. This module extends the main `SystemPolicies` with configurations that control the behavior of the enhanced grid system.
- * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
+ * @description Lightweight policy service that lazy-loads grid policy definitions/validators via dynamic import.
  */
-
-/**
- * An object containing grid-specific policy definitions.
- * These are merged into the main `SystemPolicies` definitions during system initialization.
- */
-export const GRID_POLICY_DEFINITIONS = {
-	"system.grid_performance_mode": {
-		type: "boolean",
-		default: null, // null = auto mode, true = force on, false = force off
-		domain: "system",
-		description:
-			"Force grid performance mode on/off (null = auto based on FPS)",
-		category: "performance",
-	},
-	"system.grid_auto_save_layouts": {
-		type: "boolean",
-		default: true,
-		domain: "system",
-		description: "Automatically save grid layout changes",
-		category: "persistence",
-	},
-	"system.grid_save_feedback": {
-		type: "boolean",
-		default: true,
-		domain: "system",
-		description: "Show toast notifications when layouts are saved",
-		category: "user_experience",
-	},
-	"system.grid_ai_suggestions": {
-		type: "boolean",
-		default: false,
-		domain: "system",
-		description: "Enable AI-powered layout suggestions (future feature)",
-		category: "ai_assistance",
-	},
-};
-
-/**
- * An object containing validation functions for the grid-specific policies.
- * @type {object}
- */
-export const GRID_POLICY_VALIDATORS = {
-	"system.grid_performance_mode": (value, context) => {
-		if (value !== null && typeof value !== "boolean") {
-			return {
-				valid: false,
-				message: "Grid performance mode must be null, true, or false",
-			};
-		}
-		return { valid: true };
-	},
-
-	"system.grid_auto_save_layouts": (value, context) => {
-		if (typeof value !== "boolean") {
-			return { valid: false, message: "Grid auto-save must be boolean" };
-		}
-		return { valid: true };
-	},
-
-	"system.grid_save_feedback": (value, context) => {
-		if (typeof value !== "boolean") {
-			return {
-				valid: false,
-				message: "Grid save feedback must be boolean",
-			};
-		}
-		return { valid: true };
-	},
-
-	"system.grid_ai_suggestions": (value, context) => {
-		if (typeof value !== "boolean") {
-			return {
-				valid: false,
-				message: "Grid AI suggestions must be boolean",
-			};
-		}
-		// Future: Check if AI features are available
-		return { valid: true };
-	},
-};
-
-/**
- * An object defining dependencies for grid-specific policies.
- * @type {object}
- */
-export const GRID_POLICY_DEPENDENCIES = {
-	"system.grid_performance_mode": ["system.enable_monitoring"],
-	"system.grid_auto_save_layouts": ["system.enable_auditing"],
-	"system.grid_ai_suggestions": [
-		"system.enable_monitoring",
-		"meta.enable_performance_tracking",
-	],
-};
 
 /**
  * @class GridPolicyService
- * @classdesc A managed service for accessing and managing grid-specific policies. It provides a clear, cached, and robust interface for interacting with grid configurations, adhering to V8 Parity Mandates.
+ * @classdesc Managed service for accessing and managing grid-specific policies. Lazily registers definitions.
  * @privateFields {#policyManager, #cache}
  */
 export class GridPolicyService {
@@ -107,6 +13,9 @@ export class GridPolicyService {
 	#policyManager;
 	/** @private @type {import('../managers/CacheManager.js').LRUCache} */
 	#cache;
+	#tenantPolicy;
+	#tenantOverrides = {};
+	#nestingLoaded = false;
 
 	/**
 	 * Creates an instance of GridPolicyService.
@@ -115,6 +24,7 @@ export class GridPolicyService {
 	 */
 	constructor({ stateManager }) {
 		this.#policyManager = stateManager.managers.policies;
+		this.#tenantPolicy = stateManager.managers.tenantPolicyService;
 
 		// Mandate 4.1: Use a bounded cache from the central CacheManager.
 		this.#cache = stateManager.managers.cacheManager.getCache(
@@ -131,7 +41,11 @@ export class GridPolicyService {
 	 * This is the V8 Parity-compliant replacement for the old `extendSystemPoliciesWithGrid` function.
 	 * @returns {void}
 	 */
-	registerGridPolicies() {
+	/**
+	 * Lazy-registers grid policies. Pass options to include only modules you need.
+	 * @param {{ includeNesting?: boolean }} [options]
+	 */
+	async registerGridPolicies(options = {}) {
 		if (!this.#policyManager) {
 			console.warn(
 				"[GridPolicyService] Cannot register policies, SystemPolicies manager not found."
@@ -139,8 +53,70 @@ export class GridPolicyService {
 			return;
 		}
 
-		this.#policyManager.registerPolicyDefinitions(GRID_POLICY_DEFINITIONS);
-		this.#policyManager.registerPolicyValidators(GRID_POLICY_VALIDATORS);
+		// Lazy-load definitions/validators to keep initial bundle small
+		try {
+			const core = await import('./policies/core.js');
+			this.#policyManager.registerPolicyDefinitions({
+				...core.CORE_GRID_POLICY_DEFINITIONS,
+			});
+			this.#policyManager.registerPolicyValidators({
+				...core.CORE_GRID_POLICY_VALIDATORS,
+			});
+			if (options.includeNesting) {
+				const nesting = await import('./policies/nesting.js');
+				this.#policyManager.registerPolicyDefinitions({
+					...nesting.NESTING_POLICY_DEFINITIONS,
+				});
+				this.#policyManager.registerPolicyValidators({
+					...nesting.NESTING_POLICY_VALIDATORS,
+				});
+				this.#nestingLoaded = true;
+			}
+
+			// Prime tenant overrides for keys we care about so getters can be sync-friendly
+			await this.#primeTenantOverrides(options);
+		} catch (e) {
+			console.warn('[GridPolicyService] Failed to load policy modules:', e);
+		}
+	}
+
+	async ensureNestingPoliciesLoaded() {
+		if (this.#nestingLoaded) return;
+		await this.registerGridPolicies({ includeNesting: true });
+	}
+
+	async #primeTenantOverrides(options) {
+		try {
+			if (!this.#tenantPolicy?.getPolicy) return;
+			const keys = [
+				['system','grid_performance_mode'],
+				['system','grid_auto_save_layouts'],
+				['system','grid_save_feedback'],
+				['system','grid_ai_suggestions'],
+				['grid','default_columns'],
+				['grid','default_min_w'],
+				['grid','default_min_h'],
+				['grid','default_max_w'],
+				['grid','default_max_h'],
+				['grid','allowed_component_types'],
+			];
+			if (options.includeNesting) {
+				keys.push(['grid','nesting_enabled'],['grid','nesting_max_depth'],['grid','nesting_max_blocks_per_grid'],['grid','nesting_max_total_blocks']);
+			}
+			for (const [d,k] of keys) {
+				try {
+					const ov = await this.#tenantPolicy.getPolicy(d,k);
+					if (ov !== undefined) {
+						this.#tenantOverrides[`${d}.${k}`] = ov;
+					}
+				} catch { /* noop */ }
+			}
+		} catch { /* noop */ }
+	}
+
+	#getTenantOr(baseDomain, baseKey, baseValue) {
+		const ov = this.#tenantOverrides?.[`${baseDomain}.${baseKey}`];
+		return ov !== undefined ? ov : baseValue;
 	}
 
 	/**
@@ -150,10 +126,11 @@ export class GridPolicyService {
 	 */
 	getPerformanceMode() {
 		try {
-			return this.#policyManager.getPolicy(
+			const base = this.#policyManager.getPolicy(
 				"system",
 				"grid_performance_mode"
 			);
+			return this.#getTenantOr('system','grid_performance_mode', base);
 		} catch (error) {
 			console.warn("Could not get grid performance policy:", error);
 			return null; // Default to auto mode
@@ -166,11 +143,12 @@ export class GridPolicyService {
 	 */
 	isAutoSaveEnabled() {
 		try {
-			const policy = this.#policyManager.getPolicy(
+			const base = this.#policyManager.getPolicy(
 				"system",
 				"grid_auto_save_layouts"
 			);
-			return policy ?? true;
+			const v = this.#getTenantOr('system','grid_auto_save_layouts', base);
+			return v ?? true;
 		} catch (error) {
 			console.warn("Could not get grid auto-save policy:", error);
 			return true; // Default to enabled
@@ -183,11 +161,12 @@ export class GridPolicyService {
 	 */
 	shouldShowSaveFeedback() {
 		try {
-			const policy = this.#policyManager.getPolicy(
+			const base = this.#policyManager.getPolicy(
 				"system",
 				"grid_save_feedback"
 			);
-			return policy ?? true;
+			const v = this.#getTenantOr('system','grid_save_feedback', base);
+			return v ?? true;
 		} catch (error) {
 			console.warn("Could not get grid save feedback policy:", error);
 			return true; // Default to enabled
@@ -200,11 +179,12 @@ export class GridPolicyService {
 	 */
 	isAiSuggestionsEnabled() {
 		try {
-			const policy = this.#policyManager.getPolicy(
+			const base = this.#policyManager.getPolicy(
 				"system",
 				"grid_ai_suggestions"
 			);
-			return policy ?? false;
+			const v = this.#getTenantOr('system','grid_ai_suggestions', base);
+			return v ?? false;
 		} catch (error) {
 			console.warn("Could not get grid AI suggestions policy:", error);
 			return false; // Default to disabled
@@ -278,6 +258,22 @@ export class GridPolicyService {
 	 */
 	clearCache() {
 		this.#cache.clear();
+	}
+
+	/**
+	 * Sets a per-tenant override for a grid-related policy.
+	 * @param {string} domain
+	 * @param {string} key
+	 * @param {*} value
+	 */
+	async setTenantPolicy(domain, key, value) {
+		if (!this.#tenantPolicy?.setPolicy) throw new Error('Tenant policy service unavailable');
+		const ok = await this.#tenantPolicy.setPolicy(domain, key, value);
+		if (ok) {
+			this.#tenantOverrides[`${domain}.${key}`] = value;
+			this.clearCache();
+		}
+		return ok;
 	}
 }
 

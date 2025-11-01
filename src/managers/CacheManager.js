@@ -37,11 +37,11 @@ export class CacheManager {
 	/**
 	 * Retrieves an existing cache by name or creates a new one if it doesn't exist.
 	 * @param {string} name - The unique name for the cache (e.g., 'entities', 'sessions').
-	 * @param {number} [maxSize=1000] - The maximum number of items for the cache.
-	 * @param {object} [options={}] - Additional LRUCache options (e.g., ttl, memoryLimit).
+	 * @param {number|object} [maxSizeOrOptions=1000] - Either the max size (number) or an options object.
+	 * @param {object} [maybeOptions={}] - Additional LRUCache options when the second arg is a number.
 	 * @returns {LRUCache} The existing or newly created LRUCache instance.
 	 */
-	getCache(name, maxSize = 1000, options = {}) {
+	getCache(name, maxSizeOrOptions = 1000, maybeOptions = {}) {
 		if (this.#caches.has(name)) {
 			return this.#caches.get(name);
 		}
@@ -56,12 +56,30 @@ export class CacheManager {
 			throw error;
 		}
 
+		// Normalize arguments: support both (name, maxSize, options) and (name, options)
+		let maxSize = 1000;
+		let options = {};
+		if (typeof maxSizeOrOptions === "number") {
+			maxSize = maxSizeOrOptions;
+			options = maybeOptions || {};
+		} else if (maxSizeOrOptions && typeof maxSizeOrOptions === "object") {
+			options = maxSizeOrOptions;
+			if (typeof options.max === "number") {
+				maxSize = options.max;
+			} else if (typeof options.maxSize === "number") {
+				maxSize = options.maxSize;
+			}
+		}
+
 		// Create a new cache, injecting shared dependencies
-		const newCache = new LRUCache(maxSize, {
-			stateManager: this.#stateManager, // Pass the stateManager directly.
-			keyPrefix: name,
-			...options,
-		});
+		const newCache = new LRUCache(
+			{
+				stateManager: this.#stateManager, // Pass the stateManager directly.
+				keyPrefix: name,
+				...options,
+			},
+			maxSize
+		);
 
 		this.#caches.set(name, newCache);
 		this.#metrics?.increment("cache.created");
@@ -94,6 +112,29 @@ export class CacheManager {
 	}
 
 	/**
+	 * Invalidates entries across all caches based on a pattern.
+	 * Pattern may be a string (prefix match on unprefixed key) or a RegExp.
+	 * If pattern is "*" or falsy, clears all caches.
+	 * @param {string|RegExp} pattern
+	 */
+	invalidate(pattern) {
+		if (!pattern || pattern === "*") {
+			this.clearAll();
+			return;
+		}
+		for (const [name, cache] of this.#caches.entries()) {
+			if (typeof cache.invalidate === "function") {
+				cache.invalidate(pattern);
+			} else if (typeof cache.clear === "function" && typeof pattern === "string" && pattern.startsWith(`${name}:`)) {
+				// Fallback: if pattern targets this cache namespace, clear whole cache
+				cache.clear();
+			}
+		}
+		this.#metrics?.increment("cache.invalidations");
+		console.log(`[CacheManager] Invalidated caches with pattern: ${String(pattern)}`);
+	}
+
+	/**
 	 * Destroys all managed caches, stopping any background processes.
 	 * @returns {void}
 	 */
@@ -104,5 +145,15 @@ export class CacheManager {
 		this.#caches.clear();
 		this.#metrics?.increment("cache.destroyed.all");
 		console.log(`[CacheManager] Destroyed all caches.`);
+	}
+
+	/**
+	 * Backwards-compatible alias for creating or retrieving a cache using options object.
+	 * @param {string} name
+	 * @param {object} options
+	 * @returns {LRUCache}
+	 */
+	createCache(name, options = {}) {
+		return this.getCache(name, options);
 	}
 }

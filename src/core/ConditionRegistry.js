@@ -334,6 +334,10 @@ export class ConditionRegistry {
 					},
 					value: { type: "number", required: true },
 				},
+				examples: [
+					{ type: "numeric_comparison", property: "data.task.priority", operator: ">", value: 5 },
+					{ type: "numeric_comparison", property: "metrics.fps", operator: ">=", value: 60 },
+				],
 			}
 		);
 
@@ -437,6 +441,9 @@ export class ConditionRegistry {
 					after: { type: "number" },
 					before: { type: "number" },
 				},
+				examples: [
+					{ type: "time_range", after: 1714521600000, before: 1717200000000 },
+				],
 			}
 		);
 
@@ -506,6 +513,9 @@ export class ConditionRegistry {
 					afterMinutes: { type: "number" },
 					beforeMinutes: { type: "number" },
 				},
+				examples: [
+					{ type: "time_of_day_preparsed", afterMinutes: 9 * 60, beforeMinutes: 17 * 60 },
+				],
 			}
 		);
 

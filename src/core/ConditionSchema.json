@@ -83,6 +83,15 @@
 			}
 		},
 		{
+			"if": { "properties": { "type": { "const": "time_of_day_preparsed" } } },
+			"then": {
+				"properties": {
+					"afterMinutes": { "type": "number" },
+					"beforeMinutes": { "type": "number" }
+				}
+			}
+		},
+		{
 			"if": {
 				"properties": { "type": { "const": "user_has_permission" } }
 			},
@@ -123,6 +132,17 @@
 					"conditions": { "type": "array", "items": { "$ref": "#" } }
 				},
 				"required": ["operator", "conditions"]
+			}
+		},
+		{
+			"if": { "properties": { "type": { "const": "is_rate_limited" } } },
+			"then": {
+				"properties": {
+					"key": { "type": "string" },
+					"limit": { "type": "number" },
+					"window": { "type": "number" }
+				},
+				"required": ["limit"]
 			}
 		}
 	]

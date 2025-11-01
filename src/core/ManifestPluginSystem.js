@@ -424,7 +424,7 @@ export class ManifestPluginSystem {
 		// This ensures the code is treated as a standard ES module.
 		const blob = new Blob([codeString], { type: "application/javascript" });
 		const blobUrl = URL.createObjectURL(blob);
-		const module = await import(blobUrl);
+		const module = await import(/* @vite-ignore */ blobUrl);
 		URL.revokeObjectURL(blobUrl); // Clean up the blob URL after import
 		return module;
 	}

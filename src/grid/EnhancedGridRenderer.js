@@ -50,18 +50,26 @@ export class EnhancedGridRenderer {
 	#performanceMode = false; // Start in full-feature mode
 	/** @private @type {Function[]} */
 	#unsubscribeFunctions = [];
+	/** @private @type {number} */
+	#gridColumns = 24;
+	#rafScheduled = false;
+	#pendingMouseEvent = null;
+	#expanded = null; // { blockId, snapshot }
+	#reflowEnabled = false;
+	#liveReflow = false;
+	#previewOriginals = new Map(); // blockId -> {x,y}
 
 	/**
 	 * Creates an instance of EnhancedGridRenderer.
 	 * @param {import('../core/HybridStateManager.js').default} stateManager - The application's state manager.
 	 */
-	constructor(stateManager) {
-		this.#stateManager = stateManager;
-		this.#errorHelpers = stateManager.managers.errorHelpers;
-		this.#metrics =
-			stateManager.metricsRegistry?.namespace("grid.renderer");
-		this.#policyManager = stateManager.managers.policies;
-		this.#eventFlowEngine = stateManager.eventFlowEngine;
+	constructor(arg) {
+		const sm = arg && arg.stateManager ? arg.stateManager : arg;
+		this.#stateManager = sm;
+		this.#errorHelpers = sm?.managers?.errorHelpers || null;
+		this.#metrics = sm?.metricsRegistry?.namespace("grid.renderer") || null;
+		this.#policyManager = sm?.managers?.policies || null;
+		this.#eventFlowEngine = sm?.eventFlowEngine || null;
 	}
 
 	/**
@@ -71,14 +79,18 @@ export class EnhancedGridRenderer {
 	 * @param {object} gridConfig.appViewModel - The main application view model.
 	 * @param {object} [gridConfig.options] - Additional options for the renderer.
 	 */
-	initialize(gridConfig) {
+	initialize(gridConfig = {}) {
 		if (this.#isEnhanced) {
-			console.warn("EnhancedGridRenderer is already initialized.");
-			return;
+			return; // idempotent: silently ignore repeated initialize calls
 		}
 
-		this.#container = gridConfig.container;
-		this.#appViewModel = gridConfig.appViewModel;
+		// Resolve container with sensible fallbacks so ServiceRegistry can call initialize() without args
+		this.#container =
+			gridConfig.container ||
+			document.querySelector(".grid-container") ||
+			document.querySelector("#view-container") ||
+			document.body;
+		this.#appViewModel = gridConfig.appViewModel || {};
 		this.#options = {
 			onLayoutChange: null, // Callback for layout persistence
 			enableKeyboard: true, // Enable keyboard accessibility
@@ -86,11 +98,41 @@ export class EnhancedGridRenderer {
 			...gridConfig.options,
 		};
 
+		// Read grid-wide defaults from policies when available
+		try {
+			const colsPolicy = this.#policyManager?.getPolicy?.(
+				"grid",
+				"default_columns"
+			);
+			if (Number.isInteger(colsPolicy) && colsPolicy > 0)
+				this.#gridColumns = colsPolicy;
+		} catch {
+			/* noop */
+		}
+
 		// Enhance existing grid container with modern CSS Grid
 		this.#setupModernGridStyles();
 		this.#setupPerformanceMonitoring();
 		this.#bindState();
+
 		this.#setupEventListeners();
+		// Read reflow policy once at init (listeners already present for policy changes)
+		try {
+			this.#reflowEnabled = !!this.#policyManager?.getPolicy?.(
+				"grid",
+				"reflow_on_drag_enabled"
+			);
+		} catch {
+			this.#reflowEnabled = false;
+		}
+		try {
+			this.#liveReflow = !!this.#policyManager?.getPolicy?.(
+				"grid",
+				"reflow_live_preview"
+			);
+		} catch {
+			this.#liveReflow = false;
+		}
 		this.#isEnhanced = true;
 
 		this.#metrics?.increment("grid.enhanced");
@@ -126,12 +168,82 @@ export class EnhancedGridRenderer {
 
 		// Apply modern grid template
 		this.#container.style.display = "grid";
-		this.#container.style.gridTemplateColumns = "repeat(24, 1fr)";
+		this.#container.style.gridTemplateColumns = `repeat(${this.#gridColumns}, 1fr)`;
 		this.#container.style.gridAutoRows = "60px";
 		this.#container.style.gap = "16px";
+		this.#container.style.position =
+			this.#container.style.position || "relative";
 
 		// Enhance existing blocks with modern positioning
 		existingBlocks.forEach((block) => this.#enhanceExistingBlock(block));
+
+		// Enable lightweight viewport culling for large grids
+		this.#setupViewportCulling();
+	}
+
+	/**
+	 * Dynamically updates the number of grid columns and adjusts layout if needed.
+	 * @public
+	 * @param {number} columns
+	 */
+	setGridColumns(columns) {
+		const n = Number(columns);
+		if (!Number.isInteger(n) || n <= 0) return;
+		this.#gridColumns = n;
+		if (this.#container) {
+			this.#container.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+		}
+		// Adjust blocks that overflow the new column count
+		try {
+			const layout = this.getCurrentLayout();
+			const blocks = Array.isArray(layout?.blocks) ? layout.blocks : [];
+			const updates = [];
+			let clamped = 0;
+			for (const b of blocks) {
+				let x = b.position?.x ?? b.x ?? 0;
+				let w = b.position?.w ?? b.w ?? 1;
+				const y = b.position?.y ?? b.y ?? 0;
+				const h = b.position?.h ?? b.h ?? 1;
+				const prevX = x,
+					prevW = w;
+				if (x >= n) {
+					x = Math.max(0, n - 1);
+				}
+				if (x + w > n) {
+					w = Math.max(1, n - x);
+				}
+				if (x !== prevX || w !== prevW) clamped++;
+				updates.push({ blockId: b.blockId, x, y, w, h });
+				// Update DOM preview
+				const el = this.#container?.querySelector?.(
+					`[data-block-id="${b.blockId}"]`
+				);
+				if (el) {
+					el.style.gridColumnStart = x + 1;
+					el.style.gridColumnEnd = x + w + 1;
+				}
+			}
+			if (
+				updates.length &&
+				this.#appViewModel?.gridLayoutViewModel?.updatePositions
+			) {
+				const apply = () =>
+					this.#appViewModel.gridLayoutViewModel.updatePositions(
+						updates
+					);
+				if (typeof this.#stateManager?.transaction === "function") {
+					this.#stateManager.transaction(apply);
+				} else {
+					apply();
+				}
+			}
+			// Emit event with clamp info so outer system can inform user
+			const payload = { columns: n, clampedCount: clamped };
+			this.#eventFlowEngine?.emit("gridColumnsChanged", payload);
+			this.#stateManager?.emit?.("gridColumnsChanged", payload);
+		} catch {
+			/* noop */
+		}
 	}
 
 	/**
@@ -142,6 +254,32 @@ export class EnhancedGridRenderer {
 	#enhanceExistingBlock(blockEl) {
 		const blockData = this.#getBlockDataFromElement(blockEl);
 		if (!blockData) return;
+
+		// Apply constraints from dataset or fall back to grid policy defaults
+		try {
+			const defMinW =
+				this.#policyManager?.getPolicy?.("grid", "default_min_w") ?? 1;
+			const defMinH =
+				this.#policyManager?.getPolicy?.("grid", "default_min_h") ?? 1;
+			const defMaxW =
+				this.#policyManager?.getPolicy?.("grid", "default_max_w") ??
+				this.#gridColumns;
+			const defMaxH =
+				this.#policyManager?.getPolicy?.("grid", "default_max_h") ??
+				1000;
+			const minW = parseInt(blockEl.dataset.minW || String(defMinW), 10);
+			const minH = parseInt(blockEl.dataset.minH || String(defMinH), 10);
+			const maxW = parseInt(blockEl.dataset.maxW || String(defMaxW), 10);
+			const maxH = parseInt(blockEl.dataset.maxH || String(defMaxH), 10);
+			blockData.constraints = {
+				minW: Math.max(1, minW),
+				minH: Math.max(1, minH),
+				maxW: Math.max(1, Math.min(this.#gridColumns, maxW)),
+				maxH: Math.max(1, maxH),
+			};
+		} catch {
+			/* noop */
+		}
 
 		// Add modern grid positioning
 		blockEl.style.gridColumnStart = blockData.position.x + 1;
@@ -171,6 +309,22 @@ export class EnhancedGridRenderer {
 		// Add keyboard support
 		if (this.#options.enableKeyboard) {
 			this.#addKeyboardSupport(blockEl, blockData);
+		}
+
+		// Add expand/collapse on double-click if enabled by policy
+		try {
+			const enabled = this.#policyManager?.getPolicy?.(
+				"grid",
+				"expand_enabled"
+			);
+			if (enabled !== false) {
+				blockEl.addEventListener("dblclick", () =>
+					this.#toggleExpand(blockEl, blockData)
+				);
+				blockEl.classList.add("expandable");
+			}
+		} catch {
+			/* noop */
 		}
 	}
 
@@ -310,36 +464,53 @@ export class EnhancedGridRenderer {
 	 * @param {number} deltaY - The change in the y-coordinate.
 	 */
 	#moveBlock(blockData, deltaX, deltaY) {
-		const newX = Math.max(0, blockData.position.x + deltaX);
-		const newY = Math.max(0, blockData.position.y + deltaY);
+		const targetX = Math.max(0, blockData.position.x + deltaX);
+		const targetY = Math.max(0, blockData.position.y + deltaY);
 
-		if (newX !== blockData.position.x || newY !== blockData.position.y) {
-			blockData.position.x = newX;
-			blockData.position.y = newY;
+		if (
+			targetX === blockData.position.x &&
+			targetY === blockData.position.y
+		)
+			return;
 
-			// Update visual position
-			const blockEl = this.#container.querySelector(
-				`[data-block-id="${blockData.blockId}"]`
-			);
-			if (blockEl) {
-				blockEl.style.gridColumnStart = newX + 1;
-				blockEl.style.gridRowStart = newY + 1;
-			}
-
-			// Save changes
-			this.#appViewModel.gridLayoutViewModel.updatePositions([
-				{
-					blockId: blockData.blockId,
-					x: newX,
-					y: newY,
-					w: blockData.position.w,
-					h: blockData.position.h,
-				},
-			]);
-
-			this.#metrics?.increment("grid.keyboard_move");
-			this.#triggerLayoutPersistence("keyboard_move", blockData);
+		// Enforce boundaries and collisions
+		if (
+			!this.#canPlace(
+				blockData.blockId,
+				targetX,
+				targetY,
+				blockData.position.w,
+				blockData.position.h
+			)
+		) {
+			return; // invalid move; ignore
 		}
+
+		blockData.position.x = targetX;
+		blockData.position.y = targetY;
+
+		// Update visual position
+		const blockEl = this.#container.querySelector(
+			`[data-block-id="${blockData.blockId}"]`
+		);
+		if (blockEl) {
+			blockEl.style.gridColumnStart = targetX + 1;
+			blockEl.style.gridRowStart = targetY + 1;
+		}
+
+		// Save changes
+		this.#appViewModel.gridLayoutViewModel.updatePositions([
+			{
+				blockId: blockData.blockId,
+				x: targetX,
+				y: targetY,
+				w: blockData.position.w,
+				h: blockData.position.h,
+			},
+		]);
+
+		this.#metrics?.increment("grid.keyboard_move");
+		this.#triggerLayoutPersistence("keyboard_move", blockData);
 	}
 
 	/**
@@ -350,36 +521,58 @@ export class EnhancedGridRenderer {
 	 * @param {number} deltaH - The change in height.
 	 */
 	#resizeBlock(blockData, deltaW, deltaH) {
-		const newW = Math.max(1, blockData.position.w + deltaW);
-		const newH = Math.max(1, blockData.position.h + deltaH);
+		const c = blockData.constraints || {
+			minW: 1,
+			minH: 1,
+			maxW: this.#gridColumns,
+			maxH: 1000,
+		};
+		const prevW = blockData.position.w;
+		const prevH = blockData.position.h;
+		const newW = Math.max(c.minW, Math.min(c.maxW, prevW + deltaW));
+		const newH = Math.max(c.minH, Math.min(c.maxH, prevH + deltaH));
 
-		if (newW !== blockData.position.w || newH !== blockData.position.h) {
-			blockData.position.w = newW;
-			blockData.position.h = newH;
+		// No-op if unchanged
+		if (newW === prevW && newH === prevH) return;
 
-			// Update visual size
-			const blockEl = this.#container.querySelector(
-				`[data-block-id="${blockData.blockId}"]`
-			);
-			if (blockEl) {
-				blockEl.style.gridColumnEnd = blockData.position.x + newW + 1;
-				blockEl.style.gridRowEnd = blockData.position.y + newH + 1;
-			}
-
-			// Save changes
-			this.#appViewModel.gridLayoutViewModel.updatePositions([
-				{
-					blockId: blockData.blockId,
-					x: blockData.position.x,
-					y: blockData.position.y,
-					w: newW,
-					h: newH,
-				},
-			]);
-
-			this.#metrics?.increment("grid.keyboard_resize");
-			this.#triggerLayoutPersistence("keyboard_resize", blockData);
+		// Enforce boundaries and collisions
+		if (
+			!this.#canPlace(
+				blockData.blockId,
+				blockData.position.x,
+				blockData.position.y,
+				newW,
+				newH
+			)
+		) {
+			return; // invalid resize; ignore
 		}
+
+		blockData.position.w = newW;
+		blockData.position.h = newH;
+
+		// Update visual size
+		const blockEl = this.#container.querySelector(
+			`[data-block-id="${blockData.blockId}"]`
+		);
+		if (blockEl) {
+			blockEl.style.gridColumnEnd = blockData.position.x + newW + 1;
+			blockEl.style.gridRowEnd = blockData.position.y + newH + 1;
+		}
+
+		// Save changes
+		this.#appViewModel.gridLayoutViewModel.updatePositions([
+			{
+				blockId: blockData.blockId,
+				x: blockData.position.x,
+				y: blockData.position.y,
+				w: newW,
+				h: newH,
+			},
+		]);
+
+		this.#metrics?.increment("grid.keyboard_resize");
+		this.#triggerLayoutPersistence("keyboard_resize", blockData);
 	}
 
 	/**
@@ -473,7 +666,17 @@ export class EnhancedGridRenderer {
 			if (e.target.classList.contains("resize-handle")) return;
 
 			this.#isDragging = true;
-			this.#currentDragItem = { element: blockEl, data: blockData };
+			// Snapshot original position to allow revert if drop invalid
+			this.#currentDragItem = {
+				element: blockEl,
+				data: blockData,
+				orig: {
+					x: blockData.position.x,
+					y: blockData.position.y,
+					w: blockData.position.w,
+					h: blockData.position.h,
+				},
+			};
 
 			// Add visual feedback
 			blockEl.style.transform = "rotate(1deg)";
@@ -533,12 +736,16 @@ export class EnhancedGridRenderer {
 							reason: "auto",
 						});
 					}
+
+					// Emit live FPS for analytics panel
+					this.#eventFlowEngine?.emit("gridFps", {
+						fps: Math.round(fps),
+					});
 				}
 
 				frameCount = 0;
 				lastFrameTime = now;
 			}
-
 			if (this.#isDragging || this.#isResizing) {
 				requestAnimationFrame(monitorFrame);
 			}
@@ -563,6 +770,52 @@ export class EnhancedGridRenderer {
 					this.#onPerformancePolicyChanged.bind(this)
 				)
 			);
+		}
+	}
+
+	/**
+	 * Sets up IntersectionObserver-based viewport culling to reduce work for offscreen blocks.
+	 * @private
+	 */
+	#setupViewportCulling() {
+		try {
+			if (typeof IntersectionObserver === "undefined" || !this.#container)
+				return;
+			const io = new IntersectionObserver(
+				(entries) => {
+					for (const entry of entries) {
+						const el = entry.target;
+						if (entry.isIntersecting) {
+							el.style.visibility = "";
+							el.classList.add("in-viewport");
+						} else {
+							el.style.visibility = "hidden";
+							el.classList.remove("in-viewport");
+						}
+					}
+					try {
+						const blocks =
+							this.#container.querySelectorAll(".grid-block");
+						let inView = 0;
+						blocks.forEach((b) => {
+							if (b.classList.contains("in-viewport")) inView++;
+						});
+						this.#eventFlowEngine?.emit("gridBlockVisibility", {
+							inView,
+							total: blocks.length,
+						});
+					} catch {
+						/* noop */
+					}
+				},
+				{ root: this.#container, threshold: 0 }
+			);
+
+			this.#container
+				.querySelectorAll(".grid-block")
+				.forEach((el) => io.observe(el));
+		} catch {
+			/* noop */
 		}
 	}
 
@@ -609,6 +862,27 @@ export class EnhancedGridRenderer {
 		// React to policy changes in real-time
 		if (data.domain === "system" && data.key === "grid_performance_mode") {
 			this.#checkPerformancePolicyOverride();
+		}
+		// Track updates to reflow toggle
+		if (data.domain === "grid" && data.key === "reflow_on_drag_enabled") {
+			try {
+				this.#reflowEnabled = !!this.#policyManager?.getPolicy?.(
+					"grid",
+					"reflow_on_drag_enabled"
+				);
+			} catch {
+				/* noop */
+			}
+		}
+		if (data.domain === "grid" && data.key === "reflow_live_preview") {
+			try {
+				this.#liveReflow = !!this.#policyManager?.getPolicy?.(
+					"grid",
+					"reflow_live_preview"
+				);
+			} catch {
+				/* noop */
+			}
 		}
 	}
 
@@ -679,10 +953,18 @@ export class EnhancedGridRenderer {
 	 */
 	#handleGlobalMouseMove(e) {
 		if (!this.#isDragging && !this.#isResizing) return;
-
-		if (this.#isDragging && this.#currentDragItem) {
-			this.#handleEnhancedDrag(e);
-		}
+		this.#pendingMouseEvent = e;
+		if (this.#rafScheduled) return;
+		this.#rafScheduled = true;
+		requestAnimationFrame(() => {
+			this.#rafScheduled = false;
+			const evt = this.#pendingMouseEvent;
+			this.#pendingMouseEvent = null;
+			if (!evt) return;
+			if (this.#isDragging && this.#currentDragItem) {
+				this.#handleEnhancedDrag(evt);
+			}
+		});
 	}
 
 	/**
@@ -696,20 +978,53 @@ export class EnhancedGridRenderer {
 		const x = e.clientX - rect.left;
 		const y = e.clientY - rect.top;
 
-		const cellWidth = rect.width / 24; // Matches existing 24-column system
+		const cellWidth = rect.width / this.#gridColumns; // Matches existing column system
 		const cellHeight = 60 + 16; // cellHeight + gap
 
 		const gridX = Math.max(0, Math.floor(x / cellWidth));
 		const gridY = Math.max(0, Math.floor(y / cellHeight));
 
-		// Visual preview of new position
 		const { element, data } = this.#currentDragItem;
-		element.style.gridColumnStart = gridX + 1;
-		element.style.gridRowStart = gridY + 1;
+		// Live reflow preview (DOM-only). If enabled, we don't block; we preview reflowed layout.
+		if (this.#reflowEnabled && this.#liveReflow) {
+			// Reset previous preview
+			this.#resetLiveReflowPreview();
+			// Move dragged item visually
+			element.classList.remove("blocked");
+			element.style.gridColumnStart = gridX + 1;
+			element.style.gridRowStart = gridY + 1;
+			data.position.x = gridX;
+			data.position.y = gridY;
+			// Compute preview positions for others
+			this.#applyLiveReflowPreview(
+				data.blockId,
+				gridX,
+				gridY,
+				data.position.w,
+				data.position.h
+			);
+			return;
+		}
 
-		// Update internal data (maintains compatibility with existing system)
-		data.position.x = gridX;
-		data.position.y = gridY;
+		// Default behavior: check boundaries & collisions before preview commit
+		if (
+			this.#canPlace(
+				data.blockId,
+				gridX,
+				gridY,
+				data.position.w,
+				data.position.h
+			)
+		) {
+			element.classList.remove("blocked");
+			element.style.gridColumnStart = gridX + 1;
+			element.style.gridRowStart = gridY + 1;
+			data.position.x = gridX;
+			data.position.y = gridY;
+		} else {
+			// Indicate blocked position visually
+			element.classList.add("blocked");
+		}
 	}
 
 	/**
@@ -742,6 +1057,23 @@ export class EnhancedGridRenderer {
 		element.style.zIndex = "";
 		element.style.transition = "";
 
+		// Validate final position; revert if invalid
+		if (
+			!this.#canPlace(
+				data.blockId,
+				data.position.x,
+				data.position.y,
+				data.position.w,
+				data.position.h
+			) &&
+			this.#currentDragItem?.orig
+		) {
+			data.position.x = this.#currentDragItem.orig.x;
+			data.position.y = this.#currentDragItem.orig.y;
+			// snap element back
+			element.style.gridColumnStart = data.position.x + 1;
+			element.style.gridRowStart = data.position.y + 1;
+		}
 		// Save position using existing ViewModel pattern
 		this.#appViewModel.gridLayoutViewModel.updatePositions([
 			{
@@ -752,6 +1084,15 @@ export class EnhancedGridRenderer {
 				h: data.position.h,
 			},
 		]);
+
+		// Optionally reflow other blocks to avoid overlaps after drop
+		try {
+			if (this.#reflowEnabled) {
+				this.#reflowAfterDrop(data.blockId);
+			}
+		} catch {
+			/* noop */
+		}
 
 		// Emit completion event
 		this.#eventFlowEngine?.emit("blockDragEnd", {
@@ -765,6 +1106,163 @@ export class EnhancedGridRenderer {
 
 		this.#isDragging = false;
 		this.#currentDragItem = null;
+	}
+
+	#applyLiveReflowPreview(movedId, movedX, movedY, movedW, movedH) {
+		const strategy = String(
+			this.#policyManager?.getPolicy?.("grid", "reflow_strategy") ||
+				"push_down"
+		);
+		if (strategy !== "push_down") return;
+		const layoutBlocks = this.#getAllBlocks();
+		const blocks = layoutBlocks.map((b) => ({
+			blockId: b.blockId,
+			x: b.position?.x ?? b.x,
+			y: b.position?.y ?? b.y,
+			w: b.position?.w ?? b.w,
+			h: b.position?.h ?? b.h,
+		}));
+		const byId = new Map(blocks.map((b) => [b.blockId, b]));
+		const moved = byId.get(movedId);
+		if (!moved) return;
+		moved.x = movedX;
+		moved.y = movedY;
+		moved.w = movedW;
+		moved.h = movedH;
+
+		let changed = true;
+		let guard = 0;
+		while (changed && guard++ < 100) {
+			changed = false;
+			for (const a of blocks) {
+				for (const b of blocks) {
+					if (a.blockId === b.blockId) continue;
+					const overlapsX = a.x < b.x + b.w && a.x + a.w > b.x;
+					const overlapsY = a.y < b.y + b.h && a.y + a.h > b.y;
+					if (overlapsX && overlapsY) {
+						const target = a.blockId === movedId ? b : a;
+						const blocker = target === a ? b : a;
+						const newY = blocker.y + blocker.h;
+						if (target.y < newY) {
+							target.y = newY;
+							changed = true;
+						}
+					}
+				}
+			}
+		}
+
+		// Apply DOM-only updates and store originals for reset
+		for (const b of blocks) {
+			if (b.blockId === movedId) continue;
+			const orig = layoutBlocks.find((x) => x.blockId === b.blockId);
+			const ox = orig?.position?.x ?? orig?.x;
+			const oy = orig?.position?.y ?? orig?.y;
+			if (ox !== b.x || oy !== b.y) {
+				if (!this.#previewOriginals.has(b.blockId)) {
+					this.#previewOriginals.set(b.blockId, { x: ox, y: oy });
+				}
+				const el = this.#container.querySelector(
+					`[data-block-id="${b.blockId}"]`
+				);
+				if (el) {
+					el.style.gridColumnStart = b.x + 1;
+					el.style.gridRowStart = b.y + 1;
+				}
+			}
+		}
+	}
+
+	#resetLiveReflowPreview() {
+		if (!this.#previewOriginals.size) return;
+		for (const [blockId, pos] of this.#previewOriginals.entries()) {
+			const el = this.#container.querySelector(
+				`[data-block-id="${blockId}"]`
+			);
+			if (el) {
+				el.style.gridColumnStart = (pos.x ?? 0) + 1;
+				el.style.gridRowStart = (pos.y ?? 0) + 1;
+			}
+		}
+		this.#previewOriginals.clear();
+	}
+
+	#reflowAfterDrop(movedId) {
+		const strategy = String(
+			this.#policyManager?.getPolicy?.("grid", "reflow_strategy") ||
+				"push_down"
+		);
+		if (strategy !== "push_down") return;
+		const blocks = this.#getAllBlocks().map((b) => ({
+			blockId: b.blockId,
+			x: b.position?.x ?? b.x,
+			y: b.position?.y ?? b.y,
+			w: b.position?.w ?? b.w,
+			h: b.position?.h ?? b.h,
+		}));
+		// Build a map for quick access
+		const byId = new Map(blocks.map((b) => [b.blockId, b]));
+		const moved = byId.get(movedId);
+		if (!moved) return;
+
+		// Simple push-down reflow: for any block overlapping in X and colliding in Y, push it down below the blocker.
+		let changed = true;
+		let guard = 0;
+		while (changed && guard++ < 100) {
+			changed = false;
+			for (const a of blocks) {
+				for (const b of blocks) {
+					if (a.blockId === b.blockId) continue;
+					const overlapsX = a.x < b.x + b.w && a.x + a.w > b.x;
+					const overlapsY = a.y < b.y + b.h && a.y + a.h > b.y;
+					if (overlapsX && overlapsY) {
+						// Push the lower-priority one down: prefer keeping the moved block in place; push the other
+						const target = a.blockId === movedId ? b : a;
+						const blocker = target === a ? b : a;
+						const newY = blocker.y + blocker.h;
+						if (target.y < newY) {
+							target.y = newY;
+							changed = true;
+						}
+					}
+				}
+			}
+		}
+
+		// Commit changes if any
+		const updates = [];
+		for (const b of blocks) {
+			const orig = this.#getAllBlocks().find(
+				(x) => x.blockId === b.blockId
+			);
+			const ox = orig?.position?.x ?? orig?.x;
+			const oy = orig?.position?.y ?? orig?.y;
+			if (ox !== b.x || oy !== b.y) {
+				updates.push({
+					blockId: b.blockId,
+					x: b.x,
+					y: b.y,
+					w: b.w,
+					h: b.h,
+				});
+				// live DOM preview
+				const el = this.#container.querySelector(
+					`[data-block-id="${b.blockId}"]`
+				);
+				if (el) {
+					el.style.gridColumnStart = b.x + 1;
+					el.style.gridRowStart = b.y + 1;
+				}
+			}
+		}
+		if (updates.length) {
+			this.#stateManager?.transaction?.(() => {
+				this.#appViewModel?.gridLayoutViewModel?.updatePositions(
+					updates
+				);
+			});
+			this.#eventFlowEngine?.emit("gridReflow", { movedId, updates });
+		}
 	}
 
 	/**
@@ -972,6 +1470,208 @@ export class EnhancedGridRenderer {
 		]);
 	}
 
+	// -------------------------
+	// Expand/collapse logic
+	// -------------------------
+	#toggleExpand(blockEl, blockData) {
+		try {
+			const mode = String(
+				this.#policyManager?.getPolicy?.("grid", "expand_mode") ||
+					"reflow"
+			).toLowerCase();
+			if (
+				this.#expanded &&
+				this.#expanded.blockId === blockData.blockId
+			) {
+				return this.#collapse(blockEl, blockData, mode);
+			}
+			return this.#expand(blockEl, blockData, mode);
+		} catch {
+			/* noop */
+		}
+	}
+
+	#expand(blockEl, blockData, mode) {
+		if (mode === "overlay") return this.#expandOverlay(blockEl);
+		return this.#expandReflow(blockEl, blockData);
+	}
+
+	#collapse(blockEl, blockData, mode) {
+		if (mode === "overlay") return this.#collapseOverlay(blockEl);
+		return this.#collapseReflow(blockEl, blockData);
+	}
+
+	#expandOverlay(blockEl) {
+		blockEl.classList.add("expanded-overlay");
+		const id = blockEl.dataset.blockId;
+		this.#expanded = { blockId: id, snapshot: null };
+		this.#eventFlowEngine?.emit("blockExpanded", {
+			blockId: id,
+			mode: "overlay",
+		});
+	}
+
+	#collapseOverlay(blockEl) {
+		blockEl.classList.remove("expanded-overlay");
+		const id = blockEl.dataset.blockId;
+		this.#expanded = null;
+		this.#eventFlowEngine?.emit("blockCollapsed", {
+			blockId: id,
+			mode: "overlay",
+		});
+	}
+
+	#expandReflow(blockEl, blockData) {
+		const fullWidth =
+			this.#policyManager?.getPolicy?.(
+				"grid",
+				"expand_target_full_width"
+			) ?? true;
+		const targetRows =
+			this.#policyManager?.getPolicy?.("grid", "expand_target_rows") ?? 8;
+		const orig = {
+			x: blockData.position.x,
+			y: blockData.position.y,
+			w: blockData.position.w,
+			h: blockData.position.h,
+		};
+		const newW = fullWidth ? this.#gridColumns : orig.w;
+		const newH = Math.max(orig.h, targetRows);
+		const deltaH = newH - orig.h;
+		const affectedX1 = orig.x;
+		const affectedX2 = orig.x + newW;
+
+		const layout = this.getCurrentLayout();
+		const updates = [];
+		// Expand the target block first
+		updates.push({
+			blockId: blockData.blockId,
+			x: orig.x,
+			y: orig.y,
+			w: newW,
+			h: newH,
+		});
+		// Push down overlapping blocks below or at our row start
+		for (const b of layout?.blocks || []) {
+			if (b.blockId === blockData.blockId) continue;
+			const bx = b.position?.x ?? b.x,
+				by = b.position?.y ?? b.y,
+				bw = b.position?.w ?? b.w,
+				bh = b.position?.h ?? b.h;
+			const overlapsX = bx < affectedX2 && bx + bw > affectedX1;
+			if (overlapsX && by >= orig.y) {
+				updates.push({
+					blockId: b.blockId,
+					x: bx,
+					y: by + deltaH,
+					w: bw,
+					h: bh,
+				});
+			}
+		}
+
+		this.#stateManager?.transaction?.(() => {
+			this.#appViewModel?.gridLayoutViewModel?.updatePositions(updates);
+		});
+		this.#expanded = { blockId: blockData.blockId, snapshot: orig };
+		blockEl.classList.add("expanded");
+		this.#eventFlowEngine?.emit("blockExpanded", {
+			blockId: blockData.blockId,
+			mode: "reflow",
+		});
+	}
+
+	#collapseReflow(blockEl, blockData) {
+		if (!this.#expanded?.snapshot) return;
+		const orig = this.#expanded.snapshot;
+		const cur = {
+			x: blockData.position.x,
+			y: blockData.position.y,
+			w: blockData.position.w,
+			h: blockData.position.h,
+		};
+		const deltaH = cur.h - orig.h;
+		const affectedX1 = orig.x;
+		const affectedX2 = orig.x + cur.w;
+		const layout = this.getCurrentLayout();
+		const updates = [];
+		// Restore target block
+		updates.push({
+			blockId: blockData.blockId,
+			x: orig.x,
+			y: orig.y,
+			w: orig.w,
+			h: orig.h,
+		});
+		// Pull up overlapping blocks that were pushed down
+		for (const b of layout?.blocks || []) {
+			if (b.blockId === blockData.blockId) continue;
+			const bx = b.position?.x ?? b.x,
+				by = b.position?.y ?? b.y,
+				bw = b.position?.w ?? b.w,
+				bh = b.position?.h ?? b.h;
+			const overlapsX = bx < affectedX2 && bx + bw > affectedX1;
+			if (overlapsX && by > orig.y) {
+				updates.push({
+					blockId: b.blockId,
+					x: bx,
+					y: Math.max(orig.y + orig.h, by - deltaH),
+					w: bw,
+					h: bh,
+				});
+			}
+		}
+		this.#stateManager?.transaction?.(() => {
+			this.#appViewModel?.gridLayoutViewModel?.updatePositions(updates);
+		});
+		blockEl.classList.remove("expanded");
+		this.#eventFlowEngine?.emit("blockCollapsed", {
+			blockId: blockData.blockId,
+			mode: "reflow",
+		});
+		this.#expanded = null;
+	}
+
+	// -------------------------
+	// Collision/constraints helpers
+	// -------------------------
+	#rectsOverlap(a, b) {
+		return (
+			a.x < b.x + b.w &&
+			a.x + a.w > b.x &&
+			a.y < b.y + b.h &&
+			a.y + a.h > b.y
+		);
+	}
+
+	#getAllBlocks() {
+		try {
+			const layout = this.getCurrentLayout();
+			return Array.isArray(layout?.blocks) ? layout.blocks : [];
+		} catch {
+			return [];
+		}
+	}
+
+	#canPlace(blockId, x, y, w, h) {
+		// Boundaries
+		if (x < 0 || y < 0) return false;
+		if (x + w > this.#gridColumns) return false;
+		const me = { x, y, w, h };
+		const blocks = this.#getAllBlocks();
+		for (const b of blocks) {
+			if (b.blockId === blockId) continue;
+			const other = {
+				x: b.position?.x ?? b.x,
+				y: b.position?.y ?? b.y,
+				w: b.position?.w ?? b.w,
+				h: b.position?.h ?? b.h,
+			};
+			if (this.#rectsOverlap(me, other)) return false;
+		}
+		return true;
+	}
+
 	/**
 	 * Cleans up all event listeners and resources used by the renderer.
 	 * @public
@@ -992,8 +1692,18 @@ export const ENHANCED_GRID_STYLES = `
 .enhanced-grid-block {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   will-change: transform;
-// Auto-inject styles if in browser environment
 }
+.enhanced-grid-block.expandable { cursor: zoom-in; }
+.enhanced-grid-block.expanded { cursor: zoom-out; }
+.enhanced-grid-block.expanded-overlay {
+  position: absolute !important;
+  top: 0; left: 0; right: 0;
+  z-index: 2000;
+  width: 100% !important;
+  height: auto;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+}
+.enhanced-grid-block.blocked { outline: 2px solid #dc3545; }
 
 .enhanced-grid-block:hover {
   transform: translateY(-1px);
@@ -1067,8 +1777,6 @@ export const ENHANCED_GRID_STYLES = `
 
 // Auto-inject styles if in browser environment
 if (typeof document !== "undefined") {
-	```<!--
-```;
 	const styleId = "enhanced-grid-styles";
 	if (!document.getElementById(styleId)) {
 		const style = document.createElement("style");

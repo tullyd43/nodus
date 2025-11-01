@@ -54,7 +54,7 @@ export default class IndexedDBAdapter {
 			this.#stateManager?.metricsRegistry?.namespace("indexeddbAdapter");
 
 		this.#dbName = String(opts.dbName || "nodus_offline");
-		this.#version = Number(opts.version || 2); // Bump version for schema upgrade
+		this.#version = Number(opts.version || 3); // Bump version for schema upgrade
 		this.#stores = opts.stores || {
 			objects: {
 				keyPath: "id",
@@ -73,6 +73,17 @@ export default class IndexedDBAdapter {
 						keyPath: "classification_level",
 					},
 					{ name: "updated_at", keyPath: "updated_at" },
+				],
+			},
+			system_settings: {
+				keyPath: "id",
+				indexes: [],
+			},
+			audit_events: {
+				keyPath: "id",
+				indexes: [
+					{ name: "type", keyPath: "type" },
+					{ name: "timestamp", keyPath: "timestamp" },
 				],
 			},
 		};

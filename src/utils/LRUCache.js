@@ -118,60 +118,63 @@ export class LRUCache {
 	 * @returns {T|undefined} The cached value, or `undefined` if not found or expired.
 	 */
 	get(key, securityContext = {}) {
-		return this.#errorHelpers?.trace(
-			"cache.get",
-			() => {
-				const prefixedKey = this.#getPrefixedKey(key);
+		const execute = () => {
+			const prefixedKey = this.#getPrefixedKey(key);
 
-				if (!this.#cache.has(prefixedKey)) {
-					this.#handleCacheMiss(key);
-					return undefined;
+			if (!this.#cache.has(prefixedKey)) {
+				this.#handleCacheMiss(key);
+				return undefined;
+			}
+
+			if (this.isExpired(prefixedKey)) {
+				this.#expireItem(prefixedKey);
+				this.#handleCacheMiss(key, "expired");
+				return undefined;
+			}
+
+			// Move to end of map (most recently used)
+			const item = this.#cache.get(prefixedKey);
+			this.#cache.delete(prefixedKey);
+			this.#cache.set(prefixedKey, item);
+
+			// Security Integration: Check if user can read this item
+			if (this.#securityManager && item.securityLabel) {
+				const canRead =
+					this.#securityManager.canRead(
+						securityContext,
+						item.securityLabel
+					) ?? false;
+				if (!canRead) {
+					this.#auditOperation("cache_read_denied", {
+						key,
+						securityContext,
+					});
+					throw new this.#PolicyError( // V8.0 Parity: Use derived error classes directly.
+						"Access denied to cached item."
+					);
 				}
+			}
 
-				if (this.isExpired(prefixedKey)) {
-					this.#expireItem(prefixedKey);
-					this.#handleCacheMiss(key, "expired");
-					return undefined;
-				}
+			// Update item access tracking
+			item.accessed = DateCore.timestamp(); // timestamp() returns a number, which is fine
+			item.hits++;
 
-				// Move to end of map (most recently used)
-				const item = this.#cache.get(prefixedKey);
-				this.#cache.delete(prefixedKey);
-				this.#cache.set(prefixedKey, item);
-
-				// Security Integration: Check if user can read this item
-				if (this.#securityManager && item.securityLabel) {
-					const canRead =
-						this.#securityManager.canRead(
-							securityContext,
-							item.securityLabel
-						) ?? false;
-					if (!canRead) {
-						this.#auditOperation("cache_read_denied", {
-							key,
-							securityContext,
-						});
-						throw new this.#PolicyError( // V8.0 Parity: Use derived error classes directly.
-							"Access denied to cached item."
-						);
-					}
-				}
-
-				// Update item access tracking
-				item.accessed = DateCore.timestamp(); // timestamp() returns a number, which is fine
-				item.hits++;
-
+			if (this.#options.enableMetrics) {
 				this.#getMetrics()?.increment("hits"); // This is a 'hit'
-				this.#stateManager?.emit("cache_hit", {
-					timestamp: DateCore.now(),
-					source: `cache:${this.#options.keyPrefix || "generic"}`,
-					key,
-					entityType: item.entityType,
-				});
-				return item.value;
-			},
-			{ key }
-		);
+			}
+			this.#stateManager?.emit("cache_hit", {
+				timestamp: DateCore.now(),
+				source: `cache:${this.#options.keyPrefix || "generic"}`,
+				key,
+				entityType: item.entityType,
+			});
+			return item.value;
+		};
+
+		if (this.#options.enableMetrics && this.#errorHelpers) {
+			return this.#errorHelpers.trace("cache.get", execute, { key });
+		}
+		return execute();
 	}
 
 	/**
@@ -181,7 +184,9 @@ export class LRUCache {
 	 * @param {string} [reason] - The reason for the miss (e.g., 'expired').
 	 */
 	#handleCacheMiss(key, reason) {
-		this.#getMetrics()?.increment("misses");
+		if (this.#options.enableMetrics) {
+			this.#getMetrics()?.increment("misses");
+		}
 		this.#stateManager?.emit("cache_miss", {
 			timestamp: DateCore.now(),
 			source: `cache:${this.#options.keyPrefix || "generic"}`,
@@ -203,90 +208,94 @@ export class LRUCache {
 	 * @param {object} [options.securityLabel=null] - Security label to attach to the item.
 	 */
 	set(key, value, options = {}) {
-		this.#errorHelpers?.trace(
-			"cache.set",
-			() => {
-				const { ttlOverride, securityContext, securityLabel } = options;
-				const prefixedKey = this.#getPrefixedKey(key);
-				const itemSize = this.#estimateItemSize(prefixedKey, value);
+		const execute = () => {
+			const { ttlOverride, securityContext, securityLabel } = options;
+			const prefixedKey = this.#getPrefixedKey(key);
+			const itemSize = this.#estimateItemSize(prefixedKey, value);
 
-				// Security Integration: Check if user can write this item
-				if (this.#securityManager && securityLabel) {
-					const canWrite =
-						this.#securityManager.canWrite(
-							securityContext,
-							securityLabel
-						) ?? false;
-					if (!canWrite) {
-						this.#auditOperation("cache_write_denied", {
-							key,
-							securityContext,
-							securityLabel,
-						});
-						throw new this.#PolicyError( // V8.0 Parity: Use derived error classes directly.
-							"Access denied to write to cache with this security label."
-						);
-					}
-				}
-
-				// Check memory limit before adding
-				const metrics = this.#getMetrics();
-				const currentMemory = metrics?.get("memory_bytes")?.value || 0;
-				if (
-					this.#options.memoryLimit &&
-					currentMemory + itemSize > this.#options.memoryLimit
-				) {
-					this.#enforceMemoryLimit(itemSize);
-				}
-
-				// Create item wrapper with metadata
-				const item = {
-					value,
-					size: itemSize,
-					created: DateCore.timestamp(), // Returns a number
-					accessed: DateCore.timestamp(), // Returns a number
-					hits: 0,
-					entityType: this.#extractEntityType(value),
-					securityLabel,
-				};
-
-				// Handle existing item
-				if (this.#cache.has(prefixedKey)) {
-					const oldItem = this.#cache.get(prefixedKey); // Get old item to update metrics
-					if (oldItem) {
-						metrics?.increment("memory_bytes", -oldItem.size);
-					}
-
-					this.#cache.delete(prefixedKey);
-				} else if (this.#cache.size >= this.#maxSize) {
-					// Evict least recently used item
-					this.#evictOldestItem();
-				}
-
-				// Add new item
-				this.#cache.set(prefixedKey, item);
-				metrics?.increment("memory_bytes", itemSize);
-
-				// Set TTL
-				const ttl = ttlOverride || this.#options.ttl;
-				if (ttl) {
-					this.#ttlMap.set(prefixedKey, DateCore.timestamp() + ttl); // Number + number is fine
-				}
-
-				metrics?.increment("sets");
-
-				// Generate audit event if enabled
-				if (this.#options.auditOperations) {
-					this.#auditOperation("cache_set", {
-						key: prefixedKey,
-						size: itemSize,
-						ttl,
-						entityType: item.entityType,
+			// Security Integration: Check if user can write this item
+			if (this.#securityManager && securityLabel) {
+				const canWrite =
+					this.#securityManager.canWrite(
+						securityContext,
+						securityLabel
+					) ?? false;
+				if (!canWrite) {
+					this.#auditOperation("cache_write_denied", {
+						key,
+						securityContext,
+						securityLabel,
 					});
+					throw new this.#PolicyError( // V8.0 Parity: Use derived error classes directly.
+						"Access denied to write to cache with this security label."
+					);
 				}
-			},
-			{ key }
-		);
+			}
+
+			// Check memory limit before adding
+			const metrics = this.#options.enableMetrics
+				? this.#getMetrics()
+				: null;
+			const currentMemory = metrics?.get("memory_bytes")?.value || 0;
+			if (
+				this.#options.memoryLimit &&
+				currentMemory + itemSize > this.#options.memoryLimit
+			) {
+				this.#enforceMemoryLimit(itemSize);
+			}
+
+			// Create item wrapper with metadata
+			const item = {
+				value,
+				size: itemSize,
+				created: DateCore.timestamp(), // Returns a number
+				accessed: DateCore.timestamp(), // Returns a number
+				hits: 0,
+				entityType: this.#extractEntityType(value),
+				securityLabel,
+			};
+
+			// Handle existing item
+			if (this.#cache.has(prefixedKey)) {
+				const oldItem = this.#cache.get(prefixedKey); // Get old item to update metrics
+				if (oldItem) {
+					metrics?.increment("memory_bytes", -oldItem.size);
+				}
+
+				this.#cache.delete(prefixedKey);
+			} else if (this.#cache.size >= this.#maxSize) {
+				// Evict least recently used item
+				this.#evictOldestItem();
+			}
+
+			// Add new item
+			this.#cache.set(prefixedKey, item);
+			metrics?.increment("memory_bytes", itemSize);
+
+			// Set TTL
+			const ttl = ttlOverride || this.#options.ttl;
+			if (ttl) {
+				this.#ttlMap.set(prefixedKey, DateCore.timestamp() + ttl); // Number + number is fine
+			}
+
+			metrics?.increment("sets");
+
+			// Generate audit event if enabled
+			if (this.#options.auditOperations) {
+				this.#auditOperation("cache_set", {
+					key: prefixedKey,
+					size: itemSize,
+					ttl,
+					entityType: item.entityType,
+				});
+			}
+		};
+
+		if (this.#options.enableMetrics && this.#errorHelpers) {
+			this.#errorHelpers.trace("cache.set", execute, { key });
+			return;
+		}
+		execute();
 	}
 
 	/**
@@ -487,6 +496,37 @@ export class LRUCache {
 			}
 		}
 		return results;
+	}
+
+	/**
+	 * Invalidates cache entries whose unprefixed key matches a pattern.
+	 * Pattern may be a string (prefix match) or RegExp.
+	 * @param {string|RegExp} pattern
+	 */
+	invalidate(pattern) {
+		if (!pattern || pattern === "*") {
+			this.clear();
+			return;
+		}
+		const metrics = this.#getMetrics();
+		const isRegex = pattern instanceof RegExp;
+		const toDelete = [];
+		for (const key of this.#cache.keys()) {
+			const unpref = this.#getUnprefixedKey(key);
+			let match = false;
+			if (isRegex) match = pattern.test(unpref);
+			else
+				match =
+					unpref.startsWith(String(pattern)) ||
+					key.includes(String(pattern));
+			if (match) toDelete.push(key);
+		}
+		for (const key of toDelete) {
+			const item = this.#cache.get(key);
+			if (item) metrics?.increment("memory_bytes", -item.size);
+			this.#cache.delete(key);
+			this.#ttlMap.delete(key);
+		}
 	}
 
 	/**

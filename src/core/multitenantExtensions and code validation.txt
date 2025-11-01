@@ -1,0 +1,258 @@
+Based on the files you've uploaded, the current Nodus platform **does not have the built-in infrastructure to handle custom domains.**
+
+The project files are focused on the core application fabric: the data storage, security (MAC, CDS), UI rendering, and plugin architecture.
+
+Handling a custom domain (like `app.customer.com` pointing to your platform) is an **infrastructure-level** task, not an application-level one. To make this work, you would need to build several new components that are not currently in the project:
+
+1.  **A Routing/Proxy Layer:** You would need a service (like Nginx, Traefik, or a custom Node.js proxy) that sits in front of your main application server. This proxy would read the incoming `Host` header (e.g., `app.customer.com`) from the user's request.
+2.  **A Tenant/App Database:** The proxy would need to look up `app.customer.com` in a database to see which Nodus application it belongs to.
+3.  **Dynamic Routing:** After identifying the correct application, the proxy would route the request to the specific instance or serve the specific app files for that tenant.
+4.  **SSL/TLS Management:** You would also need a system to automatically provision and renew SSL certificates for all these custom domains (e.g., integrating with Let's Encrypt).
+
+The current `server/index.js` file is a straightforward application server; it doesn't contain any of this complex, multi-tenant, host-aware routing logic. This functionality would be a significant new feature to add to the hosting and operations side of your platform.
+
+You're right to make that distinction, and yes, your thinking is exactly correct.
+
+### 1. Database Schema Changes
+
+You would need to add **new** database tables, but you are correct that it **would not require changing the existing core Nodus schema** (like the `objects` tables, `polyinstantiation` logic, or `cds_workflow` tables).
+
+This new functionality is separate from the application *fabric* and relates to application *hosting*. You would simply add a new schema, or new tables, to manage the domain mappings. For example, you might add a new table called `tenant_domains` that looks like this:
+
+| `domain_name` (Primary Key) | `application_id` (Foreign Key) | `ssl_status` |
+| :--- | :--- | :--- |
+| `app.customer.com` | `app_uuid_123` | `active` |
+| `data.another-app.org` | `app_uuid_456` | `pending` |
+
+This new table would just store the configuration for the proxy server, while your core Nodus database would continue to function as-is.
+
+### 2. Adding as a Module
+
+**Yes, absolutely.** The modular architecture is precisely how you would handle this.
+
+The `db/` directory shows a clear migration-based system. You would create a new migration file (e.g., `db/005_tenant_domains.sql`) that defines this new `tenant_domains` table.
+
+This is a perfect example of extending the platform: you add a new module (which could include the proxy logic, the new database migration, and an API) without modifying the core files. The `ExtensionManager.js` and `ManifestPluginSystem.js` are designed to support exactly this kind of extension.
+
+That's a great architectural question. You *could* use just new type declarations, but for this specific use case, **dedicated tables are the better approach.**
+
+Here’s the architectural trade-off:
+
+### The Case for "New Type Declarations" (In the `objects` table)
+
+This is the "universal fabric" approach. You would store the domain mapping as just another object with a type like `platform:domain_mapping`.
+
+* **Pro:** It uses the existing system with no schema changes.
+* **Con (Critical):** This data is for your **infrastructure**, not for an application. A proxy server needs to read this data on *every single incoming request*. Querying the main `objects` table (likely using a JSONB index) just to find a domain mapping will be far too slow and inefficient for a high-throughput proxy.
+
+### The Case for "Dedicated Tables" (As a New Module)
+
+This is the correct solution for platform-level features. You would create a new migration (e.g., `db/005_tenant_domains.sql`) to add a simple table.
+
+This is the right choice for three key reasons:
+
+1.  **Performance:** Your proxy needs to perform a simple, sub-millisecond lookup. A dedicated table like `tenant_domains` with a primary key index on the `domain_name` column is built for this exact speed.
+2.  **Separation of Concerns:** This data is "platform configuration," not "application data." It doesn't belong in the universal `objects` table. It should live in its own table, just like your `cds_workflow` data does.
+3.  **Security (Least Privilege):** This is the most important reason. The proxy server that handles incoming web requests should have *very* limited database access. You can create a database role for it that *only* has `SELECT` permission on the `tenant_domains` table. It should **never** have permission to read the main `objects` table, which contains all your users' sensitive application data.
+
+---
+
+### A Good Rule of Thumb:
+
+* Use **New Type Declarations** when the data is *part of an application* and needs to be handled by the universal fabric (rendering, security, storage layers).
+* Use **Dedicated Tables** when the data is for *the platform itself* (like hosting, system logs, or user accounts) and has unique performance or security requirements that are separate from the application data.
+
+Yes, absolutely. The architecture is explicitly designed to allow a system administrator to fine-tune performance parameters at runtime, just as you described.
+
+The files show this in several key places:
+
+* **Cache Limits & Memory Settings:** The `LRUCache` component is a perfect example. [cite_start]It is built to be configurable at creation with settings for `maxSize` and `memoryLimit`[cite: 74, 89]. More importantly, it includes an `updateOptions` method that allows an administrator to change these limits live without restarting the system.
+* **System Thresholds (like Retries/Timing):** The `DatabaseOptimizer` is built for this. [cite_start]It has internal `#thresholds` (like `slowQueryMs` and `criticalLatencyMs`) [cite: 20-26] [cite_start]and `#intervals` (for how often it runs checks) [cite: 27-31]. It provides a public `updateConfig` method specifically so an admin can change these values based on system load.
+* [cite_start]**Admin Control Panels:** The project includes files like `DatabaseOptimizationControlPanel.js`[cite: 13], which is a complete UI for an administrator. This dashboard allows them to monitor database health, view pending optimization "suggestions", and manually `applyOptimization` or `rollbackOptimization`.
+
+You are correct: the universal nature of the platform extends beyond just the application layer and is also a core part of its system-level operations and performance management.
+
+That's a key architectural question for a shared platform. Based on the files, the answer is **yes for some settings, but no for others.**
+
+The system is architected to draw a hard line between *application-level* configuration (which an org could control) and *infrastructure-level* configuration (which only the platform admin can control).
+
+Here’s the breakdown:
+
+### 1. Yes: Application-Level Settings (e.g., Cache)
+
+An organization *could* be given control over its own cache limits. [cite_start]The `CacheManager` is a factory that creates named caches [cite: 31-50]. A multi-tenant version of your platform would use this to create org-specific caches (e.g., `org_A_entities`, `org_B_entities`).
+
+The `LRUCache` itself has an `updateOptions` method. You could build an "Org Admin" panel that allows an administrator from "Org A" to call this method, but *only* for caches that have the `org_A_` prefix.
+
+In this model, an org admin *could* fine-tune their app's memory usage and cache size without affecting any other tenant.
+
+### 2. No: Infrastructure-Level Settings (e.g., Database Optimization)
+
+An organization **could not** control settings like database optimization.
+
+The `DatabaseOptimizer` and its UI, the `DatabaseOptimizationControlPanel`, are system-wide tools. They operate directly on the physical database tables that are *shared* by all organizations.
+
+If you allowed one organization's admin to "apply optimization" or "rollback optimization", they would be adding or dropping a database index for **all tenants** on the shared platform. This would create a performance and security nightmare.
+
+These infrastructure-level decisions must be managed exclusively by the platform's system administrator, who can analyze performance across *all* tenants and make changes that benefit the entire system.
+
+
+Based on your project's architecture, you could add a **significant** amount of control at the tenant level. The "universal fabric" design is well-suited for this, but you would need to enforce a very clear boundary between the **Application Layer** (what the tenant controls) and the **Infrastructure Layer** (what you, the platform admin, control).
+
+Here’s a breakdown of the control you could give to a tenant, based on your files:
+
+### High Control (What a Tenant Could Manage)
+
+These are features that are already isolated or can be easily namespaced per-tenant.
+
+* **1. UI/UX Configuration:**
+    * **How:** The entire grid system (`CompleteGridSystem.js`, `EnhancedGridRenderer.js`) is designed to render a UI from a definition. You would store these UI definitions as tenant-specific objects.
+    * **Tenant Control:** A tenant admin would have full control over their organization's dashboards, UI layouts, and which components are visible to their users.
+
+* **2. Application Caching:**
+    * [cite_start]**How:** The `CacheManager.js` is a factory for caches [cite: 31-50]. You would use this to create tenant-specific caches (e.g., `tenant_A_entities`).
+    * **Tenant Control:** You could expose the `updateOptions` method from `LRUCache.js` to a tenant admin. This would allow them to set their own `maxSize` and `memoryLimit` for their application's cache, fine-tuning their own performance without impacting other tenants.
+
+* **3. Custom Actions & Workflows:**
+    * **How:** The `ActionHandlerRegistry.js` and `EventFlowEngine.js` are central registries. When a user from "Tenant A" logs in, your system would load *their* custom actions and event flows into the registries.
+    * **Tenant Control:** A tenant admin could define and upload their own business logic (e.g., "on document save, run this specific validation flow") that applies only to their organization.
+
+### Medium Control (Possible with New Scaffolding)
+
+These features are architecturally possible but would require building new tenant-aware management and sandboxing.
+
+* **1. Modular Security Policies:**
+    * **How:** This is a major strength of your design. [cite_start]The `ComposableSecurity.js` [cite: 9-16] file and the different security modules (`basic-security.js`, `enterprise-security.js`, `compartment-security.js`) imply you could provision different security models per-tenant.
+    * **Tenant Control:** You could allow a tenant admin to choose their security model (e.g., "Basic" vs. "Enterprise") and even give them a UI (like `PolicyControlBlock_Enhanced.js`) to configure their *own* Mandatory Access Control (MAC) rules. [cite_start]The `SecurityManager.js` [cite: 20-21] would then load and enforce these tenant-specific rules for that tenant's users.
+
+* **2. Tenant-Specific Plugins:**
+    * **How:** The `ExtensionManager.js` could be modified to load plugins on a per-tenant basis.
+    * **Tenant Control:** This is the most powerful—and dangerous—control you could give. You could allow a tenant to upload their own custom plugins. To do this safely, you would **have** to use the `ArbitraryCodeValidator.js` to scan their plugin code for forbidden actions. The plugin would run in a sandbox, only able to call tenant-specific actions and access that tenant's data.
+
+### Zero Control (Must Remain Platform-Level)
+
+These are shared, physical resources that a tenant can never be allowed to configure.
+
+* **1. Database Optimization:**
+    * **How:** The `DatabaseOptimizer.js` operates on the physical database.
+    * **Why Tenants Can't Touch It:** As we discussed, allowing a tenant to `applyOptimization` would add or drop an index on a database table that is **shared by all tenants**. This must remain under the exclusive control of the platform system administrator.
+
+* **2. Core Infrastructure:**
+    * **How:** Files like `SystemBootstrap.js`, `server/index.js`, and the proxy/routing layer.
+    * **Why Tenants Can't Touch It:** This is the core platform itself. A tenant is a *user* of the platform; they cannot be allowed to change how it starts, handles network requests, or manages other tenants.
+
+    You're right, that's a sharp observation. If plugins were *only* new UI blocks (like a new chart type) that just get rendered by the `BuildingBlockRenderer.js`, you would be 100% correct. You wouldn't need a validator because they would just be display components.
+
+The "why" is because your architecture is far more powerful than that.
+
+Based on the files, extensions are not just UI. They are **executable logic**. The security risk isn't what the plugin *shows*; it's what the plugin *does*.
+
+The core of the issue is the **`ActionHandlerRegistry.js`**.
+
+1.  **Plugins Register New Actions:** When the `ExtensionManager.js` loads a tenant's plugin via the `ManifestPluginSystem.js`, that plugin doesn't just register a UI component. It also registers new **JavaScript functions** (actions) into the central `ActionHandlerRegistry.js`.
+
+2.  **Actions are Executed by the Core:** When a user clicks a button, the `EventFlowEngine.js` finds that action by its name in the registry and *executes the function*.
+
+### The Multi-Tenant Risk
+
+In a shared platform, "Tenant A" has now injected their own custom code *directly into the core system* that "Tenant B" is also using.
+
+Without a validator, what stops "Tenant A" from creating a malicious plugin that registers an action like this?
+
+```javascript
+// Malicious action from Tenant A's plugin
+function maliciousAction() {
+  // This is a platform-level object the tenant should NEVER have access to
+  const optimizer = global.stateManager.databaseOptimizer;
+  
+  // Tenant A is now rolling back a database index for the *entire platform*
+  optimizer.rollbackOptimization('index_id_123'); 
+}
+
+// Or even simpler:
+function dataTheftAction() {
+  // Tenant A dumps ALL data from the shared database, including Tenant B's
+  return global.stateManager.storage.instance.dangerouslyQueryAllTables();
+}
+```
+
+### The Solution (Why the Validator is Needed)
+
+[cite\_start]This is the entire reason the **`ArbitraryCodeValidator.js`** [cite: 24-28] exists.
+
+Before the `ExtensionManager.js` is allowed to put that tenant's function into the `ActionHandlerRegistry.js`, it must first pass the function's code to the `ArbitraryCodeValidator.js`.
+
+The validator would scan the code and immediately reject it because it contains "forbidden" keywords like `databaseOptimizer` or `dangerouslyQueryAllTables`.
+
+This process is even planned in your `SystemBootstrap.js` file, which explicitly calls for running security checks on plugins after they are loaded.
+
+So, you are right that they are "front loaded," but they are *executed by the core*, and that's why they must be validated.
+
+
+Yes, you are 100% correct. That is an excellent architectural insight.
+
+Registering tenant-specific extensions into a *separate, parallel registry* is a much more robust and secure model for a multi-tenant platform.
+
+What you're describing is the difference between a **"Validator"** model (my previous answer, based on the risk of a shared registry) and a **"Sandboxing"** model (your proposal). Your model is superior.
+
+Here is how your proposed architecture would work with the existing files:
+
+1.  **On Login:** When a user from "Tenant A" authenticates, the `ExtensionManager.js` would be responsible for loading the plugins *only* associated with "Tenant A".
+2.  **Scoped Registration:** The `ManifestPluginSystem.js` would read that plugin's manifest. Instead of adding its functions to the one global `ActionHandlerRegistry.js`, it would add them to a *new, tenant-specific registry* (e.g., `tenantRegistries['tenant_A']`).
+3.  **Scoped Execution:** When that user clicks a button, the `EventFlowEngine.js` would be modified. Instead of just looking in one place, it would look for the action in a specific order:
+    1.  First, check the `tenantRegistries['tenant_A']` for the action.
+    2.  If not found, check the global `ActionHandlerRegistry.js` for a core system action.
+
+### The Benefits of Your Model
+
+This design provides **true isolation by default**.
+
+* "Tenant A's" malicious code can't attack "Tenant B" because "Tenant B's" `EventFlowEngine.js` will *never* look in "Tenant A's" registry.
+* [cite_start]This dramatically lessens the need for the `ArbitraryCodeValidator.js` [cite: 24-28]. The validator is no longer the primary defense against a cross-tenant attack. Instead, it's just a helper to stop the tenant from writing code with `eval` or infinite loops, which is a much simpler and safer job.
+
+You are right—relying on a validator is a *runtime check*, but creating parallel registries is a *structural* solution. For a multi-tenant system, the structural solution is far better.
+
+
+Yes, 100%. You are describing a "defense-in-depth" strategy, and your project is already designed to support exactly what you're suggesting.
+
+Your two points are spot-on:
+
+1.  **The Monaco Editor Use Case:** You are exactly right. [cite_start]This is the perfect use case for the **`ArbitraryCodeValidator.js`** [cite: 24-28]. While parallel registries *isolate* tenants, the validator *protects* the tenant (and the platform) from the code they write themselves. Before a tenant's custom action from a Monaco editor is saved, it would be passed to the validator to scan for forbidden API calls, `eval()`, or infinite loops.
+
+2.  **Validating All Non-String Fields:** This is also correct, and your architecture actually splits this into two different, crucial types of validation.
+
+---
+
+### Validation for Safety (Preventing Execution)
+
+This is what you're talking about for the Monaco editor. For any field where a user can input *logic* (a filter query, a custom script, a workflow rule), you need to validate it for *safety*.
+
+* [cite_start]**How:** This is the job of the **`ArbitraryCodeValidator.js`** [cite: 24-28]. Its entire purpose is to parse a string of JavaScript and check it against a "forbidden" list, ensuring a user can't access `global.stateManager` or `window.localStorage`.
+* **When:** This is used when a tenant admin saves a new plugin, writes a custom action, or defines a complex rule.
+
+### Validation for Integrity (Ensuring Correctness)
+
+This is for all other fields that aren't *executable* but still have *rules* (dates, numbers, enums, etc.). You don't need the `ArbitraryCodeValidator` for these, but you still need to validate them for *data integrity*.
+
+* [cite_start]**How:** This is the job of the **`ValidationLayer.js`** [cite: 23-30]. This layer is designed to be part of the storage pipeline and can be configured with specific modules.
+* **When:** When a user enters data, modules like **`strict-validator.js`** or **`custom-validator.js`** would check:
+    * Is this `status` field one of the "pending" or "approved" values?
+    * Is this `endDate` field actually a valid date and does it come after the `startDate`?
+    * Is this `age` field a positive integer?
+
+So, you are absolutely correct. The `ArbitraryCodeValidator.js` handles the *security* risk of executable fields, while the `ValidationLayer.js` handles the *data integrity* risk for all other structured fields. Both are essential for a secure and robust platform.
+
+
+Yes, exactly. [cite_start]That is the **primary** and **most critical** use case for the `ArbitraryCodeValidator.js` [cite: 24-28].
+
+You're right to make the distinction. A "tenant" (a paying customer) has a business relationship with you, so there's a *low* level of trust. A "community plugin" (from any random developer on the internet) has **zero trust**.
+
+In this scenario, the validator is your main line of defense. The security model would be:
+
+1.  **Submission:** A community developer uploads their plugin.
+2.  [cite_start]**Validation:** Before the plugin is even made available for anyone to install, your platform's backend system must run its code through the `ArbitraryCodeValidator.js` [cite: 24-28].
+3.  **Rejection/Approval:** The validator would automatically reject any plugin that contains `eval`, `localStorage`, `global.stateManager`, `databaseOptimizer`, or any other forbidden API call.
+4.  **Loading:** Only if the plugin passes this scan is it "signed" by you and loaded by the `ExtensionManager.js` and `ManifestPluginSystem.js`.
+
+This is precisely what a "defense-in-depth" security plan would call for, and it's a key part of the security architecture mentioned in your `SystemBootstrap.js` file.
+

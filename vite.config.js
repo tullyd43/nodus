@@ -29,7 +29,11 @@ export default defineConfig({
 				manualChunks(id) {
 					if (id.includes("node_modules")) return "vendor";
 					if (id.includes("/core/")) return "core";
-					if (id.includes("/grid/")) return "grid";
+					// Split grid policy modules into their own async chunks so they aren't pulled into initial grid bundle
+					if (id.endsWith("/src/grid/policies/core.js")) return "grid-policies-core";
+					if (id.endsWith("/src/grid/policies/nesting.js")) return "grid-policies-nesting";
+					// Fallback: group other grid modules
+					if (id.includes("/grid/") && !id.includes("/policies/")) return "grid";
 				},
 			},
 		},

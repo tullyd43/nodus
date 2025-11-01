@@ -63,13 +63,21 @@ export class EventFlowEngine {
 
 		const queueSize =
 			this.#stateManager.config?.eventFlow?.queueSize || 500;
-		this.#eventQueue = new BoundedStack(queueSize);
-		this.#eventQueue.on("overflow", (item) => {
-			this.#metrics?.increment("queueOverflows");
-			console.warn(
-				"[EventFlowEngine] Event queue overflow. Event dropped:",
-				item
-			);
+		// Provide stateManager and a name so BoundedStack emits stack events
+		this.#eventQueue = new BoundedStack(queueSize, {
+			stateManager: this.#stateManager,
+			name: "eventQueue",
+		});
+
+		// Listen for stack eviction events corresponding to our queue to track overflows
+		this.#stateManager.on("stack_eviction", (payload) => {
+			if (payload?.source === "stack:eventQueue" && payload?.reason === "capacity") {
+				this.#metrics?.increment("queueOverflows");
+				console.warn(
+					"[EventFlowEngine] Event queue capacity reached. Oldest event evicted:",
+					payload.item?.data
+				);
+			}
 		});
 
 		// Initialize private fields
@@ -81,9 +89,10 @@ export class EventFlowEngine {
 	/**
 	 * Initializes the EventFlowEngine by loading flows from storage and registering default handlers.
 	 */
-	initialize() {
+initialize() {
 		// V8.0 Parity: Loading flows is now handled externally by the bootstrap process.
 		// The engine now listens to the stateManager for all events.
+		const t0 = performance.now();
 		this.#stateManager.on("*", (payload, eventName) => {
 			if (eventName && eventName !== "systemInitialized") {
 				// Avoid processing the init event itself
@@ -92,10 +101,14 @@ export class EventFlowEngine {
 		});
 
 		this.#registerDefaultFlows();
+		const initDuration = performance.now() - t0;
+		try {
+			this.#stateManager.emit?.('metrics', { type: 'bootstrap.stage', stage: 'event_flow_engine', duration: initDuration });
+		} catch { /* noop */ }
 		console.log(
 			`EventFlowEngine initialized with ${this.#flows.size} flows`
 		);
-	}
+}
 
 	/**
 	 * Registers a new event flow definition with the engine.

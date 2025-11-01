@@ -368,9 +368,10 @@ export class StorageLoader {
 	 * @returns {Promise<Function>} The IndexedDB adapter class.
 	 */
 	async #ensureIndexedDB(req) {
-		// Require at least the adapter
+		// Require at least the adapter and return an instance
 		const name = req[0] || "indexeddb-adapter";
-		return await this.#loadModule(name);
+		const AdapterClass = await this.#loadModule(name);
+		return new AdapterClass({ stateManager: this.#stateManager });
 	}
 
 	// ---------------------------------------------------------------------------
@@ -869,6 +870,30 @@ class ModularOfflineStorage {
 	}
 
 	/**
+	 * Retrieves the most recent item from a store, based on a 'timestamp' field if present.
+	 * @public
+	 * @param {string} storeName
+	 * @returns {Promise<object|null>}
+	 */
+	async getLast(storeName) {
+		return this.#trace("getLast", async () => {
+			const idx = this.indexeddb;
+			if (!idx?.getAll) throw new Error("IndexedDB adapter not loaded");
+			const all = await idx.getAll(storeName);
+			if (!all || all.length === 0) return null;
+			// Prefer highest timestamp if available, else last element
+			const withTime = all.filter((e) => e && e.timestamp);
+			if (withTime.length > 0) {
+				withTime.sort(
+					(a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+				);
+				return withTime[withTime.length - 1];
+			}
+			return all[all.length - 1] || null;
+		});
+	}
+
+	/**
 	 * Deletes an item after enforcing MAC rules.
 	 * @public
 	 * @param {string} storeName - The name of the object store.
@@ -947,6 +972,30 @@ class ModularOfflineStorage {
 				store: storeName,
 				id,
 			});
+		});
+	}
+
+	/**
+	 * Stores multiple items efficiently, using adapter-level batching if supported.
+	 * @public
+	 * @param {string} storeName
+	 * @param {object[]} items
+	 * @returns {Promise<any>}
+	 */
+	async putBulk(storeName, items) {
+		return this.#trace("putBulk", async () => {
+			const idx = this.indexeddb;
+			if (!idx) throw new Error("IndexedDB adapter not loaded");
+			if (typeof idx.putBulk === "function") {
+				return idx.putBulk(storeName, items);
+			}
+			// Fallback: sequential puts
+			const keys = [];
+			for (const item of items) {
+				const k = await idx.put(storeName, item);
+				keys.push(k);
+			}
+			return keys;
 		});
 	}
 

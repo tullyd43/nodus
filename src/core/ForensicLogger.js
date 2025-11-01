@@ -40,6 +40,39 @@ export class ForensicLogger {
 	/** @private @type {string|null} */
 	#lastLogHash = null;
 
+	/** @private @type {boolean} */
+	#warnedUnsigned = false;
+	/** @private @type {boolean} */
+	#warnedUnsignedBlocked = false;
+
+	/**
+	 * Checks if unsigned audit logging is allowed by policy. Defaults to true in dev when policy is undefined.
+	 * @private
+	 * @returns {boolean}
+	 */
+	#isUnsignedAllowed() {
+		try {
+			const policies = this.#stateManager?.managers?.policies;
+			const policy = policies?.getPolicy?.(
+				"security",
+				"allow_unsigned_audit_in_dev"
+			);
+			if (typeof policy === "boolean") return policy;
+			// Default to dev-friendly when not explicitly set
+			return !!(
+				import.meta?.env?.DEV ||
+				(typeof window !== "undefined" &&
+					window.location?.hostname === "localhost")
+			);
+		} catch {
+			return !!(
+				import.meta?.env?.DEV ||
+				(typeof window !== "undefined" &&
+					window.location?.hostname === "localhost")
+			);
+		}
+	}
+
 	/**
 	 * Creates an instance of ForensicLogger.
 	 * @param {object} context - The application context.
@@ -112,14 +145,20 @@ export class ForensicLogger {
 		const signer = this.#stateManager.signer;
 
 		if (!securityManager || !signer) {
-			// In a production environment, this should throw an error or halt.
-			// For development, a warning is acceptable.
-			this.#errorHelpers?.handleError(
-				new Error(
-					"SecurityManager or Signer not available. Audit event will be unsigned."
-				),
-				{ severity: "high", component: "ForensicLogger" }
-			);
+			const allowed = this.#isUnsignedAllowed();
+			if (!allowed) {
+				if (!this.#warnedUnsignedBlocked) {
+					console.warn(
+						"[ForensicLogger] Unsigned audit blocked by policy (security.allow_unsigned_audit_in_dev = false)."
+					);
+					this.#warnedUnsignedBlocked = true;
+				}
+			} else if (!this.#warnedUnsigned) {
+				console.debug(
+					"[ForensicLogger] Security services not ready; proceeding with unsigned audit."
+				);
+				this.#warnedUnsigned = true;
+			}
 		}
 
 		const userContext =
@@ -191,6 +230,25 @@ export class ForensicLogger {
 			return;
 		}
 
+		// Enforce policy: drop unsigned audits when disallowed
+		try {
+			const isUnsigned =
+				!event?.signature?.signature &&
+				event?.signature?.algorithm === "unsigned";
+			if (isUnsigned && !this.#isUnsignedAllowed()) {
+				if (!this.#warnedUnsignedBlocked) {
+					console.warn(
+						"[ForensicLogger] Dropping unsigned audit event due to policy."
+					);
+					this.#warnedUnsignedBlocked = true;
+				}
+				this.#metrics?.increment?.("unsignedDropped");
+				return;
+			}
+		} catch {
+			/* noop */
+		}
+
 		this.#inMemoryBuffer.push(event);
 		this.#metrics?.increment("eventsLogged");
 
@@ -226,10 +284,12 @@ export class ForensicLogger {
 				count: eventsToFlush.length,
 			});
 		} catch (error) {
-			console.error(
-				"[ForensicLogger] Failed to flush events to IndexedDB:",
-				error
-			);
+			this.#errorHelpers?.handleError(error, {
+				component: "ForensicLogger",
+				operation: "flushBuffer",
+				userFriendlyMessage:
+					"Failed to save audit log to local storage.",
+			});
 			this.#stateManager?.emit?.("forensicLogError", {
 				type: "flush_failed",
 				message: error.message,
@@ -269,10 +329,11 @@ export class ForensicLogger {
 				eventId: event.id,
 			});
 		} catch (error) {
-			console.error(
-				`[ForensicLogger] Failed to forward event ${event.id} to remote:`,
-				error
-			);
+			this.#errorHelpers?.handleError(error, {
+				component: "ForensicLogger",
+				operation: "forwardToRemote",
+				context: { eventId: event.id },
+			});
 			this.#stateManager?.emit?.("forensicLogError", {
 				type: "remote_forward_failed",
 				message: error.message,
@@ -316,10 +377,10 @@ export class ForensicLogger {
 			);
 			return this.#filterEvents(allEvents, options);
 		} catch (error) {
-			console.error(
-				"[ForensicLogger] Failed to retrieve audit trail:",
-				error
-			);
+			this.#errorHelpers?.handleError(error, {
+				component: "ForensicLogger",
+				operation: "getAuditTrail",
+			});
 			this.#stateManager?.emit?.("forensicLogError", {
 				type: "retrieve_failed",
 				message: error.message,
@@ -384,10 +445,10 @@ export class ForensicLogger {
 			this.#lastLogHash = lastEvent?.hash || "0".repeat(64);
 			return this.#lastLogHash;
 		} catch (error) {
-			console.error(
-				"[ForensicLogger] Could not retrieve last log hash:",
-				error
-			);
+			this.#errorHelpers?.handleError(error, {
+				component: "ForensicLogger",
+				operation: "getPreviousLogHash",
+			});
 			return "0".repeat(64); // Fallback on error
 		}
 	}
@@ -400,7 +461,17 @@ export class ForensicLogger {
 	 * @returns {Promise<string>} The hex-encoded SHA-256 hash.
 	 */
 	async #calculateHash(envelopeData, signature) {
-		return this.#stateManager.signer.hash({ ...envelopeData, signature });
+		const signer = this.#stateManager?.signer;
+		const payload = { ...envelopeData, signature };
+		if (signer && typeof signer.hash === "function") {
+			return signer.hash(payload);
+		}
+		// Fallback: compute SHA-256 locally
+		const encoded = new TextEncoder().encode(JSON.stringify(payload));
+		const digest = await crypto.subtle.digest("SHA-256", encoded);
+		return Array.from(new Uint8Array(digest))
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
 	}
 	/**
 	 * Gets current metrics for the ForensicLogger.

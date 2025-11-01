@@ -18,9 +18,17 @@ const DEFAULT_POLICIES = {
 		enable_monitoring: true,
 		enable_debug_mode: false,
 		enable_maintenance_mode: false,
+		enable_developer_dashboard: false,
+		developer_dashboard_permission: "dev.dashboard.view",
 		auto_backup: true,
 		performance_monitoring: true,
 		security_logging: true,
+		// Grid UX toggles surfaced in grid control panel
+		grid_auto_save_layouts: true,
+		grid_save_feedback: true,
+		grid_ai_suggestions: false,
+		grid_auto_save_layout_id: "default",
+		grid_auto_save_layout_scope: "tenant",
 	},
 
 	ui: {
@@ -34,6 +42,30 @@ const DEFAULT_POLICIES = {
 		accessibility_mode: false,
 		high_contrast: false,
 		reduced_motion: false,
+		enable_bind_bridge: false,
+		bind_bridge_update_inputs: false,
+		enable_virtual_list: true,
+		enable_security_hud: false,
+	},
+
+	security: {
+		allow_unsigned_audit_in_dev: false,
+		allow_client_policy_updates: false,
+		policy_admin_permission: "policy.admin",
+		report_unhandled_errors: false,
+		expose_global_namespace: false,
+	},
+
+	grid: {
+		enable_analytics: true,
+		// Grid-wide defaults for runtime renderer
+		default_columns: 24,
+		default_min_w: 1,
+		default_min_h: 1,
+		default_max_w: 24,
+		default_max_h: 1000,
+		// Allowed runtime components (whitelist applied by ComponentRegistry)
+		allowed_component_types: ["text", "html", "grid", "block", "button"],
 	},
 
 	events: {
@@ -97,6 +129,91 @@ const POLICY_VALIDATORS = {
 		return { valid: true };
 	},
 
+	"system.enable_developer_dashboard": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "Developer dashboard flag must be boolean" };
+		}
+		return { valid: true };
+	},
+
+	// Grid UX toggles (under system.* per existing UI integration)
+	"system.grid_auto_save_layouts": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "system.grid_auto_save_layouts must be boolean" };
+		}
+		return { valid: true };
+	},
+	"system.grid_save_feedback": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "system.grid_save_feedback must be boolean" };
+		}
+		return { valid: true };
+	},
+	"system.grid_ai_suggestions": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "system.grid_ai_suggestions must be boolean" };
+		}
+		return { valid: true };
+	},
+	"system.grid_auto_save_layout_id": (value) => {
+		if (typeof value !== "string" || value.trim().length === 0) {
+			return { valid: false, message: "system.grid_auto_save_layout_id must be a non-empty string" };
+		}
+		return { valid: true };
+	},
+ 	"system.grid_auto_save_layout_scope": (value) => {
+ 		if (typeof value !== "string") {
+ 			return { valid: false, message: "system.grid_auto_save_layout_scope must be a string" };
+ 		}
+ 		const v = value.toLowerCase();
+ 		if (!['user','tenant','global'].includes(v)) {
+ 			return { valid: false, message: "grid_auto_save_layout_scope must be one of: user, tenant, global" };
+ 		}
+ 		return { valid: true };
+ 	},
+
+	"system.developer_dashboard_permission": (value) => {
+		if (typeof value !== "string" || value.trim().length === 0) {
+			return { valid: false, message: "Developer dashboard permission must be a non-empty string" };
+		}
+		return { valid: true };
+	},
+
+	// Security domain validators
+	"security.report_unhandled_errors": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "security.report_unhandled_errors must be boolean" };
+		}
+		return { valid: true };
+	},
+
+	"security.expose_global_namespace": (value, context) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "security.expose_global_namespace must be boolean" };
+		}
+		if (value === true && context.environment === "production") {
+			return { valid: false, message: "Exposing global namespace is disallowed in production" };
+		}
+		return { valid: true };
+	},
+
+	"security.policy_admin_permission": (value) => {
+		if (typeof value !== "string" || value.trim().length === 0) {
+			return { valid: false, message: "security.policy_admin_permission must be a non-empty string" };
+		}
+		return { valid: true };
+	},
+
+	"security.allow_client_policy_updates": (value, context) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "security.allow_client_policy_updates must be boolean" };
+		}
+		if (value === true && context.environment === "production") {
+			return { valid: false, message: "Client-side policy updates are disallowed in production" };
+		}
+		return { valid: true };
+	},
+
 	// Event domain validators
 	"events.event_retention_days": (value) => {
 		if (typeof value !== "number" || value < 1 || value > 365) {
@@ -114,6 +231,94 @@ const POLICY_VALIDATORS = {
 				valid: false,
 				message: "Event queue size must be between 100 and 100,000",
 			};
+		}
+		return { valid: true };
+	},
+
+	// UI bridge feature flags
+	"ui.enable_bind_bridge": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "Bind bridge flag must be boolean" };
+		}
+		return { valid: true };
+	},
+	// UI feature flags
+	"ui.enable_virtual_list": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "enable_virtual_list must be boolean" };
+		}
+		return { valid: true };
+	},
+	"ui.enable_security_hud": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "enable_security_hud must be boolean" };
+		}
+		return { valid: true };
+	},
+	"ui.bind_bridge_update_inputs": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "Bind bridge input update flag must be boolean" };
+		}
+		return { valid: true };
+	},
+
+	// Security policy: allow unsigned audits in dev only
+	"security.allow_unsigned_audit_in_dev": (value, context) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "allow_unsigned_audit_in_dev must be boolean" };
+		}
+		if (value === true && String(context?.environment).toLowerCase() === "production") {
+			return { valid: false, message: "Unsigned audits are not allowed in production" };
+		}
+		return { valid: true };
+	},
+
+	// Grid feature flags
+	"grid.enable_analytics": (value) => {
+		if (typeof value !== "boolean") {
+			return { valid: false, message: "grid.enable_analytics must be boolean" };
+		}
+		return { valid: true };
+	},
+
+	"grid.allowed_component_types": (value) => {
+		if (!Array.isArray(value)) {
+			return { valid: false, message: "grid.allowed_component_types must be an array of strings" };
+		}
+		if (value.some(v => typeof v !== "string" || !v.trim())) {
+			return { valid: false, message: "grid.allowed_component_types entries must be non-empty strings" };
+		}
+		return { valid: true };
+	},
+
+	// Grid defaults validators
+	"grid.default_columns": (value) => {
+		if (!Number.isInteger(value) || value < 1 || value > 96) {
+			return { valid: false, message: "grid.default_columns must be an integer between 1 and 96" };
+		}
+		return { valid: true };
+	},
+	"grid.default_min_w": (value) => {
+		if (!Number.isInteger(value) || value < 1) {
+			return { valid: false, message: "grid.default_min_w must be a positive integer" };
+		}
+		return { valid: true };
+	},
+	"grid.default_min_h": (value) => {
+		if (!Number.isInteger(value) || value < 1) {
+			return { valid: false, message: "grid.default_min_h must be a positive integer" };
+		}
+		return { valid: true };
+	},
+	"grid.default_max_w": (value, ctx) => {
+		if (!Number.isInteger(value) || value < 1) {
+			return { valid: false, message: "grid.default_max_w must be a positive integer" };
+		}
+		return { valid: true };
+	},
+	"grid.default_max_h": (value) => {
+		if (!Number.isInteger(value) || value < 1) {
+			return { valid: false, message: "grid.default_max_h must be a positive integer" };
 		}
 		return { valid: true };
 	},

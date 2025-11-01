@@ -69,6 +69,8 @@ export default [
 				clearTimeout: "readonly",
 				setInterval: "readonly",
 				clearInterval: "readonly",
+				AbortController: "readonly",
+				IntersectionObserver: "readonly",
 				requestAnimationFrame: "readonly",
 				cancelAnimationFrame: "readonly",
 				MutationObserver: "readonly",

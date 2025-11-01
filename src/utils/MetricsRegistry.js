@@ -45,10 +45,12 @@ export class MetricsRegistry {
 			// V8.0 Parity: Mandate 4.1 - Use a bounded cache for metrics.
 			const cacheManager = this.#stateManager.managers.cacheManager;
 			if (cacheManager) {
+				// Avoid recursive instrumentation by disabling metrics inside metrics cache
 				this.#cache = cacheManager.createCache(
 					`metrics:${prefix || "global"}`,
 					{
 						maxSize: this.#maxMetrics,
+						enableMetrics: false,
 					}
 				);
 			}
@@ -162,6 +164,7 @@ export class MetricsRegistry {
 	 * this.criticalOperation = this.#metricsRegistry.measure('critical_op')(this.criticalOperation.bind(this));
 	 */
 	measure(metricName, tags = {}) {
+		const registry = this; // may be undefined if called unbound; handle with optional chaining
 		return (originalMethod) =>
 			(...args) => {
 				const startTime = performance.now();
@@ -171,16 +174,16 @@ export class MetricsRegistry {
 					if (result && typeof result.then === "function") {
 						return result.finally(() => {
 							const duration = performance.now() - startTime;
-							this.timer(metricName, duration, tags);
+							registry?.timer(metricName, duration, tags);
 						});
 					}
 					// Handle sync methods
 					const duration = performance.now() - startTime;
-					this.timer(metricName, duration, tags);
+					registry?.timer(metricName, duration, tags);
 					return result;
 				} catch (error) {
 					const duration = performance.now() - startTime;
-					this.timer(metricName, duration, { ...tags, error: true });
+					registry?.timer(metricName, duration, { ...tags, error: true });
 					throw error;
 				}
 			};

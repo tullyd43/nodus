@@ -112,16 +112,22 @@ export class SystemBootstrap {
 
 		// Now, initialize all core services via the registry.
 		// This enforces Mandate 1.3: Service Registry Enforcement.
+		// Time ServiceRegistry initialization
+		const tServices = performance.now();
 		await this.#stateManager.serviceRegistry.initializeAll();
+		try {
+			this.#stateManager.emit?.('metrics', { type: 'bootstrap.stage', stage: 'service_registry', duration: performance.now() - tServices });
+		} catch { /* noop */ }
 
 		// V8.0 Parity: After core services are up, assign them for instrumentation.
 		this.#metrics = this.#stateManager.metricsRegistry;
 		this.#forensicLogger = this.#stateManager.managers.forensicLogger;
 
-		this.#metrics?.timer(
-			"bootstrap.core_infra_duration",
-			performance.now() - startTime
-		);
+		const coreInfraDuration = performance.now() - startTime;
+		this.#metrics?.timer("bootstrap.core_infra_duration", coreInfraDuration);
+		try {
+			this.#stateManager.emit?.('metrics', { type: 'bootstrap.stage', stage: 'core_infra', duration: coreInfraDuration });
+		} catch { /* noop */ }
 	}
 
 	/**
@@ -136,7 +142,11 @@ export class SystemBootstrap {
 		// The ServiceRegistry has already initialized all managers, including the plugin system.
 		// Now, we load data that depends on those managers, like event flow definitions.
 
+		const tFlows = performance.now();
 		await this.#loadEventFlows();
+		try {
+			this.#stateManager.emit?.('metrics', { type: 'bootstrap.stage', stage: 'event_flows', duration: performance.now() - tFlows });
+		} catch { /* noop */ }
 
 		// --- Lazy-load non-critical managers in the background ---
 		this.#lazyLoadManagers();

@@ -277,4 +277,49 @@ export class NonRepudiation {
 			}
 		);
 	}
+
+	/**
+	 * Signs arbitrary data for audit envelopes to integrate with ForensicLogger.
+	 * @param {object} data - The data object to sign.
+	 * @returns {Promise<{signature:string, algorithm:string, publicKey:string}>}
+	 */
+	async sign(data) {
+		await this.#ensureInitialized();
+		const payload = new TextEncoder().encode(JSON.stringify(data));
+		const sigBuf = await crypto.subtle.sign(
+			{ name: "ECDSA", hash: { name: "SHA-384" } },
+			this.#keyPair.privateKey,
+			payload
+		);
+		const signature = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
+		// Export public key in SPKI and base64-encode for inclusion
+		let publicKey = "";
+		try {
+			const spki = await crypto.subtle.exportKey(
+				"spki",
+				this.#keyPair.publicKey
+			);
+			publicKey = btoa(String.fromCharCode(...new Uint8Array(spki)));
+		} catch {
+			// This can fail if the key is not extractable. In this context, it's non-critical, so we proceed with an empty public key.
+		}
+		return {
+			signature,
+			algorithm: "ECDSA-P384-SHA384",
+			publicKey,
+		};
+	}
+
+	/**
+	 * Computes a SHA-256 hex digest for the provided object.
+	 * @param {object} obj
+	 * @returns {Promise<string>} Hex-encoded SHA-256 digest.
+	 */
+	async hash(obj) {
+		const encoded = new TextEncoder().encode(JSON.stringify(obj));
+		const digest = await crypto.subtle.digest("SHA-256", encoded);
+		return Array.from(new Uint8Array(digest))
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
+	}
 }

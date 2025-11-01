@@ -45,6 +45,18 @@ export class HybridStateManager {
 	/** @private @type {boolean} */
 	#initialized = false;
 
+	// --- History/undo-redo helpers for grid + generic operations ---
+	/** @private @type {boolean} */
+	#isApplyingHistory = false;
+	/** @private @type {object|null} */
+	#lastLayoutSnapshot = null;
+	/** @private @type {number} */
+	#txDepth = 0;
+	/** @private @type {object|null} */
+	#txBeforeSnapshot = null;
+	/** @private @type {string[]} */
+	#recentOps = [];
+
 	// --- Public Getters for Controlled Access ---
 
 	get config() {
@@ -52,6 +64,229 @@ export class HybridStateManager {
 	}
 	get clientState() {
 		return this.#clientState;
+	}
+
+	/**
+	 * Records a user-visible operation for undo/redo history and analytics.
+	 * For grid layout changes, stores before/after snapshots to enable rollback.
+	 * @param {{type: string, data?: any}} op
+	 */
+		recordOperation(op) {
+			try {
+				if (!op || typeof op.type !== "string") return;
+				// Do not record operations triggered by an active undo/redo apply
+				if (this.#isApplyingHistory) return;
+				// Collapse grid ops during an open transaction
+				if (this.#txDepth > 0 && op.type === "grid_layout_change") return;
+
+				// Track recent operation types for UI/inspector
+				try {
+					this.#recentOps.push(op.type);
+					if (this.#recentOps.length > 20) this.#recentOps.shift();
+				} catch { /* noop */ }
+
+			if (op.type === "grid_layout_change") {
+				const renderer = this.managers?.enhancedGridRenderer;
+				const current = typeof renderer?.getCurrentLayout === "function" ? renderer.getCurrentLayout() : null;
+				const after = current ? JSON.parse(JSON.stringify(current)) : null;
+				const before = this.#lastLayoutSnapshot ? JSON.parse(JSON.stringify(this.#lastLayoutSnapshot)) : null;
+
+				this.#clientState.undoStack.push({
+					type: op.type,
+					before,
+					after,
+					meta: { source: op.data || null },
+				});
+				// New operation invalidates redo history
+				this.#clientState.redoStack.clear();
+				// Update last snapshot for next diff
+				this.#lastLayoutSnapshot = after;
+
+				// Emit for observers (optional)
+				this.emit("operationRecorded", { type: op.type });
+				return;
+			}
+
+			// Generic operation: push minimal payload
+			this.#clientState.undoStack.push({ type: op.type, data: op.data || null });
+			this.#clientState.redoStack.clear();
+			this.emit("operationRecorded", { type: op.type });
+		} catch (err) {
+			console.warn("[HybridStateManager] recordOperation failed:", err);
+		}
+	}
+
+	/**
+	 * Runs a function within a history transaction, collapsing multiple grid changes
+	 * into a single undo/redo entry. If the function throws, reverts to the snapshot
+	 * taken at the beginning and does not record an entry.
+	 * @param {Function} fn
+	 * @returns {any}
+	 */
+	transaction(fn) {
+		if (typeof fn !== "function") return;
+		const renderer = this.managers?.enhancedGridRenderer;
+		this.#txDepth++;
+		// Capture "before" on outermost entry
+		if (this.#txDepth === 1 && renderer?.getCurrentLayout) {
+			try {
+				const cur = renderer.getCurrentLayout();
+				this.#txBeforeSnapshot = cur ? JSON.parse(JSON.stringify(cur)) : null;
+			} catch { this.#txBeforeSnapshot = null; }
+		}
+
+		let result;
+		let error;
+		try {
+			result = fn();
+		} catch (e) {
+			error = e;
+		}
+
+		// If this was the outermost transaction, commit or rollback
+		if (--this.#txDepth === 0) {
+			try {
+				if (error) {
+					// Roll back
+					if (this.#txBeforeSnapshot) this.#applyLayoutSnapshot(this.#txBeforeSnapshot);
+				} else if (renderer?.getCurrentLayout) {
+					// Commit single combined operation
+					const after = renderer.getCurrentLayout();
+					const op = {
+						type: "grid_layout_change",
+						data: { batched: true },
+					};
+					// Temporarily set last snapshot and push directly to avoid redundant calls from children
+					const afterSnap = after ? JSON.parse(JSON.stringify(after)) : null;
+					const beforeSnap = this.#txBeforeSnapshot ? JSON.parse(JSON.stringify(this.#txBeforeSnapshot)) : null;
+					this.#clientState.undoStack.push({ type: op.type, before: beforeSnap, after: afterSnap, meta: op.data });
+					this.#clientState.redoStack.clear();
+					this.#lastLayoutSnapshot = afterSnap;
+					this.emit("operationRecorded", { type: op.type });
+				}
+			} finally {
+				this.#txBeforeSnapshot = null;
+			}
+		}
+
+		if (error) throw error;
+		return result;
+	}
+
+	/**
+	 * Returns summary information about the undo/redo history for UI inspectors.
+	 * @returns {{undoSize:number, redoSize:number, lastType:string|null}}
+	 */
+	getHistoryInfo() {
+		let lastType = null;
+		try {
+			const last = this.#clientState.undoStack.peek();
+			lastType = last?.type || null;
+		} catch { /* noop */ }
+		const recent = (() => {
+			try {
+				return this.#recentOps.slice(-5);
+			} catch { return []; }
+		})();
+		return {
+			undoSize: this.#clientState.undoStack.size,
+			redoSize: this.#clientState.redoStack.size,
+			lastType,
+			recent,
+		};
+	}
+
+	/**
+	 * Undoes the most recent operation, when possible. Focused on grid layout changes.
+	 */
+	undo() {
+		try {
+			const op = this.#clientState.undoStack.pop();
+			if (!op) return;
+
+			if (op.type === "grid_layout_change" && op.before) {
+				this.#isApplyingHistory = true;
+				this.#applyLayoutSnapshot(op.before);
+				this.#isApplyingHistory = false;
+
+				// Prepare redo entry with swapped snapshots
+				this.#clientState.redoStack.push({
+					type: op.type,
+					before: op.before,
+					after: op.after,
+				});
+				// Update last snapshot
+				this.#lastLayoutSnapshot = op.before ? JSON.parse(JSON.stringify(op.before)) : null;
+
+				this.emit("layoutRestored", { direction: "undo" });
+				return;
+			}
+
+			// Fallback: non-grid operation — currently no-op
+		} catch (err) {
+			console.warn("[HybridStateManager] undo failed:", err);
+		} finally {
+			this.#isApplyingHistory = false;
+		}
+	}
+
+	/**
+	 * Redoes the most recently undone operation, when possible. Focused on grid layout changes.
+	 */
+	redo() {
+		try {
+			const op = this.#clientState.redoStack.pop();
+			if (!op) return;
+
+			if (op.type === "grid_layout_change" && op.after) {
+				this.#isApplyingHistory = true;
+				this.#applyLayoutSnapshot(op.after);
+				this.#isApplyingHistory = false;
+
+				// Push inverse back to undo
+				this.#clientState.undoStack.push({
+					type: op.type,
+					before: op.before,
+					after: op.after,
+				});
+				this.#lastLayoutSnapshot = op.after ? JSON.parse(JSON.stringify(op.after)) : null;
+
+				this.emit("layoutRestored", { direction: "redo" });
+				return;
+			}
+
+			// Fallback: non-grid operation — currently no-op
+		} catch (err) {
+			console.warn("[HybridStateManager] redo failed:", err);
+		} finally {
+			this.#isApplyingHistory = false;
+		}
+	}
+
+	/**
+	 * Applies a layout snapshot by updating all block positions via the renderer.
+	 * @private
+	 * @param {{blocks: Array<{blockId: string, position?: {x:number,y:number,w:number,h:number}, x?:number,y?:number,w?:number,h?:number}>}} snapshot
+	 */
+	#applyLayoutSnapshot(snapshot) {
+		try {
+			const renderer = this.managers?.enhancedGridRenderer;
+			if (!renderer || typeof renderer.updateBlockPosition !== "function") return;
+			const blocks = Array.isArray(snapshot?.blocks) ? snapshot.blocks : [];
+			for (const b of blocks) {
+				const x = b.position?.x ?? b.x;
+				const y = b.position?.y ?? b.y;
+				const w = b.position?.w ?? b.w;
+				const h = b.position?.h ?? b.h;
+				if ([x,y,w,h].every((n) => Number.isFinite(n))) {
+					renderer.updateBlockPosition(b.blockId, x, y, w, h);
+				}
+			}
+			// Also emit a layoutChanged event for observers if needed
+			this.emit("layoutChanged", { type: "history_apply" });
+		} catch (err) {
+			console.warn("[HybridStateManager] applyLayoutSnapshot failed:", err);
+		}
 	}
 	get storage() {
 		return this.#storage;
@@ -226,12 +461,11 @@ export class HybridStateManager {
 	 * @internal
 	 */
 	async bootstrapSubsystems() {
-		// V8.0 Parity: All services, including foundational ones, are loaded via the registry.
-		this.#metricsRegistry =
-			await this.#serviceRegistry.get("metricsRegistry");
+		// Ensure foundational services exist in sensible order to avoid fallback paths
+		await this.#serviceRegistry.get("cacheManager");
+		this.#metricsRegistry = await this.#serviceRegistry.get("metricsRegistry");
 		await this.#serviceRegistry.get("eventFlowEngine");
-		const nonRepudiationService =
-			await this.#serviceRegistry.get("nonRepudiation");
+		const nonRepudiationService = await this.#serviceRegistry.get("nonRepudiation");
 		this.#signer = nonRepudiationService;
 
 		console.log("[HybridStateManager] Core subsystems bootstrapped.");

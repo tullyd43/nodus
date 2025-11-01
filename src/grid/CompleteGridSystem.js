@@ -4,9 +4,7 @@
  * This class is a managed service, instantiated by the ServiceRegistry, and orchestrates all other grid-related services.
  */
 
-import GridPolicyHelper, {
-	extendSystemPoliciesWithGrid,
-} from "./GridPolicyIntegration.js";
+// Grid policies are managed via the GridPolicyService from the ServiceRegistry.
 
 /**
  * @class CompleteGridSystem
@@ -16,6 +14,11 @@ import GridPolicyHelper, {
  * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #initialized, #unsubscribeFunctions}
  * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #gridPolicyService, #initialized, #unsubscribeFunctions}
  */
+import { GridHistoryInspector } from "./GridHistoryInspector.js";
+import { componentRegistry } from "./runtime/ComponentRegistry.js";
+import { normalizeConfig } from "./runtime/GridRuntimeConfig.js";
+import { LayoutStore } from "./runtime/LayoutStore.js";
+
 export class CompleteGridSystem {
 	/** @private @type {import('../core/HybridStateManager.js').default} */
 	#stateManager;
@@ -35,6 +38,11 @@ export class CompleteGridSystem {
 	#unsubscribeFunctions = []; // V8.0 Parity: Declare private field.
 	/** @private @type {GridPolicyService|null} */
 	#gridPolicyService = null;
+	/** @private */
+	#layoutStore = null;
+	#runtimeConfig = null;
+	#nestedGridManager = null;
+	#historyInspector = null;
 
 	/**
 	 * Creates an instance of CompleteGridSystem.
@@ -58,6 +66,13 @@ export class CompleteGridSystem {
 		this.#aiAssistant = this.#stateManager.managers.aiLayoutAssistant;
 		this.#gridEnhancer = this.#stateManager.managers.enhancedGridRenderer;
 		this.#gridPolicyService = this.#stateManager.managers.gridPolicyService;
+		try {
+			this.#layoutStore = new LayoutStore({
+				stateManager: this.#stateManager,
+			});
+		} catch {
+			/* noop */
+		}
 
 		this.#options = {
 			gridContainer: ".grid-container",
@@ -65,6 +80,7 @@ export class CompleteGridSystem {
 			enableToasts: true,
 			enableAI: true,
 			enableAnalytics: true,
+			enableNesting: false,
 			...options,
 		};
 	}
@@ -76,14 +92,15 @@ export class CompleteGridSystem {
 	 */
 	async initialize() {
 		if (this.#initialized) {
-			console.warn("CompleteGridSystem is already initialized.");
-			return;
+			return; // idempotent: silently ignore repeated initialize calls
 		}
 
 		try {
 			// 1. Extend SystemPolicies with grid policies
 			if (this.#options.enablePolicies && this.#gridPolicyService) {
-				this.#gridPolicyService.registerGridPolicies();
+				await this.#gridPolicyService.registerGridPolicies({
+					includeNesting: !!this.#options.enableNesting,
+				});
 			}
 
 			// 2. Initialize grid enhancer with all features
@@ -95,6 +112,37 @@ export class CompleteGridSystem {
 			// 4. Set up analytics tracking
 			if (this.#options.enableAnalytics) {
 				this.#setupAnalytics();
+				this.#setupAnalyticsPanel();
+			}
+
+			// 5. History inspector (lightweight)
+			try {
+				if (this.#options.enableHistoryInspector !== false) {
+					this.#historyInspector = new GridHistoryInspector({
+						stateManager: this.#stateManager,
+					});
+					this.#historyInspector.initialize();
+				}
+			} catch {
+				/* noop */
+			}
+
+			// 6. Nested grid manager is tenant-gated and loaded lazily when enabled
+			try {
+				this.#setupNestingPolicyWatcher();
+			} catch {
+				/* noop */
+			}
+
+			// 7. Listen for grid add requests from reusable button component
+			try {
+				const handler = (payload) =>
+					this.#onAddBlockRequested(payload || {});
+				this.#unsubscribeFunctions.push(
+					this.#stateManager.on("gridAddBlockRequested", handler)
+				);
+			} catch {
+				/* noop */
 			}
 
 			this.#initialized = true;
@@ -119,6 +167,425 @@ export class CompleteGridSystem {
 		}
 	}
 
+	#onAddBlockRequested(payload) {
+		try {
+			const mode = String(payload.mode || "modal");
+			if (mode === "add") {
+				this.#addBlockDirect();
+			} else {
+				this.#openAddElementModal();
+			}
+		} catch {
+			/* noop */
+		}
+	}
+
+	#addBlockDirect() {
+		try {
+			const cfg = this.#runtimeConfig || { blocks: [] };
+			const columns = Number(
+				this.#stateManager?.managers?.policies?.getPolicy(
+					"grid",
+					"default_columns"
+				) ?? 24
+			);
+			const w = 6,
+				h = 4;
+			const x = Math.max(0, Math.floor((columns - w) / 2));
+			const yBase = cfg.blocks.reduce(
+				(m, b) => Math.max(m, (b.y ?? 0) + (b.h ?? 0)),
+				0
+			);
+			const b = {
+				id: `block_${Date.now()}`,
+				type: "block",
+				x,
+				y: yBase,
+				w,
+				h,
+				constraints: { minW: 2, minH: 2, maxW: columns, maxH: 1000 },
+				props: { title: "Block", body: "New" },
+			};
+			cfg.blocks.push(b);
+			this.#appendBlock(b);
+			this.saveRuntimeConfig("dev-default").catch(() => {});
+		} catch {
+			/* noop */
+		}
+	}
+
+	#appendBlock(b) {
+		const container =
+			document.querySelector(this.#options.gridContainer) ||
+			document.querySelector(".grid-container") ||
+			document.body;
+		const block = document.createElement("div");
+		block.className = "grid-block";
+		block.dataset.blockId = b.id;
+		block.dataset.minW = String(b.constraints.minW);
+		block.dataset.minH = String(b.constraints.minH);
+		block.dataset.maxW = String(b.constraints.maxW);
+		block.dataset.maxH = String(b.constraints.maxH);
+		const content = document.createElement("div");
+		content.className = "grid-block-content";
+		block.appendChild(content);
+		container.appendChild(block);
+		try {
+			componentRegistry.mount(b.type, content, b.props || {}, {
+				stateManager: this.#stateManager,
+				appViewModel: this.#appViewModel,
+				parentConfigId: "dev-default",
+				blockId: b.id,
+			});
+		} catch {
+			/* noop */
+		}
+		this.#gridEnhancer?.updateBlockPosition?.(b.id, b.x, b.y, b.w, b.h);
+	}
+
+	#openAddElementModal() {
+		const existing = document.getElementById("grid-add-modal");
+		if (existing) existing.remove();
+		const wrap = document.createElement("div");
+		wrap.id = "grid-add-modal";
+		wrap.style.cssText =
+			"position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:20000;display:flex;align-items:center;justify-content:center;";
+		const card = document.createElement("div");
+		card.style.cssText =
+			"background:#fff;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,0.3);width:420px;max-width:90vw;padding:16px;";
+		card.innerHTML = `
+			<h3 style="margin:0 0 10px">Add Grid Block</h3>
+			<label style="display:block;margin-bottom:8px">
+				<span>Component Type</span>
+				<select id="gb-type" style="width:100%;padding:8px;margin-top:4px">
+					<option value="block">Block</option>
+					<option value="text">Text</option>
+					<option value="html">HTML</option>
+				</select>
+			</label>
+			<label style="display:block;margin-bottom:8px">
+				<span>Title/Text</span>
+				<input id="gb-title" type="text" style="width:100%;padding:8px;margin-top:4px" placeholder="Title or text"/>
+			</label>
+			<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+				<button id="gb-cancel" style="padding:8px 12px">Cancel</button>
+				<button id="gb-add" style="padding:8px 12px;background:#2b7cff;color:#fff;border:0;border-radius:6px">Add</button>
+			</div>
+		`;
+		wrap.appendChild(card);
+		document.body.appendChild(wrap);
+		const cancel = () => wrap.remove();
+		wrap.addEventListener("click", (e) => {
+			if (e.target === wrap) cancel();
+		});
+		card.querySelector("#gb-cancel").addEventListener("click", cancel);
+		card.querySelector("#gb-add").addEventListener("click", () => {
+			try {
+				const type = card.querySelector("#gb-type").value;
+				const title =
+					card.querySelector("#gb-title").value ||
+					(type === "text" ? "Text" : "Block");
+				const columns = Number(
+					this.#stateManager?.managers?.policies?.getPolicy(
+						"grid",
+						"default_columns"
+					) ?? 24
+				);
+				const w = 6,
+					h = 4;
+				const x = Math.max(0, Math.floor((columns - w) / 2));
+				const yBase = (this.#runtimeConfig?.blocks || []).reduce(
+					(m, b) => Math.max(m, (b.y ?? 0) + (b.h ?? 0)),
+					0
+				);
+				const props =
+					type === "block"
+						? { title, body: "" }
+						: type === "text"
+							? { value: title }
+							: { html: title };
+				const b = {
+					id: `block_${Date.now()}`,
+					type,
+					x,
+					y: yBase,
+					w,
+					h,
+					constraints: {
+						minW: 2,
+						minH: 2,
+						maxW: columns,
+						maxH: 1000,
+					},
+					props,
+				};
+				this.#runtimeConfig = this.#runtimeConfig || { blocks: [] };
+				this.#runtimeConfig.blocks.push(b);
+				this.#appendBlock(b);
+				this.saveRuntimeConfig("dev-default").catch(() => {});
+				cancel();
+			} catch {
+				cancel();
+			}
+		});
+	}
+
+	/**
+	 * Applies a runtime configuration to the grid: creates blocks and mounts components.
+	 * Prefer calling this before the first initialize(), so the renderer can enhance on first pass.
+	 * @param {object} rawConfig
+	 */
+	async setRuntimeConfig(rawConfig, id = "default", scope = null, depth = 0) {
+		try {
+			this.#runtimeConfig = normalizeConfig(rawConfig);
+			// Enforce allowed component types via policy (if defined)
+			try {
+				const allowed =
+					this.#stateManager?.managers?.policies?.getPolicy(
+						"grid",
+						"allowed_component_types"
+					);
+				if (Array.isArray(allowed) && allowed.length) {
+					componentRegistry.setAllowedTypes(allowed);
+				}
+			} catch {
+				/* noop */
+			}
+			const container =
+				document.querySelector(this.#options.gridContainer) ||
+				document.querySelector(".grid-container") ||
+				document.body;
+			// Clear container and rebuild blocks
+			while (container.firstChild)
+				container.removeChild(container.firstChild);
+			// Use responsive template if present for current width
+			const pickBlocks = () => {
+				if (!this.#runtimeConfig?.templates)
+					return this.#runtimeConfig.blocks;
+				const bp = this.#getBreakpoint(window.innerWidth);
+				return (
+					this.#runtimeConfig.templates?.[bp]?.blocks ||
+					this.#runtimeConfig.blocks
+				);
+			};
+			const blocks = pickBlocks();
+			for (const b of blocks) {
+				const block = document.createElement("div");
+				block.className = "grid-block";
+				block.dataset.blockId = b.id;
+				block.dataset.minW = String(b.constraints.minW);
+				block.dataset.minH = String(b.constraints.minH);
+				block.dataset.maxW = String(b.constraints.maxW);
+				block.dataset.maxH = String(b.constraints.maxH);
+				// content wrapper
+				const content = document.createElement("div");
+				content.className = "grid-block-content";
+				block.appendChild(content);
+				container.appendChild(block);
+				// mount component (pass parent config id and block id for nested persistence)
+				try {
+					await componentRegistry.mount(
+						b.type,
+						content,
+						b.props || {},
+						{
+							stateManager: this.#stateManager,
+							appViewModel: this.#appViewModel,
+							parentConfigId: id,
+							blockId: b.id,
+						}
+					);
+				} catch {
+					/* noop */
+				}
+				// Optional: attach nested grid strictly inside block content
+				try {
+					if (
+						this.#nestedGridManager &&
+						b?.nestedGrid &&
+						this.#stateManager?.managers?.policies?.getPolicy(
+							"grid",
+							"nesting_enabled"
+						)
+					) {
+						await this.#nestedGridManager.attach(
+							block,
+							this.#appViewModel,
+							b.nestedGrid,
+							depth
+						);
+					}
+				} catch {
+					/* noop */
+				}
+			}
+			// If renderer already initialized, refresh to enhance new blocks
+			if (this.#gridEnhancer?.refresh) {
+				this.#gridEnhancer.refresh();
+			} else if (this.#gridEnhancer?.initialize) {
+				await this.#gridEnhancer.initialize({
+					container,
+					appViewModel: this.#appViewModel,
+				});
+			}
+
+			// Restore last-known layout for this config
+			await this.loadRuntimeLayout(id, scope);
+
+			// Listen for breakpoint changes to re-apply template positions
+			this.#setupResponsiveTemplateListener(id);
+		} catch (err) {
+			console.warn("[Grid] setRuntimeConfig failed:", err);
+		}
+	}
+
+	/** Saves the current runtime config to persistent storage */
+	async saveRuntimeConfig(id = "default", scope = null) {
+		try {
+			if (!this.#layoutStore || !this.#runtimeConfig) return;
+			const sc = scope || this.#computeScopeFromPolicy();
+			await this.#layoutStore.saveConfig(id, this.#runtimeConfig, sc);
+		} catch (err) {
+			console.warn("[Grid] saveRuntimeConfig failed:", err);
+		}
+	}
+
+	/** Loads a runtime config and applies it, then restores layout if any */
+	async loadRuntimeConfig(id = "default", scope = null) {
+		try {
+			if (!this.#layoutStore) return;
+			const sc = scope || this.#computeScopeFromPolicy();
+			const cfg = await this.#layoutStore.loadConfig(id, sc);
+			if (cfg) {
+				await this.setRuntimeConfig(cfg, id, sc);
+			} else {
+				console.warn("[Grid] No runtime config found for id", id);
+			}
+		} catch (err) {
+			console.warn("[Grid] loadRuntimeConfig failed:", err);
+		}
+	}
+
+	#getBreakpoint(width) {
+		if (width >= 1400) return "xxl";
+		if (width >= 1200) return "xl";
+		if (width >= 992) return "lg";
+		if (width >= 768) return "md";
+		if (width >= 576) return "sm";
+		return "xs";
+	}
+
+	#setupResponsiveTemplateListener(id) {
+		if (!this.#runtimeConfig?.templates) return;
+		let lastBp = this.#getBreakpoint(window.innerWidth);
+		const onResize = () => {
+			const bp = this.#getBreakpoint(window.innerWidth);
+			if (bp === lastBp) return;
+			lastBp = bp;
+			const tpl = this.#runtimeConfig.templates?.[bp];
+			if (!tpl?.blocks || !this.#gridEnhancer?.updateBlockPosition)
+				return;
+			// Batch as a single history entry when available
+			const apply = () => {
+				for (const b of tpl.blocks) {
+					this.#gridEnhancer.updateBlockPosition(
+						b.id,
+						b.x,
+						b.y,
+						b.w,
+						b.h
+					);
+				}
+				// Persist new positions under the same id
+				this.saveRuntimeLayout(id).catch(() => {});
+			};
+			if (typeof this.#stateManager?.transaction === "function") {
+				this.#stateManager.transaction(apply);
+			} else {
+				apply();
+			}
+		};
+		window.addEventListener("resize", onResize);
+		this.#unsubscribeFunctions.push(() =>
+			window.removeEventListener("resize", onResize)
+		);
+	}
+
+	/**
+	 * Saves the current grid layout to persistent storage under the given id.
+	 * @param {string} id
+	 */
+	async saveRuntimeLayout(id = "default", scope = null) {
+		try {
+			const layout = this.#gridEnhancer?.getCurrentLayout?.();
+			if (!layout || !this.#layoutStore) return;
+			const sc = scope || this.#computeScopeFromPolicy();
+			await this.#layoutStore.save(id, layout, sc);
+		} catch (err) {
+			console.warn("[Grid] saveRuntimeLayout failed:", err);
+		}
+	}
+
+	/**
+	 * Loads a saved layout and applies positions to the renderer.
+	 * @param {string} id
+	 */
+	async loadRuntimeLayout(id = "default", scope = null) {
+		try {
+			if (!this.#layoutStore || !this.#gridEnhancer) return;
+			const sc = scope || this.#computeScopeFromPolicy();
+			const layout = await this.#layoutStore.load(id, sc);
+			if (!layout?.blocks || !Array.isArray(layout.blocks)) return;
+			const positions = layout.blocks.map((b) => ({
+				blockId: b.blockId,
+				x: b.position?.x ?? b.x,
+				y: b.position?.y ?? b.y,
+				w: b.position?.w ?? b.w,
+				h: b.position?.h ?? b.h,
+			}));
+			const apply = () => {
+				this.#gridEnhancer.updateBlockPosition &&
+					positions.forEach((p) => {
+						this.#gridEnhancer.updateBlockPosition(
+							p.blockId,
+							p.x,
+							p.y,
+							p.w,
+							p.h
+						);
+					});
+			};
+			if (typeof this.#stateManager?.transaction === "function") {
+				this.#stateManager.transaction(apply);
+			} else {
+				apply();
+			}
+		} catch (err) {
+			console.warn("[Grid] loadRuntimeLayout failed:", err);
+		}
+	}
+
+	#computeScopeFromPolicy() {
+		try {
+			const subj =
+				this.#stateManager?.managers?.securityManager?.getSubject?.() ||
+				{};
+			const scopePref = String(
+				this.#stateManager?.managers?.policies?.getPolicy(
+					"system",
+					"grid_auto_save_layout_scope"
+				) || "tenant"
+			).toLowerCase();
+			if (scopePref === "user")
+				return { tenantId: subj.tenantId, userId: subj.userId };
+			if (scopePref === "tenant")
+				return { tenantId: subj.tenantId, userId: "tenant" };
+			return { tenantId: "global", userId: "global" };
+		} catch {
+			return { tenantId: "public", userId: "anon" };
+		}
+	}
+
 	/**
 	 * Initializes the `EnhancedGridRenderer` with all configured features and event listeners.
 	 * @private
@@ -136,38 +603,103 @@ export class CompleteGridSystem {
 			appViewModel: this.#appViewModel,
 		});
 
-		// Listen for layout changes to persist them
-		this.#unsubscribeFunctions.push(
-			this.#stateManager.eventFlowEngine.on(
-				"layoutChanged",
-				this.#onLayoutChanged.bind(this)
-			)
-		);
+		// Listen for layout changes to persist them via central event bus
+		if (this.#stateManager.on) {
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.on(
+					"layoutChanged",
+					this.#onLayoutChanged.bind(this)
+				)
+			);
+		}
 
 		// Listen for grid events
-		if (this.#stateManager.eventFlowEngine) {
+		if (this.#stateManager.on) {
 			this.#unsubscribeFunctions.push(
-				this.#stateManager.eventFlowEngine.on(
+				this.#stateManager.on(
 					"gridEnhanced",
 					this.#onGridEnhanced.bind(this)
 				)
 			);
 			this.#unsubscribeFunctions.push(
-				this.#stateManager.eventFlowEngine.on(
+				this.#stateManager.on(
 					"gridPerformanceMode",
 					this.#onPerformanceModeChanged.bind(this)
 				)
 			);
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.on("gridColumnsChanged", (data) => {
+					if (!data) return;
+					if (this.#toastManager) {
+						const isWarn =
+							Number.isFinite(data.clampedCount) &&
+							data.clampedCount > 0;
+						const msg = isWarn
+							? `Grid columns set to ${data.columns}. Adjusted ${data.clampedCount} blocks to fit.`
+							: `Grid columns set to ${data.columns}.`;
+						const method = isWarn ? "warning" : "info";
+						this.#toastManager[method](msg, 2500);
+					}
+				})
+			);
 
 			if (this.#options.enableAI) {
 				this.#unsubscribeFunctions.push(
-					this.#stateManager.eventFlowEngine.on(
+					this.#stateManager.on(
 						"aiLayoutSuggestions",
 						this.#onAISuggestions.bind(this)
 					)
 				);
 			}
 		}
+
+		// Listen for policy events to react to runtime changes
+		if (this.#stateManager.on) {
+			const policyHandler = (evt) => {
+				try {
+					if (evt?.type !== "policy_updated") return;
+					const { domain, key, newValue } = evt.data || {};
+					// Update component whitelist immediately
+					if (
+						domain === "grid" &&
+						key === "allowed_component_types" &&
+						Array.isArray(newValue)
+					) {
+						componentRegistry.setAllowedTypes(newValue);
+					}
+					if (
+						domain === "grid" &&
+						key === "default_columns" &&
+						Number.isInteger(newValue)
+					) {
+						this.#gridEnhancer?.setGridColumns?.(newValue);
+					}
+				} catch {
+					/* noop */
+				}
+			};
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.on("policyEvent", policyHandler)
+			);
+		}
+
+		// Global keyboard shortcuts for undo/redo (Ctrl+Z / Ctrl+Y)
+		const keyHandler = (e) => {
+			if (!e.ctrlKey && !e.metaKey) return;
+			const k = e.key?.toLowerCase();
+			if (k === "z") {
+				e.preventDefault();
+				this.undoLayoutChange();
+			}
+			if (k === "y") {
+				e.preventDefault();
+				this.redoLayoutChange();
+			}
+		};
+		document.addEventListener("keydown", keyHandler);
+		this.#unsubscribeFunctions.push(() =>
+			document.removeEventListener("keydown", keyHandler)
+		);
 	}
 
 	/**
@@ -185,6 +717,39 @@ export class CompleteGridSystem {
 		// Track analytics
 		if (this.#options.enableAnalytics) {
 			this.#trackLayoutChange(changeEvent);
+		}
+
+		// Auto-save current layout if policy permits
+		try {
+			const autoSave = this.#stateManager?.managers?.policies?.getPolicy(
+				"system",
+				"grid_auto_save_layouts"
+			);
+			const showFeedback =
+				this.#stateManager?.managers?.policies?.getPolicy(
+					"system",
+					"grid_save_feedback"
+				);
+			if (autoSave) {
+				const scope = this.#computeScopeFromPolicy();
+				const layoutId =
+					this.#stateManager?.managers?.policies?.getPolicy(
+						"system",
+						"grid_auto_save_layout_id"
+					) || "default";
+				this.saveRuntimeLayout(layoutId, scope)
+					.then(() => {
+						if (showFeedback && this.#toastManager) {
+							this.#toastManager.success(
+								"Layout auto-saved",
+								1500
+							);
+						}
+					})
+					.catch(() => {});
+			}
+		} catch {
+			/* noop */
 		}
 	}
 
@@ -260,6 +825,27 @@ export class CompleteGridSystem {
 		}
 	}
 
+	/** Simple wrappers to integrate with HybridStateManager history (if available) */
+	undoLayoutChange() {
+		try {
+			if (typeof this.#stateManager?.undo === "function") {
+				this.#stateManager.undo();
+			}
+		} catch {
+			/* noop */
+		}
+	}
+
+	redoLayoutChange() {
+		try {
+			if (typeof this.#stateManager?.redo === "function") {
+				this.#stateManager.redo();
+			}
+		} catch {
+			/* noop */
+		}
+	}
+
 	/**
 	 * Creates the HTML structure for the policy control panel.
 	 * @private
@@ -299,12 +885,53 @@ export class CompleteGridSystem {
           AI Suggestions <span class="badge">Future</span>
         </label>
       </div>
+
+      <hr style="margin: 12px 0;"/>
+      <h5>Tenant Overrides</h5>
+      <small>Applies only to this tenant. Use Revert to return to global policy.</small>
+
+      <div class="policy-control" style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+        <label style="min-width:150px;">Performance Mode</label>
+        <select id="tenant-perf-mode">
+          <option value="auto">Use Global / Auto</option>
+          <option value="on">Force On</option>
+          <option value="off">Force Off</option>
+        </select>
+        <button id="tenant-perf-revert" class="btn-secondary" style="margin-left:auto;">Revert</button>
+      </div>
+
+      <div class="policy-control" style="display:flex; align-items:center; gap:8px;">
+        <label style="min-width:150px;">
+          <input type="checkbox" id="tenant-auto-save-toggle"> Auto-save Layouts
+        </label>
+        <button id="tenant-auto-save-revert" class="btn-secondary" style="margin-left:auto;">Revert</button>
+      </div>
+
+      <div class="policy-control" style="display:flex; align-items:center; gap:8px;">
+        <label style="min-width:150px;">
+          <input type="checkbox" id="tenant-save-feedback-toggle"> Save Notifications
+        </label>
+        <button id="tenant-save-feedback-revert" class="btn-secondary" style="margin-left:auto;">Revert</button>
+      </div>
+
+      ${
+			this.#options.enableNesting
+				? `
+      <div class="policy-control" style="display:flex; align-items:center; gap:8px;">
+        <label style="min-width:150px;">
+          <input type="checkbox" id="tenant-nesting-toggle"> Enable Nesting
+        </label>
+        <button id="tenant-nesting-revert" class="btn-secondary" style="margin-left:auto;">Revert</button>
+      </div>`
+				: ""
+		}
       
       <button id="reset-policies" class="btn-secondary">Reset to Defaults</button>
     `;
 
 		// Add event listeners
 		this.#setupPolicyEventListeners(panel);
+		this.#setupTenantPolicyEventListeners(panel);
 
 		// Load current policy states
 		this.#loadCurrentPolicyStates(panel);
@@ -365,6 +992,176 @@ export class CompleteGridSystem {
 		});
 	}
 
+	#setupTenantPolicyEventListeners(panel) {
+		const svc = this.#gridPolicyService;
+		if (!svc) return;
+
+		const perfSelect = panel.querySelector("#tenant-perf-mode");
+		const perfRevert = panel.querySelector("#tenant-perf-revert");
+		const autoSaveToggle = panel.querySelector("#tenant-auto-save-toggle");
+		const autoSaveRevert = panel.querySelector("#tenant-auto-save-revert");
+		const saveFeedbackToggle = panel.querySelector(
+			"#tenant-save-feedback-toggle"
+		);
+		const saveFeedbackRevert = panel.querySelector(
+			"#tenant-save-feedback-revert"
+		);
+		const nestingToggle = panel.querySelector("#tenant-nesting-toggle");
+		const nestingRevert = panel.querySelector("#tenant-nesting-revert");
+
+		const toast = this.#toastManager;
+		const okToast = (msg) => toast?.success?.(msg, 1500);
+		const errToast = (msg) => toast?.error?.(msg, 2500);
+
+		perfSelect?.addEventListener("change", async (e) => {
+			const v = String(e.target.value);
+			const val = v === "on" ? true : v === "off" ? false : null;
+			try {
+				await svc.setTenantPolicy(
+					"system",
+					"grid_performance_mode",
+					val
+				);
+				okToast?.("Tenant performance mode updated");
+			} catch {
+				errToast?.("Failed to update tenant policy");
+			}
+		});
+		perfRevert?.addEventListener("click", async () => {
+			try {
+				await svc.setTenantPolicy(
+					"system",
+					"grid_performance_mode",
+					null
+				);
+				perfSelect.value = "auto";
+				okToast?.("Reverted to global");
+			} catch {
+				errToast?.("Failed to revert");
+			}
+		});
+
+		autoSaveToggle?.addEventListener("change", async (e) => {
+			try {
+				await svc.setTenantPolicy(
+					"system",
+					"grid_auto_save_layouts",
+					!!e.target.checked
+				);
+				okToast?.("Tenant auto-save updated");
+			} catch {
+				errToast?.("Failed to update");
+			}
+		});
+		autoSaveRevert?.addEventListener("click", async () => {
+			try {
+				await svc.setTenantPolicy(
+					"system",
+					"grid_auto_save_layouts",
+					null
+				);
+				autoSaveToggle.checked =
+					this.#gridPolicyService.isAutoSaveEnabled();
+				okToast?.("Reverted to global");
+			} catch {
+				errToast?.("Failed to revert");
+			}
+		});
+
+		saveFeedbackToggle?.addEventListener("change", async (e) => {
+			try {
+				await svc.setTenantPolicy(
+					"system",
+					"grid_save_feedback",
+					!!e.target.checked
+				);
+				okToast?.("Tenant save feedback updated");
+			} catch {
+				errToast?.("Failed to update");
+			}
+		});
+		saveFeedbackRevert?.addEventListener("click", async () => {
+			try {
+				await svc.setTenantPolicy("system", "grid_save_feedback", null);
+				saveFeedbackToggle.checked =
+					this.#gridPolicyService.shouldShowSaveFeedback();
+				okToast?.("Reverted to global");
+			} catch {
+				errToast?.("Failed to revert");
+			}
+		});
+
+		if (nestingToggle && nestingRevert) {
+			nestingToggle.addEventListener("change", async (e) => {
+				try {
+					await svc.setTenantPolicy(
+						"grid",
+						"nesting_enabled",
+						!!e.target.checked
+					);
+					okToast?.("Tenant nesting updated");
+				} catch {
+					errToast?.("Failed to update");
+				}
+			});
+			nestingRevert.addEventListener("click", async () => {
+				try {
+					await svc.setTenantPolicy("grid", "nesting_enabled", null);
+					nestingToggle.checked = false;
+					okToast?.("Reverted to global");
+				} catch {
+					errToast?.("Failed to revert"); /* noop */
+				}
+			});
+		}
+	}
+
+	#setupNestingPolicyWatcher() {
+		const handler = async (evt) => {
+			const errToast = (msg) => this.#toastManager?.error?.(msg, 2500);
+			try {
+				if (
+					!evt ||
+					(evt.type !== "tenant_policy_updated" &&
+						evt.type !== "policy_updated")
+				)
+					return;
+				const { domain, key, newValue } = evt.data || {};
+				if (domain !== "grid" || key !== "nesting_enabled") return;
+				const enabled = Boolean(
+					newValue ??
+						this.#stateManager?.managers?.policies?.getPolicy(
+							"grid",
+							"nesting_enabled"
+						)
+				);
+				if (enabled) {
+					await this.#gridPolicyService?.registerGridPolicies?.({
+						includeNesting: true,
+					});
+					if (!this.#nestedGridManager) {
+						const mod = await import("./NestedGridManager.js");
+						this.#nestedGridManager = new mod.NestedGridManager({
+							stateManager: this.#stateManager,
+						});
+					}
+				} else {
+					// Teardown: detach nested grids and release manager
+					try {
+						this.#nestedGridManager?.detachAll?.();
+					} catch {
+						errToast?.("Failed to update");
+					}
+					this.#nestedGridManager = null;
+				}
+			} catch {
+				/* noop */
+			}
+		};
+		this.#unsubscribeFunctions.push(
+			this.#stateManager.on("policyEvent", handler)
+		);
+	}
 	/**
 	 * Sets a policy value and provides user feedback via a toast notification.
 	 * @private
@@ -406,9 +1203,14 @@ export class CompleteGridSystem {
 	 */
 	#loadCurrentPolicyStates(panel) {
 		try {
-			const policies = GridPolicyHelper.getGridPolicies(
-				this.#stateManager.managers.policies
-			);
+			const policies = this.#gridPolicyService
+				? this.#gridPolicyService.getGridPolicies()
+				: {
+						performanceMode: null,
+						autoSave: true,
+						saveFeedback: true,
+						aiSuggestions: false,
+					};
 
 			panel.querySelector("#perf-mode-toggle").checked =
 				policies.performanceMode === true;
@@ -418,6 +1220,28 @@ export class CompleteGridSystem {
 				policies.saveFeedback;
 			panel.querySelector("#ai-suggestions-toggle").checked =
 				policies.aiSuggestions;
+
+			// Tenant section reflects effective values
+			const perfSel = panel.querySelector("#tenant-perf-mode");
+			if (perfSel) {
+				perfSel.value =
+					policies.performanceMode === true
+						? "on"
+						: policies.performanceMode === false
+							? "off"
+							: "auto";
+			}
+			const as = panel.querySelector("#tenant-auto-save-toggle");
+			if (as) as.checked = !!policies.autoSave;
+			const sf = panel.querySelector("#tenant-save-feedback-toggle");
+			if (sf) sf.checked = !!policies.saveFeedback;
+			const nest = panel.querySelector("#tenant-nesting-toggle");
+			if (nest)
+				nest.checked =
+					!!this.#stateManager?.managers?.policies?.getPolicy(
+						"grid",
+						"nesting_enabled"
+					);
 		} catch (error) {
 			console.warn("Could not load current policy states:", error);
 		}
@@ -429,9 +1253,14 @@ export class CompleteGridSystem {
 	 */
 	#showPolicyStatus() {
 		try {
-			const policies = GridPolicyHelper.getGridPolicies(
-				this.#stateManager.managers.policies
-			);
+			const policies = this.#gridPolicyService
+				? this.#gridPolicyService.getGridPolicies()
+				: {
+						performanceMode: null,
+						autoSave: true,
+						saveFeedback: true,
+						aiSuggestions: false,
+					};
 
 			console.log("Current Grid Policies:", policies);
 
@@ -493,6 +1322,64 @@ export class CompleteGridSystem {
 					}
 				)
 			);
+		}
+	}
+
+	#setupAnalyticsPanel() {
+		try {
+			const el = document.createElement("div");
+			el.id = "grid-analytics-panel";
+			el.style.cssText = `
+				position: fixed; right: 20px; top: 20px; z-index: 10000;
+				background: rgba(20,20,20,0.85); color: #fff; padding: 10px 12px; border-radius: 8px;
+				font: 12px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+				display: none; min-width: 180px; box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+			`;
+			el.innerHTML = `
+				<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;">
+					<strong>Grid Analytics</strong>
+					<button id="ga-close" style="background:#444;color:#fff;border:0;border-radius:4px;padding:2px 6px;cursor:pointer">×</button>
+				</div>
+				<div>FPS: <span id="ga-fps">—</span></div>
+				<div>Blocks: <span id="ga-blocks">—</span></div>
+				<div>Visible: <span id="ga-visible">—</span></div>
+				<div style="margin-top:6px;opacity:0.8;">Toggle: Alt+G</div>
+			`;
+			document.body.appendChild(el);
+			const close = () => (el.style.display = "none");
+			el.querySelector("#ga-close").addEventListener("click", close);
+
+			// Toggle hotkey
+			const onKey = (e) => {
+				if (e.altKey && e.key?.toLowerCase() === "g") {
+					e.preventDefault();
+					el.style.display =
+						el.style.display === "none" ? "block" : "none";
+				}
+			};
+			document.addEventListener("keydown", onKey);
+			this.#unsubscribeFunctions.push(() =>
+				document.removeEventListener("keydown", onKey)
+			);
+
+			// Update handlers
+			const setText = (sel, v) => {
+				const n = el.querySelector(sel);
+				if (n) n.textContent = String(v);
+			};
+			const onFps = ({ fps }) => setText("#ga-fps", fps ?? "—");
+			const onVis = ({ inView, total }) => {
+				setText("#ga-visible", inView ?? "—");
+				setText("#ga-blocks", total ?? "—");
+			};
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.on("gridFps", onFps)
+			);
+			this.#unsubscribeFunctions.push(
+				this.#stateManager.on("gridBlockVisibility", onVis)
+			);
+		} catch {
+			/* noop */
 		}
 	}
 

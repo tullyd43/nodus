@@ -269,6 +269,30 @@ export class ErrorHelpers {
 	}
 
 	/**
+	 * Backwards-compatible async wrapper. Executes an async function and captures errors via handleError.
+	 * Accepts an optional intermediate event parameter that is ignored for compatibility.
+	 * @param {Function} fn - The async function to execute.
+	 * @param {any} [maybeEventOrContext] - Optional event bus (ignored) or context object.
+	 * @param {object} [maybeContext] - Optional context when an event is provided as second arg.
+	 * @returns {Promise<any|null>} The result of the function or null on error.
+	 */
+	async captureAsync(fn, maybeEventOrContext = {}, maybeContext = undefined) {
+		let context = {};
+		if (maybeContext !== undefined) {
+			context = maybeContext || {};
+		} else {
+			context = maybeEventOrContext || {};
+		}
+
+		try {
+			return await Promise.resolve(fn());
+		} catch (error) {
+			this.handleError(error, context);
+			return null;
+		}
+	}
+
+	/**
 	 * A wrapper for synchronous functions that catches any thrown errors and processes them
 	 * through the standard `handleError` pipeline.
 	 * @param {function(): any} fn - The synchronous function to execute.

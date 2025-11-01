@@ -51,10 +51,13 @@ export class AdaptiveRenderer {
 		});
 
 		// V8.0 Parity: Mandate 4.3 - Apply performance measurement decorator to the render method.
-		// Note: The decorator is implemented as a higher-order function wrapper for now.
-		this.render = this.#metrics.measure("render", {
-			component: "AdaptiveRenderer",
-		})(this.render.bind(this));
+		// Guard against early bootstrap: if metrics not ready, use a no-op wrapper.
+		const measure = this.#metrics?.measure
+			? this.#metrics.measure.bind(this.#metrics)
+			: () => (fn) => fn;
+		this.render = measure("render", { component: "AdaptiveRenderer" })(
+			this.render.bind(this)
+		);
 	}
 
 	/**
