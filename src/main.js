@@ -5,7 +5,7 @@ import { AppConfig } from "../environment.config.js";
 import { DeveloperDashboard } from "./ui/DeveloperDashboard.js";
 
 import { ActionDispatcher } from "@/ui/ActionDispatcher.js";
-import { BindEngine } from "@/ui/BindEngine.js";
+import BindEngine from "@/ui/BindEngine.js";
 import SecurityExplainer from "@/ui/SecurityExplainer.js";
 
 /**
@@ -239,7 +239,7 @@ const bootstrap = async () => {
 
 	// 4.5 Initialize UI binding and action dispatch
 	const bindEngine = new BindEngine(stateManager);
-	bindEngine.init(document);
+	await bindEngine.start(document);
 	// Expose engines through the stateManager managers so other modules (like
 	// BuildingBlockRenderer) can register dynamic elements with them.
 	stateManager.managers = stateManager.managers || {};

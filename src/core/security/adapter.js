@@ -1,4 +1,4 @@
-import { ForensicLogger } from "../ForensicLogger.js";
+import { ForensicLogger } from "./ForensicLogger.js";
 
 /**
  * @file adapter.js
