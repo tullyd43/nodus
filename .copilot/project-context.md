@@ -12,3 +12,5 @@ Copilot must:
 - Prefer native Web APIs, IndexedDB, and in-house abstractions.
 - Enforce constant-time comparisons and side-channel-safe crypto.
 - Keep output concise, well-documented, and aligned to these mandates.
+
+

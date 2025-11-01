@@ -1,4 +1,4 @@
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
 // src/core/ui/VirtualList.js
 // Lightweight, framework-free virtualized list with item recycling, keyboard nav,
 // sticky headers, and resize-aware windowing. Works for rows or cards.
@@ -35,7 +35,7 @@ export class VirtualList {
 
 	 */
 
-	constructor(options) {
+		constructor(options) {
 		this.opt = {
 			overscan: 6,
 			recycle: true,
@@ -79,7 +79,7 @@ export class VirtualList {
 
 		 */
 
-		if (this.opt.stickyHeader) {
+				if (this.opt.stickyHeader) {
 			this._header = document.createElement("div");
 			this._header.style.position = "sticky";
 			this._header.style.top = "0";
@@ -111,8 +111,7 @@ export class VirtualList {
 
 	 */
 
-
-	mount() {
+		mount() {
 		if (this._mounted) return;
 		this._mounted = true;
 		this._root.addEventListener("scroll", this._onScroll, {
@@ -135,8 +134,7 @@ export class VirtualList {
 
 	 */
 
-
-	unmount() {
+		unmount() {
 		if (!this._mounted) return;
 		this._mounted = false;
 		this._root.removeEventListener("scroll", this._onScroll);
@@ -163,8 +161,7 @@ export class VirtualList {
 
 	 */
 
-
-	refresh() {
+		refresh() {
 		// call when data size or per-item height might have changed
 		this._syncTotalHeight();
 		this._schedule();
@@ -181,8 +178,7 @@ export class VirtualList {
 
 	 */
 
-
-	scrollToIndex(index, align = "start") {
+		scrollToIndex(index, align = "start") {
 		const top = this._offsetOf(index);
 		const height = this._sizeOf(index);
 		const vp = this._root.clientHeight;
@@ -194,7 +190,7 @@ export class VirtualList {
 
 		 */
 
-		if (align === "center") {
+				if (align === "center") {
 			this._root.scrollTop = Math.max(0, top - (vp - height) / 2);
 		} else if (align === "end") {
 			this._root.scrollTop = Math.max(0, top - (vp - height));
@@ -204,12 +200,12 @@ export class VirtualList {
 	}
 
 	// ---------- internals ----------
-	_onScroll() {
+		_onScroll() {
 		this._scrollTop = this._root.scrollTop;
 		this._schedule();
 	}
 
-	_onResize() {
+		_onResize() {
 		const next = this._root.clientHeight;
 		/**
 
@@ -219,20 +215,25 @@ export class VirtualList {
 
 		 */
 
-		if (next !== this._viewportH) {
+				if (next !== this._viewportH) {
 			this._viewportH = next;
 			this._schedule();
 		}
 	}
 
-	_schedule() {
+		_schedule() {
 		if (this._raf) cancelAnimationFrame(this._raf);
 		this._raf = requestAnimationFrame(() => this._update());
 	}
 
-	_update() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const count = this.opt.count();
+		_update() {
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		const count = this.opt.count();
 		const vpTop = this._scrollTop;
 		const vpBottom = vpTop + this._viewportH;
 		const first = this._findFirstIndexAtOrAbove(vpTop);
@@ -251,7 +252,7 @@ export class VirtualList {
 
 		 */
 
-		for (const [i, node] of this._inUse) {
+				for (const [i, node] of this._inUse) {
 			/**
 
 			 * TODO: Add JSDoc for method if
@@ -260,7 +261,7 @@ export class VirtualList {
 
 			 */
 
-			if (i < start || i > end) {
+						if (i < start || i > end) {
 				this._inUse.delete(i);
 				if (this.opt.recycle) this._pool.push(node);
 				else node.remove();
@@ -276,7 +277,7 @@ export class VirtualList {
 
 		 */
 
-		for (let i = start; i <= end; i++) {
+				for (let i = start; i <= end; i++) {
 			if (this._inUse.has(i)) continue;
 			const key = this.opt.keyOf?.(i);
 			let node = key != null ? this._keys.get(key) : undefined;
@@ -288,7 +289,7 @@ export class VirtualList {
 
 			 */
 
-			if (node && node.parentElement !== this._spacer) {
+						if (node && node.parentElement !== this._spacer) {
 				// if key was reused elsewhere, drop it
 				node = undefined;
 			}
@@ -311,7 +312,7 @@ export class VirtualList {
 		}
 	}
 
-	_makeItem() {
+		_makeItem() {
 		const el = document.createElement("div");
 		el.setAttribute("role", "listitem");
 		el.style.willChange = "transform";
@@ -319,18 +320,18 @@ export class VirtualList {
 		return el;
 	}
 
-	_syncTotalHeight() {
+		_syncTotalHeight() {
 		const count = this.opt.count();
 		const total = this._offsetOf(count); // offset at end == cumulative height
 		this._spacer.style.height = total + "px";
 	}
 
-	_sizeOf(i) {
+		_sizeOf(i) {
 		if (i < 0) return 0;
 		return this.opt.itemHeight ?? this.opt.itemSize(i);
 	}
 
-	_offsetOf(i) {
+		_offsetOf(i) {
 		// cumulative height from 0..i-1
 		if (i <= 0) return 0;
 		if (this.opt.itemHeight) return i * this.opt.itemHeight;
@@ -340,7 +341,7 @@ export class VirtualList {
 		return sum;
 	}
 
-	_findFirstIndexAtOrAbove(y) {
+		_findFirstIndexAtOrAbove(y) {
 		// binary search if fixed height
 		const count = this.opt.count();
 		if (this.opt.itemHeight)
@@ -355,14 +356,14 @@ export class VirtualList {
 
 		 */
 
-		for (let i = 0; i < count; i++) {
+				for (let i = 0; i < count; i++) {
 			if (sum + this._sizeOf(i) > y) return i;
 			sum += this._sizeOf(i);
 		}
 		return Math.max(0, count - 1);
 	}
 
-	_findLastIndexAtOrBelow(y) {
+		_findLastIndexAtOrBelow(y) {
 		const count = this.opt.count();
 		/**
 
@@ -372,7 +373,7 @@ export class VirtualList {
 
 		 */
 
-		if (this.opt.itemHeight) {
+				if (this.opt.itemHeight) {
 			return Math.max(
 				0,
 				Math.min(count - 1, Math.floor(y / this.opt.itemHeight))
@@ -387,7 +388,7 @@ export class VirtualList {
 
 		 */
 
-		for (let i = 0; i < count; i++) {
+				for (let i = 0; i < count; i++) {
 			const next = sum + this._sizeOf(i);
 			if (next >= y) return i;
 			sum = next;
@@ -395,7 +396,7 @@ export class VirtualList {
 		return Math.max(0, count - 1);
 	}
 
-	_onKey(e) {
+		_onKey(e) {
 		const count = this.opt.count();
 		if (!count) return;
 		const cur = Number(
@@ -419,8 +420,7 @@ export class VirtualList {
 
 		 */
 
-
-		switch (e.key) {
+				switch (e.key) {
 			case "ArrowDown":
 				target = Math.min(count - 1, cur >= 0 ? cur + 1 : top);
 				break;
@@ -455,7 +455,7 @@ export class VirtualList {
 
 		 */
 
-		if (node) {
+				if (node) {
 			this._root
 				.querySelectorAll('[data-index-focus="1"]')
 				.forEach((n) => n.removeAttribute("data-index-focus"));

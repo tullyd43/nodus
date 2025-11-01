@@ -3,7 +3,10 @@
 // V8.0 Parity: Refactored for strict encapsulation, metrics integration, and service management.
 import { EventEmitter } from "node:events"; // Use node:events for clarity in Node.js environment
 
-import { WebSocketServer } from "ws";
+// NOTE: Direct runtime dependency on 'ws' is disallowed by repository policy
+// (see DEVELOPER_MANDATES.md §XIII.1). Obtain a WebSocket server factory from
+// the state manager's managers (dependency injection) instead of importing
+// the 'ws' package here.
 
 /**
  * @class OptimizationWebSocketServer
@@ -27,8 +30,10 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	#forensicLogger = null;
 	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics = null;
-	/** @private @type {WebSocketServer|null} */
+	/** @private @type {object|null} */
 	#wss = null;
+	/** @private @type {object|null} */
+	#wssFactory = null;
 	/** @private @type {import('../utils/LRUCache.js').LRUCache|null} */
 	#clients = null;
 	/** @private @type {ReturnType<typeof setInterval>|null} */
@@ -58,6 +63,11 @@ export class OptimizationWebSocketServer extends EventEmitter {
 		this.#accessControl =
 			stateManager.managers?.optimizationAccessControl || null;
 		this.#forensicLogger = stateManager.managers?.forensicLogger || null;
+		// Acquire a platform WebSocket server factory via dependency injection.
+		// The factory should expose a `.create(options)` method that returns an
+		// object compatible with the interface expected below (on, send, close, etc.).
+		this.#wssFactory =
+			stateManager.managers?.webSocketServerFactory || null;
 
 		// V8.0 Parity: Mandate 4.3 - Use the central metrics registry.
 		this.#metrics =
@@ -122,11 +132,21 @@ export class OptimizationWebSocketServer extends EventEmitter {
 		}
 
 		try {
-			this.#wss = new WebSocketServer({
-				server: this.#server,
-				path: "/admin/optimization-stream",
-				clientTracking: true,
-			});
+			if (
+				this.#wssFactory &&
+				typeof this.#wssFactory.create === "function"
+			) {
+				this.#wss = this.#wssFactory.create({
+					server: this.#server,
+					path: "/admin/optimization-stream",
+					clientTracking: true,
+				});
+			} else {
+				console.warn(
+					"[OptimizationWebSocketServer] No WebSocket server factory provided; WebSocket server will not be started."
+				);
+				return false;
+			}
 
 			this.#setupWebSocketHandlers();
 			this.#setupOptimizerListeners();
@@ -280,7 +300,7 @@ export class OptimizationWebSocketServer extends EventEmitter {
 	 * Handles incoming messages from a connected WebSocket client.
 	 * @private
 	 * @param {string} clientId - The ID of the client sending the message.
-	 * @param {import('ws').RawData} data - The raw message data received from the client.
+	 * @param {*} data - The raw message data received from the client.
 	 */
 	#handleClientMessage(clientId, data) {
 		try {
@@ -299,7 +319,6 @@ export class OptimizationWebSocketServer extends EventEmitter {
 
 
 			 */
-
 
 			switch (message.type) {
 				case "subscribe":
@@ -782,7 +801,6 @@ export class OptimizationWebSocketServer extends EventEmitter {
 
 
 		 */
-
 
 		if (this.#healthCheckInterval) {
 			clearInterval(this.#healthCheckInterval);

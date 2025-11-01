@@ -36,7 +36,7 @@ export class InformationFlowTracker {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -45,7 +45,7 @@ export class InformationFlowTracker {
 
 		 */
 
-		if (!stateManager) {
+				if (!stateManager) {
 			throw new Error(
 				"[InformationFlowTracker] StateManager is required."
 			);
@@ -65,7 +65,7 @@ export class InformationFlowTracker {
 
 	 */
 
-	initialize() {
+		initialize() {
 		const managers = this.#stateManager.managers;
 		this.#forensicLogger = managers?.forensicLogger ?? null;
 		this.#errorHelpers = managers?.errorHelpers ?? null;
@@ -94,7 +94,7 @@ export class InformationFlowTracker {
 
 	 */
 
-	async derived(fromLabels, derivedLabel, meta) {
+		async derived(fromLabels, derivedLabel, meta) {
 		return this.#errorHelpers?.tryAsync(
 			async () => {
 				/**
@@ -105,7 +105,7 @@ export class InformationFlowTracker {
 
 				 */
 
-				if (!this.#forensicLogger) {
+								if (!this.#forensicLogger) {
 					console.warn(
 						"[InformationFlowTracker] ForensicLogger not available. Skipping audit log."
 					);

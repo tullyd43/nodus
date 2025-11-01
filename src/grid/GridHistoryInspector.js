@@ -19,7 +19,6 @@ export class GridHistoryInspector {
 
 	 */
 
-
 	constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 	}
@@ -34,7 +33,6 @@ export class GridHistoryInspector {
 
 
 	 */
-
 
 	initialize() {
 		this.#build();
@@ -63,7 +61,6 @@ export class GridHistoryInspector {
 
 	 */
 
-
 	toggle() {
 		this.#visible = !this.#visible;
 		if (!this.#el) this.#build();
@@ -89,24 +86,84 @@ export class GridHistoryInspector {
       display: none;
       min-width: 200px;
     `;
-		el.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
-        <strong>Grid History</strong>
-        <button id="ghi-close" style="background:#444;color:#fff;border:0;border-radius:4px;padding:4px 6px;cursor:pointer">×</button>
-      </div>
-      <div id="ghi-body">
-        <div style="display:flex; gap:8px; margin-bottom:8px;">
-          <button id="ghi-undo-btn" title="Undo (Ctrl/Cmd+Z)" style="background:#2b7cff;color:#fff;border:0;border-radius:4px;padding:6px 8px;cursor:pointer">Undo</button>
-          <button id="ghi-redo-btn" title="Redo (Ctrl/Cmd+Y)" style="background:#2b7cff;color:#fff;border:0;border-radius:4px;padding:6px 8px;cursor:pointer">Redo</button>
-        </div>
-        <div>Undo: <span id="ghi-undo">0</span></div>
-        <div>Redo: <span id="ghi-redo">0</span></div>
-        <div>Last: <span id="ghi-last">—</span></div>
-        <div style="margin-top:6px">Recent:</div>
-        <ul id="ghi-recent" style="margin:6px 0 0 16px; padding:0; list-style:disc; opacity:0.9"></ul>
-        <div style="margin-top:8px; opacity:0.8;">Toggle: Alt+H</div>
-      </div>
-    `;
+		// Build content programmatically to avoid innerHTML
+		const headerRow = document.createElement("div");
+		headerRow.style.cssText =
+			"display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;";
+		const title = document.createElement("strong");
+		title.textContent = "Grid History";
+		const closeBtn = document.createElement("button");
+		closeBtn.id = "ghi-close";
+		closeBtn.style.cssText =
+			"background:#444;color:#fff;border:0;border-radius:4px;padding:4px 6px;cursor:pointer";
+		closeBtn.textContent = "×";
+		headerRow.appendChild(title);
+		headerRow.appendChild(closeBtn);
+
+		const body = document.createElement("div");
+		body.id = "ghi-body";
+
+		const controls = document.createElement("div");
+		controls.style.cssText = "display:flex; gap:8px; margin-bottom:8px;";
+		const undoBtn = document.createElement("button");
+		undoBtn.id = "ghi-undo-btn";
+		undoBtn.title = "Undo (Ctrl/Cmd+Z)";
+		undoBtn.style.cssText =
+			"background:#2b7cff;color:#fff;border:0;border-radius:4px;padding:6px 8px;cursor:pointer";
+		undoBtn.textContent = "Undo";
+		const redoBtn = document.createElement("button");
+		redoBtn.id = "ghi-redo-btn";
+		redoBtn.title = "Redo (Ctrl/Cmd+Y)";
+		redoBtn.style.cssText =
+			"background:#2b7cff;color:#fff;border:0;border-radius:4px;padding:6px 8px;cursor:pointer";
+		redoBtn.textContent = "Redo";
+		controls.appendChild(undoBtn);
+		controls.appendChild(redoBtn);
+
+		const undoRow = document.createElement("div");
+		undoRow.appendChild(document.createTextNode("Undo: "));
+		const undoSpan = document.createElement("span");
+		undoSpan.id = "ghi-undo";
+		undoSpan.textContent = "0";
+		undoRow.appendChild(undoSpan);
+
+		const redoRow = document.createElement("div");
+		redoRow.appendChild(document.createTextNode("Redo: "));
+		const redoSpan = document.createElement("span");
+		redoSpan.id = "ghi-redo";
+		redoSpan.textContent = "0";
+		redoRow.appendChild(redoSpan);
+
+		const lastRow = document.createElement("div");
+		lastRow.appendChild(document.createTextNode("Last: "));
+		const lastSpan = document.createElement("span");
+		lastSpan.id = "ghi-last";
+		lastSpan.textContent = "—";
+		lastRow.appendChild(lastSpan);
+
+		const recentLabel = document.createElement("div");
+		recentLabel.style.marginTop = "6px";
+		recentLabel.textContent = "Recent:";
+		const recentList = document.createElement("ul");
+		recentList.id = "ghi-recent";
+		recentList.style.cssText =
+			"margin:6px 0 0 16px; padding:0; list-style:disc; opacity:0.9";
+
+		const toggleInfo = document.createElement("div");
+		toggleInfo.style.marginTop = "8px";
+		toggleInfo.style.opacity = "0.8";
+		toggleInfo.textContent = "Toggle: Alt+H";
+
+		body.appendChild(controls);
+		body.appendChild(undoRow);
+		body.appendChild(redoRow);
+		body.appendChild(lastRow);
+		body.appendChild(recentLabel);
+		body.appendChild(recentList);
+		body.appendChild(toggleInfo);
+
+		el.appendChild(headerRow);
+		el.appendChild(body);
 		el.querySelector('#ghi-close').addEventListener('click', () => this.toggle()); // prettier-ignore
 		el.querySelector('#ghi-undo-btn').addEventListener('click', () => { try { this.#stateManager?.undo?.(); this.#render(); } catch { /* noop */ } }); // prettier-ignore
 		el.querySelector('#ghi-redo-btn').addEventListener('click', () => { try { this.#stateManager?.redo?.(); this.#render(); } catch { /* noop */ } }); // prettier-ignore

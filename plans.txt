@@ -309,3 +309,112 @@ Action 1: Instrument the new renderers. Add metrics to MetricsRegistry.js for co
 
 Action 2: Use VirtualList.js within your BuildingBlockRenderer.js for any element that renders a list (e.g., a dropdown from a QueryService.js result). This will prevent the UI from freezing when binding to large data sets.
 
+Perfect — this is a **well-targeted and standards-aligned integration step**.
+You’ve done three critical things right in one move:
+
+---
+
+### 🧩 **SystemBootstrap.js Update — Architectural Alignment**
+
+✅ **Purpose:** You’ve turned the BindEngine from an isolated utility into a *first-class system service*
+that’s initialized, registered, and discoverable via the same lifecycle that HybridStateManager, StorageLoader,
+and other subsystems use.
+
+✅ **Security Alignment:** The use of a short forensic envelope comment means:
+
+```js
+/* @forensic envelope: BindEngine init */
+```
+
+…will be caught by `copilotGuard` and logged in your ForensicLogger chain — that’s perfect.
+
+✅ **Correct Placement:** Running `await this.#initializeUIFramework()` *inside*
+`#initializeAppServices()` ensures the UI binding layer loads after state + security contexts
+but before user-facing managers (Grid, Renderer, etc.).
+That’s the correct dependency order and avoids the reactivity race condition.
+
+✅ **Recommendation:**
+Inside `#initializeUIFramework`, after BindEngine registration:
+
+```js
+this.serviceRegistry.register("bindEngine", bindEngine);
+this.bindEngine = bindEngine;
+this.forensicLogger.logEnvelope("BindEngine initialized", { ts: Date.now() });
+```
+
+— add this explicit log call so your forensic and metrics systems record initialization time.
+
+---
+
+### 🧪 **BindEngine_v2.test.js — Testing Standards Compliance**
+
+✅ Using **Vitest** is consistent with your repo’s `package.json` setup (ESM-friendly, fast,
+integrates well with Playwright for UI tests).
+✅ Including a local mock of both `stateManager` and `forensicLogger` is excellent.
+That allows you to test reactivity and envelope-logging independently of HybridStateManager.
+
+💡 **Next improvement:**
+Add a small timing assertion to ensure the reactive callback runs within constant-time bounds:
+
+```js
+await constantTimeCheck(async () => {
+  await bindEngine.updateBinding("foo", "bar");
+}, 100);
+```
+
+This satisfies your timing-side-channel mitigation mandate (SEC-04).
+
+---
+
+### ⚙️ **.eslint-allowlist.json — Correct and Compliant**
+
+✅ Marking `BindEngine.js` (and `BindEngine_v2.js`) as `unsafeMutations: true`
+is **precisely the right way** to handle deliberate low-level DOM manipulations.
+
+🔐 It gives Copilot + ESLint a controlled escape hatch while still preserving
+auditing traceability — auditors can see “why this file mutates state directly.”
+
+💡 **Follow-up:** Add a short justification field so that the intent is recorded explicitly:
+
+```json
+"unsafeMutations": {
+  "src/core/ui/BindEngine.js": "Direct DOM mutation allowed for secure forensic-logged rendering",
+  "src/core/ui/BindEngine_v2.js": "Experimental optimized renderer; still forensic-wrapped"
+}
+```
+
+---
+
+### 🧭 **Next Recommended Steps**
+
+1. **Expand the Service Graph**
+
+   * Add `this.serviceRegistry.register("ui", this.bindEngine)`
+     → allows all higher-level systems (Grid, AsyncView, EnhancedRenderer)
+     to discover and use it through the service registry.
+
+2. **Wire the Forensic Envelope Globally**
+
+   * Extend ForensicLogger to listen to `bindEngine` events (`update`, `mutation`, `detach`)
+     so every DOM mutation becomes part of the immutable audit trail.
+
+3. **Implement a `BindEnginePolicyAdapter`**
+
+   * This will read enforcement directives (from `.github/copilot-security.json`)
+     like `forbidInnerHTML` and automatically sanitize or block mutations at runtime.
+
+4. **Add a lightweight integration test**
+
+   * Under `/tests/integration/BindEngine_integration.test.js`
+     simulate a full boot: load SystemBootstrap → state update → verify reactive DOM change.
+
+5. **Performance Metrics Hook**
+
+   * Hook `MetricsReporter` inside BindEngine to measure render latency per update,
+     and report to the same metrics registry as StorageLoader + HybridStateManager.
+
+---
+
+Would you like me to generate a **draft BindEnginePolicyAdapter.js** next —
+the small adapter that automatically enforces your security and mutation rules inside BindEngine
+(using `.github/copilot-security.json` as its policy source)?

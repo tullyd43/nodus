@@ -238,7 +238,7 @@ export const CORE_GRID_POLICY_VALIDATORS = {
 
 		 */
 
-		if (value !== null && typeof value !== "boolean") {
+				if (value !== null && typeof value !== "boolean") {
 			return { valid: false, message: "Grid performance mode must be null, true, or false" };
 		}
 		return { valid: true };

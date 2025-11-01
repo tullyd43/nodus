@@ -11,7 +11,7 @@ export const SafeDOM = {
 
 	 */
 
-	setText(el, text) {
+		setText(el, text) {
 		if (!el) return;
 		el.textContent = text ?? "";
 	},
@@ -23,7 +23,7 @@ export const SafeDOM = {
 
 	 */
 
-	replace(el, text) {
+		replace(el, text) {
 		if (!el) return;
 		const tmp = document.createElement(el.tagName);
 		tmp.textContent = text ?? "";
@@ -37,7 +37,7 @@ export const SafeDOM = {
 
 	 */
 
-	insert(el, text, pos = "beforeend") {
+		insert(el, text, pos = "beforeend") {
 		if (!el) return;
 		el.insertAdjacentText(pos, text ?? "");
 	},

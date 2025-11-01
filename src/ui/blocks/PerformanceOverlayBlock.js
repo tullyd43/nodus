@@ -1,4 +1,4 @@
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
 // ui/blocks/PerformanceOverlayBlock.js
 // Composable performance monitoring building block
 
@@ -36,7 +36,7 @@ class PerformanceOverlayBlock_V2 {
 
 	 */
 
-	constructor({ context, config = {} }) {
+		constructor({ context, config = {} }) {
 		this.#context = context;
 		this.#config = config;
 		this.#theme = this.#context.getThemeVariables();
@@ -62,8 +62,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-
-		if (this.#config.autoStart !== false) {
+				if (this.#config.autoStart !== false) {
 			requestAnimationFrame(() => this.start());
 		}
 	}
@@ -99,8 +98,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-
-		if (this.#config.overlay) {
+				if (this.#config.overlay) {
 			this.#container.style.position = "fixed";
 			this.#container.style.bottom = this.#config.bottom || "10px";
 			this.#container.style.right = this.#config.right || "10px";
@@ -115,8 +113,13 @@ class PerformanceOverlayBlock_V2 {
 	 * @private
 	 */
 	#createDOM() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.#titleElement = document.createElement("h4");
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		this.#titleElement = document.createElement("h4");
 		this.#titleElement.textContent =
 			this.#config.title || "System Performance";
 		this.#titleElement.style.cssText = `
@@ -151,7 +154,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (metrics.system) {
+				if (metrics.system) {
 			sections.push({
 				title: "System Load",
 				items: [
@@ -185,7 +188,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (metrics.database) {
+				if (metrics.database) {
 			sections.push({
 				title: "Database",
 				items: [
@@ -219,7 +222,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (metrics.rendering) {
+				if (metrics.rendering) {
 			sections.push({
 				title: "Rendering",
 				items: [
@@ -253,7 +256,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (metrics.state) {
+				if (metrics.state) {
 			sections.push({
 				title: "State Manager",
 				items: [
@@ -285,7 +288,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (metrics.network) {
+				if (metrics.network) {
 			sections.push({
 				title: "Network",
 				items: [
@@ -334,8 +337,13 @@ class PerformanceOverlayBlock_V2 {
 	 * @returns {HTMLElement} The DOM element for the metric section.
 	 */
 	#createMetricSection(section) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const sectionDiv = document.createElement("div");
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		const sectionDiv = document.createElement("div");
 		sectionDiv.className = "metric-section";
 		sectionDiv.style.cssText = `
       margin-bottom: 1rem;
@@ -425,8 +433,13 @@ class PerformanceOverlayBlock_V2 {
 	 * @returns {void}
 	 */
 	#updateMetrics() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  if (!this.#isActive) return;
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		if (!this.#isActive) return;
 
 		const startTime = performance.now();
 
@@ -544,7 +557,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (performance.memory) {
+				if (performance.memory) {
 			metrics.browser = {
 				heapUsed: performance.memory.usedJSHeapSize,
 				heapTotal: performance.memory.totalJSHeapSize,
@@ -567,7 +580,7 @@ class PerformanceOverlayBlock_V2 {
 
 	 */
 
-	start() {
+		start() {
 		if (this.#updateInterval) return;
 		this.#isActive = true;
 
@@ -595,7 +608,7 @@ class PerformanceOverlayBlock_V2 {
 
 	 */
 
-	stop() {
+		stop() {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -604,7 +617,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (this.#updateInterval) {
+				if (this.#updateInterval) {
 			clearInterval(this.#updateInterval);
 			this.#updateInterval = null;
 		}
@@ -625,7 +638,7 @@ class PerformanceOverlayBlock_V2 {
 
 	 */
 
-	toggle() {
+		toggle() {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -634,7 +647,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (this.#isActive) {
+				if (this.#isActive) {
 			this.stop();
 		} else {
 			this.start();
@@ -654,7 +667,7 @@ class PerformanceOverlayBlock_V2 {
 
 		 */
 
-		if (this.#config.clickToToggle !== false) {
+				if (this.#config.clickToToggle !== false) {
 			this.#titleElement.style.cursor = "pointer";
 			this.#titleElement.title = "Click to pause/resume monitoring";
 			this.#titleElement.addEventListener("click", () => this.toggle());
@@ -675,7 +688,7 @@ class PerformanceOverlayBlock_V2 {
 
 			 */
 
-			for (const mutation of mutations) {
+						for (const mutation of mutations) {
 				/**
 
 				 * TODO: Add JSDoc for method for
@@ -684,7 +697,7 @@ class PerformanceOverlayBlock_V2 {
 
 				 */
 
-				for (const node of mutation.removedNodes) {
+								for (const node of mutation.removedNodes) {
 					/**
 
 					 * TODO: Add JSDoc for method if
@@ -693,7 +706,7 @@ class PerformanceOverlayBlock_V2 {
 
 					 */
 
-					if (node === this.#container) {
+										if (node === this.#container) {
 						this.stop();
 						obs.disconnect();
 						return;
@@ -714,7 +727,7 @@ class PerformanceOverlayBlock_V2 {
 
 			 */
 
-			if (this.#container.parentNode) {
+						if (this.#container.parentNode) {
 				observer.observe(this.#container.parentNode, {
 					childList: true,
 				});
@@ -740,7 +753,7 @@ class PerformanceOverlayBlock_V2 {
 
 	 */
 
-	render() {
+		render() {
 		return this.#container;
 	}
 }
@@ -803,8 +816,13 @@ export function registerPerformanceOverlayBlock(renderer) {
  * @returns {object} A composition object representing the performance overlay.
  */
 export function createPerformanceOverlay(config = {}) {
-	  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  return {
+	ForensicLogger.createEnvelope({
+		actorId: "system",
+		action: "<auto>",
+		target: "<unknown>",
+		label: "unclassified",
+	});
+	return {
 		type: "performance_overlay",
 		config: {
 			title: "Performance Monitor",

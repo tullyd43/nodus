@@ -1,7 +1,7 @@
 // src/grid/runtime/ComponentRegistry.js
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { EnhancedGridRenderer } from "../EnhancedGridRenderer.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
-import { SafeDOM } from '@core/ui/SafeDOM.js';
 import { normalizeConfig } from "./GridRuntimeConfig.js";
 import { LayoutStore } from "./LayoutStore.js";
 
@@ -20,7 +20,6 @@ export class ComponentRegistry {
 
 	 */
 
-
 	setAllowedTypes(list) {
 		if (Array.isArray(list)) this.#allowed = new Set(list.map(String));
 	}
@@ -35,7 +34,6 @@ export class ComponentRegistry {
 
 
 	 */
-
 
 	register(type, { mount, unmount }) {
 		if (!type || typeof mount !== "function") return;
@@ -52,7 +50,6 @@ export class ComponentRegistry {
 
 
 	 */
-
 
 	async mount(type, el, props = {}, context = {}) {
 		if (!this.#allowed.has(type)) {
@@ -173,12 +170,23 @@ componentRegistry.register("block", {
 		const title = props.title ?? "Block";
 		const body = props.body ?? "Configure me";
 		el.classList.add("cfg-block");
-		el.innerHTML = `
-      <div class="cfg-block-card" style="border:1px solid #e1e4e8;border-radius:8px;padding:12px;background:#fff;min-height:60px;">
-        <div class="cfg-block-title" style="font-weight:600;margin-bottom:6px;">${title}</div>
-        <div class="cfg-block-body" style="opacity:0.85">${body}</div>
-      </div>
-    `;
+		// Build DOM programmatically to avoid innerHTML (XSS risk)
+		const card = document.createElement("div");
+		card.className = "cfg-block-card";
+		card.style.cssText =
+			"border:1px solid #e1e4e8;border-radius:8px;padding:12px;background:#fff;min-height:60px;";
+		const titleEl = document.createElement("div");
+		titleEl.className = "cfg-block-title";
+		titleEl.style.fontWeight = "600";
+		titleEl.style.marginBottom = "6px";
+		titleEl.textContent = title;
+		const bodyEl = document.createElement("div");
+		bodyEl.className = "cfg-block-body";
+		bodyEl.style.opacity = "0.85";
+		bodyEl.textContent = body;
+		card.appendChild(titleEl);
+		card.appendChild(bodyEl);
+		el.replaceChildren(card);
 		return () => {
 			el.replaceChildren();
 			el.classList.remove("cfg-block");
@@ -314,8 +322,13 @@ componentRegistry.register("grid", {
 			 */
 
 			updatePositions(updates) {
-				  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const byId = new Map(
+				ForensicLogger.createEnvelope({
+					actorId: "system",
+					action: "<auto>",
+					target: "<unknown>",
+					label: "unclassified",
+				});
+				const byId = new Map(
 					this._layout.blocks.map((b) => [b.blockId, b])
 				);
 				/**

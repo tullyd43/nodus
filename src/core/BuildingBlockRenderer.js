@@ -370,7 +370,6 @@ export class BuildingBlockRenderer {
 		// can pick up dynamically created elements. We prefer data-* attributes
 		// as the delegation engines already look for them.
 		try {
-			const stateManager = this.#componentRegistry?.stateManager;
 			if (props.bindingPath) {
 				element.dataset.bind = props.bindingPath;
 			}
@@ -380,8 +379,9 @@ export class BuildingBlockRenderer {
 			if (props.entityId) {
 				element.dataset.entity = props.entityId;
 			}
-		} catch (e) {
+		} catch {
 			// Non-fatal; continue rendering even if dataset wiring fails.
+			void 0;
 		}
 
 		// Set other properties
@@ -425,8 +425,9 @@ export class BuildingBlockRenderer {
 		try {
 			const stateManager = this.#componentRegistry?.stateManager;
 			stateManager?.managers?.bindEngine?.register?.(element);
-		} catch (e) {
+		} catch {
 			// Swallow; binding registration is best-effort for dynamic elements.
+			void 0;
 		}
 
 		return element;
@@ -488,15 +489,18 @@ export class BuildingBlockRenderer {
 				btn.dataset.action = props.props.actionName;
 			if (props.props?.entityId)
 				btn.dataset.entity = props.props.entityId;
-		} catch (e) {
+		} catch {
 			/* best effort */
+			void 0;
 		}
 
 		// Register dynamic binds if present
 		try {
 			const stateManager = this.#componentRegistry?.stateManager;
 			stateManager?.managers?.bindEngine?.register?.(btn);
-		} catch (e) {}
+		} catch {
+			void 0;
+		}
 
 		return btn;
 	}
@@ -523,7 +527,9 @@ export class BuildingBlockRenderer {
 			if (binding) input.dataset.bind = binding;
 			const stateManager = this.#componentRegistry?.stateManager;
 			stateManager?.managers?.bindEngine?.register?.(input);
-		} catch (e) {}
+		} catch {
+			void 0;
+		}
 
 		return input;
 	}
@@ -548,8 +554,9 @@ export class BuildingBlockRenderer {
 			if (binding) ta.dataset.bind = binding;
 			const stateManager = this.#componentRegistry?.stateManager;
 			stateManager?.managers?.bindEngine?.register?.(ta);
-		} catch (e) {
+		} catch {
 			// ignore
+			void 0;
 		}
 
 		return ta;
@@ -576,7 +583,9 @@ export class BuildingBlockRenderer {
 			this.#componentRegistry?.stateManager?.managers?.bindEngine?.register?.(
 				lbl
 			);
-		} catch (e) {}
+		} catch {
+			void 0;
+		}
 
 		return lbl;
 	}

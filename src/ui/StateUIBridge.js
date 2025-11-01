@@ -32,7 +32,7 @@ export class StateUIBridge {
 
 	 */
 
-	constructor(stateManager) {
+		constructor(stateManager) {
 		this.#stateManager = stateManager;
 		this.#logger = stateManager.forensicLogger;
 	}
@@ -50,7 +50,7 @@ export class StateUIBridge {
 
 	 */
 
-	bindGrid(grid) {
+		bindGrid(grid) {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -59,7 +59,7 @@ export class StateUIBridge {
 
 		 */
 
-		if (!this.#stateManager || !grid?.refreshRow || !grid?.removeRow) {
+				if (!this.#stateManager || !grid?.refreshRow || !grid?.removeRow) {
 			this.#logger.warn(
 				"StateUIBridge: Could not bind grid. StateManager is missing or grid does not implement the required methods (refreshRow, removeRow).",
 				{ context: "UIBinding" }
@@ -96,7 +96,7 @@ export class StateUIBridge {
 
 		 */
 
-		if (store === "objects") {
+				if (store === "objects") {
 			grid.refreshRow(item);
 		}
 	}
@@ -116,7 +116,7 @@ export class StateUIBridge {
 
 		 */
 
-		if (store === "objects") {
+				if (store === "objects") {
 			grid.removeRow(id);
 		}
 	}

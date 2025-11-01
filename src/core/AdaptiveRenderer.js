@@ -40,7 +40,7 @@ export class AdaptiveRenderer {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		/** @private @type {import('./HybridStateManager.js').default} */
 		this.#stateManager = stateManager;
 		// Derive dependencies from stateManager in the constructor.
@@ -84,7 +84,7 @@ export class AdaptiveRenderer {
 
 	 */
 
-	render(componentId, context, data = {}) {
+		render(componentId, context, data = {}) {
 		return this.#errorHelpers?.tryOr(
 			() => {
 				const component = this.#getComponent(componentId);
@@ -96,7 +96,7 @@ export class AdaptiveRenderer {
 
 				 */
 
-				if (!component) {
+								if (!component) {
 					this.#forensicLogger?.logAuditEvent("RENDER_FAILURE", {
 						reason: "Component not found",
 						componentId,
@@ -181,7 +181,7 @@ export class AdaptiveRenderer {
 		 */
 
 
-		if (bestMatch) {
+				if (bestMatch) {
 			const selectedAdaptation = {
 				name: bestMatch.name,
 				...bestMatch,
@@ -222,7 +222,7 @@ export class AdaptiveRenderer {
 
 		 */
 
-		if (!this.#buildingBlockRenderer) {
+				if (!this.#buildingBlockRenderer) {
 			this.#forensicLogger?.logAuditEvent("RENDER_FAILURE", {
 				reason: "BuildingBlockRenderer not available",
 				componentId: component.id,
@@ -261,7 +261,7 @@ export class AdaptiveRenderer {
 		 */
 
 
-		if (!composition) {
+				if (!composition) {
 			this.#forensicLogger?.logAuditEvent("RENDER_FAILURE", {
 				reason: `No render definition for adaptation '${adaptation.name}'`,
 				componentId: component.id,
@@ -346,7 +346,7 @@ export class AdaptiveRenderer {
 
 	 */
 
-	getMetrics() {
+		getMetrics() {
 		return {
 			...(this.#metrics?.getAllAsObject() || {}),
 			registeredComponents:
@@ -369,7 +369,7 @@ export class AdaptiveRenderer {
 
 	 */
 
-	clearCache() {
+		clearCache() {
 		this.#adaptationCache?.clear();
 	}
 }

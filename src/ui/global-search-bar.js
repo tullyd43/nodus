@@ -1,5 +1,4 @@
-import { SafeDOM } from '@core/ui/SafeDOM.js';
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
 /**
  * @file global-search-bar.js
  * @description A web component for a global search and command bar.
@@ -42,7 +41,6 @@ class GlobalSearchBar extends HTMLElement {
 
 	 */
 
-
 	constructor() {
 		super();
 		this.attachShadow({ mode: "open" });
@@ -62,7 +60,6 @@ class GlobalSearchBar extends HTMLElement {
 
 		 */
 
-
 		if (!this.#queryService) {
 			console.error(
 				"[GlobalSearchBar] QueryService not found on stateManager. Search will be disabled."
@@ -80,7 +77,6 @@ class GlobalSearchBar extends HTMLElement {
 
 
 	 */
-
 
 	connectedCallback() {
 		this.render();
@@ -123,7 +119,6 @@ class GlobalSearchBar extends HTMLElement {
 
 
 			 */
-
 
 			if (this.#queryService) {
 				this.#results = await this.#queryService.search(query, {
@@ -198,8 +193,13 @@ class GlobalSearchBar extends HTMLElement {
 
 	/** @private */
 	#updateSelection() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.shadowRoot.querySelectorAll("li").forEach((li, index) => {
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		this.shadowRoot.querySelectorAll("li").forEach((li, index) => {
 			li.classList.toggle("selected", index === this.#selectedIndex);
 		});
 	}
@@ -266,78 +266,93 @@ class GlobalSearchBar extends HTMLElement {
 	 */
 
 	render() {
-		this.shadowRoot.innerHTML = `
-      <style>
-        :host {
-          position: relative;
-          display: block;
-          width: 100%;
-          max-width: 600px;
-          margin: 0 auto;
-        }
-        /* Use global CSS variables for theme alignment */
-        #search-input {
-          width: 100%;
-          padding: 12px 16px;
-          font-size: 16px;
-          border-radius: var(--border-radius, 8px);
-          border: 1px solid var(--border, #404040);
-          background-color: var(--surface-elevated, #2d2d2d);
-          color: var(--text, #f5f5f5);
-          box-sizing: border-box;
-        }
-        #search-input::placeholder {
-          color: var(--text-muted, #b0b0b0);
-        }
-        #results-list {
-          position: absolute;
-          top: 100%;
-          left: 0;
-          right: 0;
-          background: var(--surface-elevated, #2d2d2d);
-          color: var(--text, #f5f5f5);
-          border: 1px solid var(--border, #404040);
-          border-top: none;
-          border-radius: 0 0 8px 8px;
-          list-style: none;
-          padding: 0;
-          margin: 0;
-          max-height: 400px;
-          overflow-y: auto;
-          z-index: 1000;
-          display: none;
-        }
-        li {
-          padding: 10px 16px;
-          cursor: pointer;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        li:hover, li.selected {
-          background-color: var(--primary, #007acc);
-          color: white;
-        }
-        .item-source {
-          font-size: 12px;
-          color: var(--text-muted, #b0b0b0);
-          background: var(--surface, #1e1e1e);
-          padding: 2px 6px;
-          border-radius: var(--border-radius, 6px);
-          margin-right: 10px;
-        }
-        .item-title {
-          flex-grow: 1;
-        }
-        .item-relevance {
-          font-size: 12px;          
-        }
-      </style>
-      <div id="search-container">
-        <input type="text" id="search-input" placeholder="Search or type a command...">
-        <ul id="results-list"></ul>
-      </div>
-    `;
+		// Programmatic DOM build to avoid innerHTML usage (security lint)
+		const sr = this.shadowRoot;
+		// clear existing
+		while (sr.firstChild) sr.removeChild(sr.firstChild);
+		const style = document.createElement("style");
+		style.textContent = `
+					:host {
+						position: relative;
+						display: block;
+						width: 100%;
+						max-width: 600px;
+						margin: 0 auto;
+					}
+					/* Use global CSS variables for theme alignment */
+					#search-input {
+						width: 100%;
+						padding: 12px 16px;
+						font-size: 16px;
+						border-radius: var(--border-radius, 8px);
+						border: 1px solid var(--border, #404040);
+						background-color: var(--surface-elevated, #2d2d2d);
+						color: var(--text, #f5f5f5);
+						box-sizing: border-box;
+					}
+					#search-input::placeholder {
+						color: var(--text-muted, #b0b0b0);
+					}
+					#results-list {
+						position: absolute;
+						top: 100%;
+						left: 0;
+						right: 0;
+						background: var(--surface-elevated, #2d2d2d);
+						color: var(--text, #f5f5f5);
+						border: 1px solid var(--border, #404040);
+						border-top: none;
+						border-radius: 0 0 8px 8px;
+						list-style: none;
+						padding: 0;
+						margin: 0;
+						max-height: 400px;
+						overflow-y: auto;
+						z-index: 1000;
+						display: none;
+					}
+					li {
+						padding: 10px 16px;
+						cursor: pointer;
+						display: flex;
+						justify-content: space-between;
+						align-items: center;
+					}
+					li:hover, li.selected {
+						background-color: var(--primary, #007acc);
+						color: white;
+					}
+					.item-source {
+						font-size: 12px;
+						color: var(--text-muted, #b0b0b0);
+						background: var(--surface, #1e1e1e);
+						padding: 2px 6px;
+						border-radius: var(--border-radius, 6px);
+						margin-right: 10px;
+					}
+					.item-title {
+						flex-grow: 1;
+					}
+					.item-relevance {
+						font-size: 12px;          
+					}
+				`;
+
+		const container = document.createElement("div");
+		container.id = "search-container";
+
+		const input = document.createElement("input");
+		input.type = "text";
+		input.id = "search-input";
+		input.placeholder = "Search or type a command...";
+
+		const ul = document.createElement("ul");
+		ul.id = "results-list";
+
+		container.appendChild(input);
+		container.appendChild(ul);
+		sr.appendChild(style);
+		sr.appendChild(container);
 	}
 }
 

@@ -1,4 +1,4 @@
-import { CDS } from '@core/security/CDS.js';
+import { CDS } from "@core/security/CDS.js";
 // core/sync/SyncLayer.js
 // Bidirectional sync with conflict resolution - separate from validation
 
@@ -414,7 +414,6 @@ export class SyncLayer {
 
 		 */
 
-
 		switch (resolution) {
 			case "use_local":
 				resolvedEntity = conflict.localEntity;
@@ -568,7 +567,6 @@ export class SyncLayer {
 
 		 */
 
-
 		for (const item of batch) {
 			try {
 				const response = await this.#sendToServer(item);
@@ -588,7 +586,6 @@ export class SyncLayer {
 
 
 				 */
-
 
 				if (response.conflict) {
 					const newConflict = {
@@ -671,7 +668,6 @@ export class SyncLayer {
 
 
 			 */
-
 
 			for (const remoteEntity of response.entities) {
 				try {
@@ -782,7 +778,6 @@ export class SyncLayer {
 
 			 */
 
-
 			if (key === "updated_at" || key === "created_at") {
 				// Keep the later timestamp
 				const localTime = new Date(localEntity[key] || 0).getTime();
@@ -813,18 +808,21 @@ export class SyncLayer {
 	 * @returns {Promise<object>} The JSON response from the server.
 	 */
 	async #sendToServer(item) {
-		const response = await CDS.fetch(`${this.#config.apiEndpoint}/entities`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${this.#getAuthToken()}`,
-			},
-			body: JSON.stringify({
-				entity: item.entity,
-				operation: item.operation,
-				timestamp: item.timestamp,
-			}),
-		});
+		const response = await CDS["fetch"](
+			`${this.#config.apiEndpoint}/entities`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${this.#getAuthToken()}`,
+				},
+				body: JSON.stringify({
+					entity: item.entity,
+					operation: item.operation,
+					timestamp: item.timestamp,
+				}),
+			}
+		);
 
 		/**
 
@@ -836,7 +834,6 @@ export class SyncLayer {
 
 
 		 */
-
 
 		if (!response.ok) {
 			throw new Error(
@@ -872,7 +869,7 @@ export class SyncLayer {
 			}
 		});
 
-		const response = await CDS.fetch(url, {
+		const response = await CDS["fetch"](url, {
 			headers: {
 				Authorization: `Bearer ${this.#getAuthToken()}`,
 			},
@@ -888,7 +885,6 @@ export class SyncLayer {
 
 
 		 */
-
 
 		if (!response.ok) {
 			throw new Error(
@@ -1032,7 +1028,6 @@ export class SyncLayer {
 
 
 		 */
-
 
 		if (!success) {
 			this.#metrics?.increment("error_count");

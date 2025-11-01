@@ -1,8 +1,9 @@
 // modules/indexeddb-adapter.js
 // IndexedDB adapter module for offline storage operations
 
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { StorageError } from "../../../utils/ErrorHelpers.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
 
 /**
  * @description
@@ -375,8 +376,15 @@ export default class IndexedDBAdapter {
 	 */
 
 	async delete(storeName, key) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  return this.#measure("delete", "deletes", () =>
+		// Emit a static forensic envelope so static analysis and audit collectors
+		// can observe deletion requests from library code. Fire-and-forget.
+		ForensicLogger.createEnvelope("DB_DELETE_REQUESTED", {
+			storeName,
+			key,
+		}).catch(() => {
+			/* no-op */
+		});
+		return this.#measure("delete", "deletes", () =>
 			this.#performTransaction(storeName, "readwrite", (store) =>
 				store.delete(key)
 			)
@@ -398,8 +406,15 @@ export default class IndexedDBAdapter {
 	 */
 
 	async deleteBulk(storeName, keys) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  return this.#measure(
+		// Emit a static forensic envelope so static analysis and audit collectors
+		// can observe bulk delete requests from library code. Fire-and-forget.
+		ForensicLogger.createEnvelope("DB_DELETE_BULK_REQUESTED", {
+			storeName,
+			count: Array.isArray(keys) ? keys.length : 0,
+		}).catch(() => {
+			/* no-op */
+		});
+		return this.#measure(
 			"deleteBulk",
 			"deletes",
 			() =>
@@ -536,7 +551,6 @@ export default class IndexedDBAdapter {
 
 
 									 */
-
 
 									if (shouldContinue !== false) {
 										cursor.continue();
@@ -750,7 +764,6 @@ export default class IndexedDBAdapter {
 
 				 */
 
-
 				if (request && request.onsuccess !== undefined) {
 					// It's an IDBRequest
 					request.onsuccess = () => resolve(request.result);
@@ -776,8 +789,7 @@ export default class IndexedDBAdapter {
 	 * @param {number} [itemCount=1] - The number of items affected by the operation.
 	 */
 	#updateMetrics(operation, duration, itemCount = 1, updateAvg = true) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.#metrics?.increment(operation, itemCount);
+		this.#metrics?.increment(operation, itemCount);
 
 		/**
 
@@ -789,7 +801,6 @@ export default class IndexedDBAdapter {
 
 
 		 */
-
 
 		if (updateAvg) {
 			const avgField =
@@ -803,6 +814,17 @@ export default class IndexedDBAdapter {
 
 			if (avgField) this.#metrics?.updateAverage(avgField, duration);
 		}
+
+		// Emit a static forensic envelope for metric updates so static analysis
+		// and audit collectors can observe DB metric activity. Fire-and-forget.
+		ForensicLogger.createEnvelope("DB_METRICS_UPDATED", {
+			operation,
+			duration,
+			itemCount,
+			updateAvg: !!updateAvg,
+		}).catch(() => {
+			/* no-op */
+		});
 	}
 
 	/**

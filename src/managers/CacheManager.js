@@ -4,8 +4,9 @@
  * This ensures that all caches are integrated with core systems like metrics and security.
  */
 
-import { LRUCache } from "../utils/LRUCache.js";
 import { ForensicLogger } from '@core/security/ForensicLogger.js';
+
+import { LRUCache } from "../utils/LRUCache.js";
 
 /**
  * @class CacheManager
@@ -36,7 +37,7 @@ export class CacheManager {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		// V8.0 Parity: The stateManager is the single source of truth for all dependencies.
 		this.#stateManager = stateManager;
 		this.#metrics = stateManager.metricsRegistry?.namespace("cacheManager");
@@ -58,7 +59,7 @@ export class CacheManager {
 
 	 */
 
-	getCache(name, maxSizeOrOptions = 1000, maybeOptions = {}) {
+		getCache(name, maxSizeOrOptions = 1000, maybeOptions = {}) {
 		if (this.#caches.has(name)) {
 			return this.#caches.get(name);
 		}
@@ -75,7 +76,7 @@ export class CacheManager {
 		 */
 
 
-		if (!name) {
+				if (!name) {
 			const error = new Error("Cache must have a name.");
 			this.#errorHelpers?.handleError(error, {
 				component: "CacheManager",
@@ -96,7 +97,7 @@ export class CacheManager {
 
 		 */
 
-		if (typeof maxSizeOrOptions === "number") {
+				if (typeof maxSizeOrOptions === "number") {
 			maxSize = maxSizeOrOptions;
 			options = maybeOptions || {};
 		} else if (maxSizeOrOptions && typeof maxSizeOrOptions === "object") {
@@ -109,7 +110,7 @@ export class CacheManager {
 
 			 */
 
-			if (typeof options.max === "number") {
+						if (typeof options.max === "number") {
 				maxSize = options.max;
 			} else if (typeof options.maxSize === "number") {
 				maxSize = options.maxSize;
@@ -144,7 +145,7 @@ export class CacheManager {
 
 	 */
 
-	getAllMetrics() {
+		getAllMetrics() {
 		const allMetrics = {};
 		for (const [name, cache] of this.#caches.entries()) {
 			allMetrics[name] = cache.getMetrics();
@@ -164,7 +165,7 @@ export class CacheManager {
 
 	 */
 
-	clearAll() {
+		clearAll() {
 		for (const cache of this.#caches.values()) {
 			cache.clear();
 		}
@@ -186,7 +187,7 @@ export class CacheManager {
 
 	 */
 
-	invalidate(pattern) {
+		invalidate(pattern) {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -195,7 +196,7 @@ export class CacheManager {
 
 		 */
 
-		if (!pattern || pattern === "*") {
+				if (!pattern || pattern === "*") {
 			this.clearAll();
 			return;
 		}
@@ -208,7 +209,7 @@ export class CacheManager {
 
 			 */
 
-			if (typeof cache.invalidate === "function") {
+						if (typeof cache.invalidate === "function") {
 				cache.invalidate(pattern);
 			} else if (typeof cache.clear === "function" && typeof pattern === "string" && pattern.startsWith(`${name}:`)) {
 				// Fallback: if pattern targets this cache namespace, clear whole cache
@@ -231,7 +232,7 @@ export class CacheManager {
 
 	 */
 
-	destroyAll() {
+		destroyAll() {
 		for (const cache of this.#caches.values()) {
 			cache.destroy();
 		}
@@ -254,8 +255,9 @@ export class CacheManager {
 
 	 */
 
-	createCache(name, options = {}) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		createCache(name, options = {}) {
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   return this.getCache(name, options);
 	}
 }
+

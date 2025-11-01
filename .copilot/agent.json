@@ -1,128 +1,126 @@
 {
-	"version": 1,
-	"metadata": {
-		"name": "NodusSecurityArchitect",
-		"description": "Internal Copilot Agent for the Nodus Universal Platform — enforces composability, security, and code standards across all layers (frontend, core, storage, and security subsystems).",
-		"maintainer": "Nodus Core Team",
-		"scope": "repository"
+	"version": "1.0",
+	"meta": {
+		"description": "Copilot Agent alignment profile for the Nodus Core system.",
+		"maintainer": "Nodus Security Engineering Group",
+		"last_updated": "2025-11-01"
 	},
-	"style": {
-		"goals": [
-			"Every change must align with the Developer Mandates and Security Addendum.",
-			"All code must be composable, modular, dependency-free (vanilla JS only).",
-			"Maintain full offline-first capability; do not assume network availability.",
-			"Enforce strict MAC/crypto separation; no sensitive data in logs or UI.",
-			"Prefer simplicity and readability over framework abstraction.",
-			"All new modules require JSDoc documentation and local unit tests."
+
+	"objectives": {
+		"primary": [
+			"Preserve compliance with Developer Mandates and Forensic Security Addendum.",
+			"Maintain composability, modularity, and low coupling in all generated code.",
+			"Ensure all code is deterministic, auditable, and compatible with offline-first operation.",
+			"Automatically promote correct forensic envelopes, MAC enforcement, and cryptographic labeling in all state mutations."
 		],
-		"constraints": {
-			"dependencies": {
-				"runtime": "none",
-				"dev": ["vitest", "playwright", "eslint"]
-			},
-			"language": "JavaScript (ES2022+)",
-			"imports": {
-				"forbidden": [
-					"react",
-					"vue",
-					"lodash",
-					"axios",
-					"moment",
-					"date-fns"
-				],
-				"preferred": ["@core/utils", "@core/security", "@core/storage"]
-			},
-			"patterns": {
-				"forbid": [
-					"eval",
-					"new Function",
-					"innerHTML",
-					"dangerouslySetInnerHTML"
-				],
-				"require": [
-					"JSDoc on all public methods",
-					"ForensicLogger envelopes for mutation paths"
-				]
-			}
-		},
-		"tone": "professional, concise, and security-aware",
-		"acceptanceCriteria": [
-			"Every code suggestion must pass ESLint and project CI rules.",
-			"Security-critical changes must cite the corresponding section of DEVELOPER_MANDATES.md.",
-			"Copilot must justify crypto usage and point to existing abstractions instead of adding new primitives."
+		"secondary": [
+			"Assist with refactoring to modern ESM syntax and eliminate legacy imports.",
+			"Support clear developer ergonomics while preserving full audit traceability.",
+			"Encourage performance-safe async operations and constant-time security checks.",
+			"Ensure all generated UI logic conforms to BindEngine and StateUIBridge patterns."
 		]
 	},
-	"knowledge": {
-		"contextFiles": [
-			"DEVELOPER_MANDATES.md",
-			"src/core/security/ClassificationCrypto.js",
-			"src/core/security/MACEngine.js",
-			"src/core/storage/StorageLoader.js",
-			"src/core/HybridStateManager.js",
-			"src/core/security/ct.js"
+
+	"enforcement": {
+		"mandatory_rules": [
+			"All functions must include JSDoc with parameter and return type annotations.",
+			"All state mutations must be wrapped in forensic envelopes via ForensicLogger.",
+			"All network calls must use SecureFetch wrapper (never raw fetch).",
+			"All data-bound DOM updates must pass through BindEngine or StateUIBridge.",
+			"No usage of innerHTML, eval, Function(), or unescaped template literals."
 		],
-		"referenceSections": [
-			"Developer Mandates VI–XIII",
-			"Feature Development Philosophy",
-			"Architecture Transformation Document"
+		"lint_integrations": [
+			"copilotGuard/require-jsdoc-and-tests",
+			"copilotGuard/require-forensic-envelope",
+			"copilotGuard/no-insecure-api"
 		]
 	},
-	"behavior": {
-		"assistModes": {
-			"default": "compliance-first",
-			"docstring": "Explain how this function aligns with the mandates",
-			"test": "Generate minimal unit test under Vitest that enforces constant-time or composability rules"
+
+	"contextual_guidelines": {
+		"core": {
+			"StorageLoader.js": "Promote modular, data-driven loading; never hardcode module lists.",
+			"HybridStateManager.js": "Preserve reactive, event-driven sync between domains.",
+			"ComposableSecurity.js": "Always call MAC.enforceNoWriteDown() and MAC.enforceNoReadUp() before writes/reads.",
+			"ForensicLogger.js": "Every audit trail must include a classification label and cryptographic signature placeholder.",
+			"BindEngine_v2.js": "Respect forensic logging for every DOM change; avoid direct state mutations."
 		},
-		"autofix": {
-			"onLintError": true,
-			"onMissingJSDoc": true
+		"frontend": {
+			"StateUIBridge.js": "Treat as the main reactive binding layer; never bypass it for UI updates.",
+			"ComponentRegistry.js": "Encourage composable, declarative UI definitions; avoid imperative DOM manipulation.",
+			"Grid System": "All render updates must be idempotent and forensic-logged."
 		},
 		"security": {
-			"forbidNetworkCalls": true,
-			"enforceCryptoAbstraction": true,
-			"maskSensitiveData": true
-		},
-		"diffReview": {
-			"enabled": true,
-			"rules": [
-				{
-					"id": "SEC-01",
-					"match": "new Function|eval|innerHTML",
-					"comment": "Forbidden pattern — violates VI.2 CI Security Gates"
-				},
-				{
-					"id": "SEC-02",
-					"match": "fetch|XMLHttpRequest",
-					"comment": "External network calls must go through CDS or approved gateway"
-				},
-				{
-					"id": "DOC-01",
-					"match": "export class|function ",
-					"comment": "Ensure JSDoc header present — see XII.3 JSDoc enforcement"
-				}
-			]
+			"ClassificationCrypto.js": "Always encrypt classification-level data before persistence.",
+			"Keyring.js": "Do not generate or export plaintext keys; use sealed secrets only.",
+			"ct.js": "Use constantTimeCheck() around all access checks and equality comparisons.",
+			"CrossDomainSolution.js": "Require dual approval and forensic ticketing before any downgrade."
 		}
 	},
-	"commands": {
-		"explainMandate": {
-			"description": "Summarize how this file complies with the Developer Mandates.",
-			"examples": [
-				"Explain how StorageLoader.js satisfies the cryptographic separation rule.",
-				"Explain how this module enforces constant-time operations."
+
+	"testing": {
+		"framework": "vitest",
+		"requirements": [
+			"Each new module must include a test suite in /tests/ that covers critical paths.",
+			"Tests must validate forensic envelope creation and MAC enforcement.",
+			"BindEngine and StateUIBridge modules must have DOM reactivity tests."
+		],
+		"disallow": [
+			"unmocked network calls",
+			"hardcoded secrets",
+			"global mutable state"
+		]
+	},
+
+	"security_addendum": {
+		"classification": {
+			"default": "UNCLASSIFIED",
+			"levels": [
+				"UNCLASSIFIED",
+				"CONFIDENTIAL",
+				"SECRET",
+				"TOP_SECRET",
+				"COSMIC_TOP_SECRET"
 			]
 		},
-		"generateSecureModule": {
-			"description": "Generate a new core module stub aligned with Nodus mandates.",
-			"examples": [
-				"Generate a new audit trail module that uses ForensicLogger and NonRepudiation.",
-				"Generate a new IndexedDB adapter with MAC and constant-time reads."
+		"encryption": {
+			"mandatory": true,
+			"library": "ClassificationCrypto",
+			"key_management": "InMemoryKeyring | HSM",
+			"timing_protection": "constantTimeCheck() enforced globally"
+		},
+		"auditing": {
+			"forensic_chain": true,
+			"signature": "NonRepudiation.signAction()",
+			"cross_domain_solution": "enabled"
+		}
+	},
+
+	"documentation": {
+		"requirement": "Every exported class or function must include a top-level JSDoc summary, usage example, and forensic note.",
+		"ai_assist_behavior": {
+			"refactor_mode": "Prefer pure functions and explicit dependencies.",
+			"generate_mode": "Default to secure and auditable patterns (ForensicLogger, MAC enforcement, envelope wrapping).",
+			"completion_style": "Descriptive, minimal boilerplate, inline JSDoc-first."
+		}
+	},
+
+	"developer_guidance": {
+		"philosophy": {
+			"summary": "The system favors explicit, deterministic control over opaque abstractions. Frameworks exist only when they enforce security or audit traceability.",
+			"principles": [
+				"Composability over complexity",
+				"Simplicity over convenience",
+				"Auditability over speed",
+				"Security over abstraction"
 			]
 		},
-		"refactorForMandates": {
-			"description": "Refactor a given file to strictly comply with DEVELOPER_MANDATES.md.",
-			"examples": [
-				"Refactor this to remove all unsafe DOM APIs and enforce CSP compliance.",
-				"Refactor this to ensure every write path logs a forensic envelope."
+		"training_data_bias_protection": {
+			"goal": "Avoid generic web-framework boilerplate. Copilot should align with Nodus’ zero-framework, hybrid-kernel approach.",
+			"disallow": [
+				"React hooks",
+				"Vue reactivity",
+				"Angular directives",
+				"global event buses"
 			]
 		}
 	}

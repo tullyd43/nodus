@@ -3,8 +3,9 @@
  * @description A managed service that implements a lightweight, accessible toast notification system. It provides user feedback for grid layout persistence, policy changes, and other system events, adhering to all V8 Parity Mandates.
  */
 
-import { DateCore } from "../utils/DateUtils.js";
 import { ForensicLogger } from '@core/security/ForensicLogger.js';
+
+import { DateCore } from "../utils/DateUtils.js";
 
 /**
  * @class GridToastManager
@@ -42,7 +43,7 @@ export class GridToastManager {
 
 		 */
 
-		if (error.showToUser) {
+				if (error.showToUser) {
 			const typeMap = {
 				high: "error",
 				medium: "warning",
@@ -65,7 +66,7 @@ export class GridToastManager {
 
 		 */
 
-		if (data.reason === "policy_override") {
+				if (data.reason === "policy_override") {
 			const message = data.enabled
 				? "🚀 Performance mode enabled"
 				: "✨ Full features enabled";
@@ -91,7 +92,7 @@ export class GridToastManager {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		// V8.0 Parity: Mandate 1.1 & 1.2 - Derive all dependencies from the stateManager.
 		this.#eventFlowEngine = stateManager.eventFlowEngine;
 		this.#policyManager = stateManager.managers.policies;
@@ -118,7 +119,7 @@ export class GridToastManager {
 
 		 */
 
-		if (!this.#container) {
+				if (!this.#container) {
 			this.#container = document.createElement("div");
 			this.#container.id = "grid-toast-container";
 			this.#container.className = "grid-toast-container";
@@ -153,7 +154,7 @@ export class GridToastManager {
 
 		 */
 
-		if (this.#eventFlowEngine) {
+				if (this.#eventFlowEngine) {
 			this.#unsubscribeFunctions.push(
 				this.#eventFlowEngine.on(
 					"layoutChanged",
@@ -280,7 +281,7 @@ export class GridToastManager {
 	 * @returns {HTMLElement} The created toast DOM element.
 	 */
 	#createToast(id, message, type) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const toast = document.createElement("div");
 		toast.className = `grid-toast grid-toast-${type}`;
 		toast.setAttribute("data-toast-id", id);
@@ -346,7 +347,7 @@ export class GridToastManager {
 
 			 */
 
-			if (e.target !== closeBtn) {
+						if (e.target !== closeBtn) {
 				this.#removeToast(id);
 			}
 		});
@@ -427,7 +428,7 @@ export class GridToastManager {
 
 			 */
 
-			if (element.parentNode) {
+						if (element.parentNode) {
 				element.parentNode.removeChild(element);
 			}
 
@@ -450,7 +451,7 @@ export class GridToastManager {
 
 		 */
 
-		if (toastIds.length > this.#maxToasts) {
+				if (toastIds.length > this.#maxToasts) {
 			// Remove oldest toasts
 			const toRemove = toastIds.slice(
 				0,
@@ -475,7 +476,7 @@ export class GridToastManager {
 
 	 */
 
-	success(message, duration) {
+		success(message, duration) {
 		return this.#showToast(message, "success", duration);
 	}
 
@@ -494,7 +495,7 @@ export class GridToastManager {
 
 	 */
 
-	error(message, duration) {
+		error(message, duration) {
 		return this.#showToast(message, "error", duration);
 	}
 
@@ -513,7 +514,7 @@ export class GridToastManager {
 
 	 */
 
-	warning(message, duration) {
+		warning(message, duration) {
 		return this.#showToast(message, "warning", duration);
 	}
 
@@ -532,7 +533,7 @@ export class GridToastManager {
 
 	 */
 
-	info(message, duration) {
+		info(message, duration) {
 		return this.#showToast(message, "info", duration);
 	}
 
@@ -548,7 +549,7 @@ export class GridToastManager {
 
 	 */
 
-	clear() {
+		clear() {
 		Array.from(this.#toasts.keys()).forEach((id) => this.#removeToast(id));
 	}
 
@@ -564,7 +565,7 @@ export class GridToastManager {
 
 	 */
 
-	destroy() {
+		destroy() {
 		this.clear();
 		this.#unsubscribeFunctions.forEach((unsubscribe) => unsubscribe());
 		this.#unsubscribeFunctions = [];
@@ -576,10 +577,11 @@ export class GridToastManager {
 
 		 */
 
-		if (this.#container?.parentNode) {
+				if (this.#container?.parentNode) {
 			this.#container.parentNode.removeChild(this.#container);
 		}
 	}
 }
 
 export default GridToastManager;
+

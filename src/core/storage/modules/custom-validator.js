@@ -1,7 +1,8 @@
 // modules/custom-validator.js
 // Custom validation module for user-defined business rules
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { AppError } from "../../../utils/ErrorHelpers.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
 
 /**
  * Custom Validator Module
@@ -151,7 +152,6 @@ export default class CustomValidator {
 
 		 */
 
-
 		for (const rule of applicableRules) {
 			const startTime = performance.now();
 
@@ -250,7 +250,6 @@ export default class CustomValidator {
 
 		 */
 
-
 		for (const rule of fieldRules) {
 			try {
 				const result = await this.#executeFieldRule(
@@ -269,7 +268,6 @@ export default class CustomValidator {
 
 
 				 */
-
 
 				if (!result.passed) {
 					/**
@@ -625,8 +623,7 @@ export default class CustomValidator {
 	 * @param {number} executionTime - The time taken to execute the rule in milliseconds.
 	 */
 	#updateRuleMetrics(metrics, passed, executionTime) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  if (!metrics) return;
+		if (!metrics) return;
 
 		metrics.increment("rulesExecuted");
 
@@ -641,7 +638,6 @@ export default class CustomValidator {
 
 		 */
 
-
 		if (passed) {
 			metrics.increment("rulesPassed");
 		} else {
@@ -650,6 +646,15 @@ export default class CustomValidator {
 
 		// Update average execution time
 		metrics.updateAverage("averageExecutionTime", executionTime);
+
+		// Emit a static forensic envelope so static analysis and audit collectors
+		// observe metric updates in library code. Fire-and-forget.
+		ForensicLogger.createEnvelope("VALIDATOR_RULE_METRICS_UPDATED", {
+			passed: !!passed,
+			executionTime,
+		}).catch(() => {
+			/* no-op */
+		});
 	}
 
 	/**

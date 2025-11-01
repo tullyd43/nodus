@@ -40,7 +40,7 @@ export class QueryService {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 		const managers = stateManager.managers;
 
@@ -72,7 +72,7 @@ export class QueryService {
 
 		 */
 
-		if (this.#metrics?.measure) {
+				if (this.#metrics?.measure) {
 			this.search = this.#metrics.measure("search.duration")(
 				this.search.bind(this)
 			);
@@ -97,7 +97,7 @@ export class QueryService {
 
 	 */
 
-	async search(query, options = {}) {
+		async search(query, options = {}) {
 		if (!query || typeof query !== "string") return [];
 
 		const cacheKey = `${query}:${JSON.stringify(options)}`;
@@ -110,7 +110,7 @@ export class QueryService {
 
 		 */
 
-		if (cached) {
+				if (cached) {
 			this.#metrics?.increment("cache_hit");
 			return cached;
 		}
@@ -136,7 +136,7 @@ export class QueryService {
 
 		 */
 
-		if (includeAI && this.#embeddingManager) {
+				if (includeAI && this.#embeddingManager) {
 			const aiResults = await this.#searchEmbeddings(query, { limit });
 			results.push(...aiResults);
 		}
@@ -167,7 +167,7 @@ export class QueryService {
 
 			 */
 
-			if (!this.#stateManager?.queryLocalEntities) {
+						if (!this.#stateManager?.queryLocalEntities) {
 				return [];
 			}
 			const results = await this.#stateManager.queryLocalEntities(query);
@@ -181,7 +181,7 @@ export class QueryService {
 
 			 */
 
-			if (domains.length > 0) {
+						if (domains.length > 0) {
 				return (results || []).filter(
 					(result) =>
 						domains.includes(result.domain) ||
@@ -211,7 +211,7 @@ export class QueryService {
 
 			 */
 
-			if (!this.#pluginSystem?.activePlugins) {
+						if (!this.#pluginSystem?.activePlugins) {
 				return [];
 			}
 
@@ -229,7 +229,7 @@ export class QueryService {
 			 */
 
 
-			for (const plugin of this.#pluginSystem.activePlugins) {
+						for (const plugin of this.#pluginSystem.activePlugins) {
 				/**
 
 				 * TODO: Add JSDoc for method if
@@ -238,7 +238,7 @@ export class QueryService {
 
 				 */
 
-				if (typeof plugin.search === "function") {
+								if (typeof plugin.search === "function") {
 					// Wrap each plugin search in its own error boundary to prevent one failing plugin from stopping others
 					const pluginSearch = this.#errorHelpers
 						?.captureAsync(
@@ -282,7 +282,7 @@ export class QueryService {
 
 			 */
 
-			if (!this.#embeddingManager?.semanticSearch) {
+						if (!this.#embeddingManager?.semanticSearch) {
 				return [];
 			}
 			const aiResults = await this.#embeddingManager.semanticSearch(
@@ -328,7 +328,7 @@ export class QueryService {
 			 */
 
 
-			if (relevanceA !== relevanceB) {
+						if (relevanceA !== relevanceB) {
 				return relevanceB - relevanceA;
 			}
 
@@ -349,7 +349,7 @@ export class QueryService {
 			 */
 
 
-			if (priorityA !== priorityB) {
+						if (priorityA !== priorityB) {
 				return priorityB - priorityA;
 			}
 
@@ -376,7 +376,7 @@ export class QueryService {
 
 	 */
 
-	async getSuggestions(partialQuery, limit = 5) {
+		async getSuggestions(partialQuery, limit = 5) {
 		return this.#errorBoundary.tryAsync(async () => {
 			if (!partialQuery || partialQuery.length < 2) return [];
 			const results = await this.search(partialQuery, {
@@ -417,7 +417,7 @@ export class QueryService {
 
 	 */
 
-	clearCache() {
+		clearCache() {
 		this.#cache.clear();
 	}
 
@@ -435,7 +435,7 @@ export class QueryService {
 
 	 */
 
-	getStats() {
+		getStats() {
 		return {
 			cache: this.#cache?.getMetrics(),
 			localSearchAvailable: !!this.#stateManager?.queryLocalEntities,

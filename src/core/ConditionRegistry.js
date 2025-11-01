@@ -4,8 +4,9 @@
  * These conditions are used by the EventFlowEngine and other systems to make decisions based on context.
  */
 
-import ConditionSchema from "./ConditionSchema.json";
 import { ForensicLogger } from '@core/security/ForensicLogger.js';
+
+import ConditionSchema from "./ConditionSchema.json";
 import { DateUtils } from "../utils/DateUtils.js";
 /**
  * @class ConditionRegistry
@@ -51,7 +52,7 @@ export class ConditionRegistry {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 	}
 
@@ -67,7 +68,7 @@ export class ConditionRegistry {
 
 	 */
 
-	initialize() {
+		initialize() {
 		// V8.0 Parity: Derive managers from stateManager.
 		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
 		this.#metrics =
@@ -83,7 +84,7 @@ export class ConditionRegistry {
 
 		 */
 
-		if (cacheManager) {
+				if (cacheManager) {
 			this.#conditionCache = cacheManager.getCache("conditionResults", {
 				ttl: 300000, // 5 minute TTL for condition results
 			});
@@ -119,7 +120,7 @@ export class ConditionRegistry {
 
 	 */
 
-	register(conditionType, evaluator, options = {}) {
+		register(conditionType, evaluator, options = {}) {
 		if (this.#conditions.has(conditionType)) {
 			console.warn(
 				`[ConditionRegistry] Overwriting existing condition handler for type: '${conditionType}'.`
@@ -160,7 +161,7 @@ export class ConditionRegistry {
 
 		 */
 
-		if (options.schema && typeof options.schema !== "object") {
+				if (options.schema && typeof options.schema !== "object") {
 			throw new Error(
 				`Schema for condition '${conditionType}' must be an object.`
 			);
@@ -178,7 +179,7 @@ export class ConditionRegistry {
 		 */
 
 
-		if (!options.examples || options.examples.length === 0) {
+				if (!options.examples || options.examples.length === 0) {
 			console.warn(
 				`[ConditionRegistry] No examples provided for condition '${conditionType}'.`
 			);
@@ -197,7 +198,7 @@ export class ConditionRegistry {
 		 */
 
 
-		for (const example of options.examples) {
+				for (const example of options.examples) {
 			const { valid, errors } = this.validate(example);
 			/**
 
@@ -207,7 +208,7 @@ export class ConditionRegistry {
 
 			 */
 
-			if (!valid) {
+						if (!valid) {
 				throw new Error(
 					`Invalid example for condition '${conditionType}': ${errors.join(
 						", "
@@ -232,7 +233,7 @@ export class ConditionRegistry {
 
 	 */
 
-	async evaluate(conditionDef, evaluationContext, securitySubject = null) {
+		async evaluate(conditionDef, evaluationContext, securitySubject = null) {
 		this.#metrics?.increment("evaluations");
 
 		return this.#errorHelpers?.tryOr(
@@ -247,7 +248,7 @@ export class ConditionRegistry {
 
 				 */
 
-				if (!valid) {
+								if (!valid) {
 					// V8.0 Parity: Mandate 2.2 - Stricter validation enforcement.
 					// Throw a specific, detailed error if validation fails.
 					throw new Error(
@@ -277,7 +278,7 @@ export class ConditionRegistry {
 
 				 */
 
-				if (!condition) {
+								if (!condition) {
 					throw new Error(
 						`Unknown condition type: ${conditionDef.type}`
 					);
@@ -305,7 +306,7 @@ export class ConditionRegistry {
 
 				 */
 
-				if (cacheKey) {
+								if (cacheKey) {
 					this.#conditionCache?.set(cacheKey, result);
 					this.#metrics?.increment("cacheMisses");
 				}
@@ -435,7 +436,7 @@ export class ConditionRegistry {
 				 */
 
 
-				switch (operator) {
+								switch (operator) {
 					case ">":
 						return actualValue > value;
 					case "<":
@@ -595,7 +596,7 @@ export class ConditionRegistry {
 				 */
 
 
-				if (conditionDef.after) {
+								if (conditionDef.after) {
 					const afterInMinutes = DateUtils.parseTimeString(
 						conditionDef.after
 					);
@@ -614,7 +615,7 @@ export class ConditionRegistry {
 				 */
 
 
-				if (conditionDef.before) {
+								if (conditionDef.before) {
 					const beforeInMinutes = DateUtils.parseTimeString(
 						conditionDef.before
 					);
@@ -709,7 +710,7 @@ export class ConditionRegistry {
 				 */
 
 
-				if (requireAll) {
+								if (requireAll) {
 					return requiredPermissions.every((perm) =>
 						userPermissions.includes(perm)
 					);
@@ -800,7 +801,7 @@ export class ConditionRegistry {
 
 				 */
 
-				if (now - record.windowStart > window) {
+								if (now - record.windowStart > window) {
 					record.count = 0;
 					record.windowStart = now;
 				}
@@ -847,7 +848,7 @@ export class ConditionRegistry {
 				 */
 
 
-				if (operator === "AND") {
+								if (operator === "AND") {
 					/**
 
 					 * TODO: Add JSDoc for method for
@@ -856,7 +857,7 @@ export class ConditionRegistry {
 
 					 */
 
-					for (const condition of conditions) {
+										for (const condition of conditions) {
 						// V8.0 Parity: Recurse with all context.
 						const result = await this.evaluate(
 							condition,
@@ -875,7 +876,7 @@ export class ConditionRegistry {
 
 					 */
 
-					for (const condition of conditions) {
+										for (const condition of conditions) {
 						const result = await this.evaluate(
 							condition,
 							evaluationContext,
@@ -958,7 +959,7 @@ export class ConditionRegistry {
 	 * @see {@link d:\Development Files\repositories\nodus\src\core\ConditionSchema.json}
 	 */
 	#createSimpleSchemaValidator(schema) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   // Already private, but good to confirm.
 		// This is a simplified, non-recursive validator that handles the `allOf` > `if/then` structure of ConditionSchema.json
 		return (conditionDef) => {
@@ -976,7 +977,7 @@ export class ConditionRegistry {
 			 */
 
 
-			if (typeof conditionDef !== "object" || conditionDef === null) {
+						if (typeof conditionDef !== "object" || conditionDef === null) {
 				return {
 					valid: false,
 					errors: ["Condition must be an object."],
@@ -992,7 +993,7 @@ export class ConditionRegistry {
 
 			 */
 
-			for (const key of schema.required || []) {
+						for (const key of schema.required || []) {
 				/**
 
 				 * TODO: Add JSDoc for method if
@@ -1001,7 +1002,7 @@ export class ConditionRegistry {
 
 				 */
 
-				if (conditionDef[key] === undefined) {
+								if (conditionDef[key] === undefined) {
 					errors.push(`Missing required property: '${key}'.`);
 				}
 			}
@@ -1023,7 +1024,7 @@ export class ConditionRegistry {
 			 */
 
 
-			if (conditionalSchema) {
+						if (conditionalSchema) {
 				const { then: thenSchema } = conditionalSchema;
 				/**
 
@@ -1033,7 +1034,7 @@ export class ConditionRegistry {
 
 				 */
 
-				if (thenSchema) {
+								if (thenSchema) {
 					// Validate required properties for the specific type
 					/**
 
@@ -1043,7 +1044,7 @@ export class ConditionRegistry {
 
 					 */
 
-					for (const key of thenSchema.required || []) {
+										for (const key of thenSchema.required || []) {
 						/**
 
 						 * TODO: Add JSDoc for method if
@@ -1052,7 +1053,7 @@ export class ConditionRegistry {
 
 						 */
 
-						if (conditionDef[key] === undefined) {
+												if (conditionDef[key] === undefined) {
 							errors.push(
 								`Missing required property for type '${conditionDef.type}': '${key}'.`
 							);
@@ -1068,7 +1069,7 @@ export class ConditionRegistry {
 
 					 */
 
-					for (const key in thenSchema.properties || {}) {
+										for (const key in thenSchema.properties || {}) {
 						/**
 
 						 * TODO: Add JSDoc for method if
@@ -1077,7 +1078,7 @@ export class ConditionRegistry {
 
 						 */
 
-						if (conditionDef[key] !== undefined) {
+												if (conditionDef[key] !== undefined) {
 							const propSchema = thenSchema.properties[key];
 							const value = conditionDef[key];
 
@@ -1144,7 +1145,7 @@ export class ConditionRegistry {
 
 	 */
 
-	validate(conditionDef) {
+		validate(conditionDef) {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -1153,7 +1154,7 @@ export class ConditionRegistry {
 
 		 */
 
-		if (!conditionDef || !conditionDef.type) {
+				if (!conditionDef || !conditionDef.type) {
 			return {
 				valid: false,
 				errors: [
@@ -1171,7 +1172,7 @@ export class ConditionRegistry {
 
 		 */
 
-		if (this.#schemaValidator) {
+				if (this.#schemaValidator) {
 			return this.#schemaValidator(conditionDef);
 		}
 
@@ -1190,7 +1191,7 @@ export class ConditionRegistry {
 
 	 */
 
-	getAvailableConditions() {
+		getAvailableConditions() {
 		return Array.from(this.#conditions.values()).map((condition) => ({
 			type: condition.type,
 			description: condition.description,
@@ -1213,7 +1214,7 @@ export class ConditionRegistry {
 
 	 */
 
-	getStatistics() {
+		getStatistics() {
 		return {
 			...(this.#metrics?.getAllAsObject() || {}),
 			totalConditions: this.#conditions.size,
@@ -1232,7 +1233,7 @@ export class ConditionRegistry {
 
 	 */
 
-	clearCache() {
+		clearCache() {
 		this.#conditionCache?.clear();
 		this.#rateLimitStore.clear();
 		this.#metrics?.increment("cacheClears");
@@ -1251,9 +1252,10 @@ export class ConditionRegistry {
 
 	 */
 
-	unregister(conditionType) {
+		unregister(conditionType) {
 		return this.#conditions.delete(conditionType);
 	}
 }
 
 export default ConditionRegistry;
+

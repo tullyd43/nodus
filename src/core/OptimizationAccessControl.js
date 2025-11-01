@@ -38,7 +38,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 		// V8.0 Parity: Mandate 1.2 - Derive dependencies from the stateManager.
 		this.#cacheManager = this.#stateManager.managers.cacheManager;
@@ -116,7 +116,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	initialize() {
+		initialize() {
 		// V8.0 Parity: Mandate 4.1 - Replace unbounded map with a bounded LRUCache from the central CacheManager.
 		/**
 
@@ -126,7 +126,7 @@ export class OptimizationAccessControl {
 
 		 */
 
-		if (!this.#cacheManager) {
+				if (!this.#cacheManager) {
 			throw new Error(
 				"CacheManager is not available. OptimizationAccessControl cannot initialize."
 			);
@@ -153,7 +153,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	async hasPermission(userId, permission) {
+		async hasPermission(userId, permission) {
 		return this.#errorHelpers.tryOr(
 			async () => {
 				const userPermissions = await this.getUserPermissions(userId);
@@ -181,7 +181,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	async getUserPermissions(userId) {
+		async getUserPermissions(userId) {
 		const userRoles = await this.getUserRoles(userId);
 
 		const permissions = new Set();
@@ -198,7 +198,7 @@ export class OptimizationAccessControl {
 		 */
 
 
-		for (const roleName of userRoles) {
+				for (const roleName of userRoles) {
 			const role = this.#roles[roleName];
 			/**
 
@@ -208,7 +208,7 @@ export class OptimizationAccessControl {
 
 			 */
 
-			if (role) {
+						if (role) {
 				role.permissions.forEach((perm) => permissions.add(perm));
 			}
 		}
@@ -229,7 +229,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	async getUserRoles(userId) {
+		async getUserRoles(userId) {
 		return this.#errorHelpers.tryOr(
 			async () => {
 				// V8.0 Parity: Mandate 4.1 - Use the bounded cache for user roles.
@@ -242,7 +242,7 @@ export class OptimizationAccessControl {
 
 				 */
 
-				if (cachedRoles) {
+								if (cachedRoles) {
 					return cachedRoles;
 				}
 
@@ -284,7 +284,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	async assignRole(userId, roleName) {
+		async assignRole(userId, roleName) {
 		return this.#errorHelpers.tryOr(
 			async () => {
 				/**
@@ -295,7 +295,7 @@ export class OptimizationAccessControl {
 
 				 */
 
-				if (!this.#roles[roleName]) {
+								if (!this.#roles[roleName]) {
 					throw new Error(`Role '${roleName}' does not exist`);
 				}
 
@@ -345,7 +345,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	async removeRole(userId, roleName) {
+		async removeRole(userId, roleName) {
 		// This would require finding the specific relationship ID and deleting it.
 		// This is a simplified example. A real implementation would need a more robust query.
 		console.warn(
@@ -367,8 +367,8 @@ export class OptimizationAccessControl {
 
 	 */
 
-	async createSession(userId, sessionId) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		async createSession(userId, sessionId) {
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const permissions = await this.getUserPermissions(userId);
 		const roles = await this.getUserRoles(userId);
 		const session = {
@@ -398,7 +398,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	checkSessionPermission(sessionId, permission) {
+		checkSessionPermission(sessionId, permission) {
 		const session = this.#sessions?.get(sessionId);
 
 		/**
@@ -413,7 +413,7 @@ export class OptimizationAccessControl {
 		 */
 
 
-		if (!session) {
+				if (!session) {
 			return { valid: false, reason: "Session not found" };
 		}
 
@@ -449,7 +449,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	getRolesWithPermission(permission) {
+		getRolesWithPermission(permission) {
 		const rolesWithPermission = [];
 
 		for (const [roleName, role] of Object.entries(this.#roles)) {
@@ -473,7 +473,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	cleanExpiredSessions() {
+		cleanExpiredSessions() {
 		const now = new Date();
 		let cleanedCount = 0;
 
@@ -486,7 +486,7 @@ export class OptimizationAccessControl {
 
 			 */
 
-			if (session.expires < now) {
+						if (session.expires < now) {
 				this.#sessions?.delete(sessionId);
 				cleanedCount++;
 			}
@@ -504,7 +504,7 @@ export class OptimizationAccessControl {
 		 */
 
 
-		if (cleanedCount > 0) {
+				if (cleanedCount > 0) {
 			console.log(`🧹 Cleaned ${cleanedCount} expired sessions`);
 		}
 
@@ -524,7 +524,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	getSessionInfo(sessionId) {
+		getSessionInfo(sessionId) {
 		const session = this.#sessions?.get(sessionId);
 		if (!session) return null;
 
@@ -553,7 +553,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	extendSession(sessionId, hours = 8) {
+		extendSession(sessionId, hours = 8) {
 		const session = this.#sessions?.get(sessionId);
 		/**
 
@@ -563,7 +563,7 @@ export class OptimizationAccessControl {
 
 		 */
 
-		if (session) {
+				if (session) {
 			session.expires = new Date(Date.now() + hours * 60 * 60 * 1000);
 			session.lastActivity = new Date();
 			return true;
@@ -584,7 +584,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	revokeSession(sessionId) {
+		revokeSession(sessionId) {
 		return this.#sessions?.delete(sessionId);
 	}
 
@@ -600,7 +600,7 @@ export class OptimizationAccessControl {
 
 	 */
 
-	getActiveSessions() {
+		getActiveSessions() {
 		const now = new Date();
 		const activeSessions = [];
 
@@ -613,7 +613,7 @@ export class OptimizationAccessControl {
 
 			 */
 
-			if (session.expires > now) {
+						if (session.expires > now) {
 				activeSessions.push({
 					sessionId,
 					userId: session.userId,
@@ -630,3 +630,4 @@ export class OptimizationAccessControl {
 }
 
 export default OptimizationAccessControl;
+

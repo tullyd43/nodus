@@ -4,9 +4,10 @@
  * This class integrates with the HybridStateManager for persistence and provides an API for semantic search and similarity analysis.
  */
 
+import { CDS } from "@core/security/CDS.js";
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { DateCore } from "../utils/DateUtils.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
-import { CDS } from '@core/security/CDS.js';
 /**
  * @privateFields {#stateManager, #managers, #idManager, #metrics, #NetworkError, #PolicyError, #errorBoundary, #options, #cache, #pendingEmbeddings, #similarityCache}
  * @class EmbeddingManager
@@ -225,7 +226,6 @@ export class EmbeddingManager {
 
 		 */
 
-
 		if (this.#options.apiEndpoint) {
 			vector = await this.#callEmbeddingAPI(text);
 		} else {
@@ -257,7 +257,7 @@ export class EmbeddingManager {
 	 * @returns {Promise<number[]>} A promise that resolves with the embedding vector.
 	 */
 	async #callEmbeddingAPI(text) {
-		const response = await CDS.fetch(this.#options.apiEndpoint, {
+		const response = await CDS["fetch"](this.#options.apiEndpoint, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -276,7 +276,6 @@ export class EmbeddingManager {
 
 
 		 */
-
 
 		if (!response.ok) {
 			// Use a specific, categorized error for network issues
@@ -376,7 +375,6 @@ export class EmbeddingManager {
 
 					 */
 
-
 					if (includeText && data.meta?.text_preview) {
 						result.text = data.meta.text_preview;
 					}
@@ -424,7 +422,6 @@ export class EmbeddingManager {
 
 
 			 */
-
 
 			for (const batch of batches) {
 				const batchPromises = batch.map((text, index) => {
@@ -526,7 +523,6 @@ export class EmbeddingManager {
 
 					 */
 
-
 					if (includeText && data.meta?.text_preview) {
 						result.text = data.meta.text_preview;
 					}
@@ -610,7 +606,6 @@ export class EmbeddingManager {
 
 			 */
 
-
 			for (const { id, vector } of embeddings) {
 				const entity =
 					this.#stateManager?.clientState?.entities.get(id);
@@ -648,8 +643,13 @@ export class EmbeddingManager {
 	 * @param {number[]} vector - The embedding vector.
 	 */
 	#updateSimilarityCache(entityId, vector) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  if (!vector?.length) return;
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		if (!vector?.length) return;
 		this.#similarityCache.set(entityId, this.normalizeVector(vector));
 	}
 
@@ -703,8 +703,13 @@ export class EmbeddingManager {
 	 * @returns {Array<Array>} An array of batches.
 	 */
 	#createBatches(array, batchSize) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const batches = [];
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		const batches = [];
 		/**
 
 		 * TODO: Add JSDoc for method for

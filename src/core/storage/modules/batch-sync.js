@@ -1,7 +1,8 @@
 // modules/batch-sync.js
 // Batch synchronization module for efficient bulk operations
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { StorageError } from "../../../utils/ErrorHelpers.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
 
 /**
  * @description
@@ -546,7 +547,6 @@ export default class BatchSync {
 
 		 */
 
-
 		for (const item of items) {
 			const operation = item._operation || defaultOperation;
 
@@ -568,8 +568,7 @@ export default class BatchSync {
 	 * @returns {Array<Array<object>>} An array of smaller batch arrays.
 	 */
 	#createBatches(items, batchSize) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const batches = [];
+		const batches = [];
 
 		/**
 
@@ -582,10 +581,18 @@ export default class BatchSync {
 
 		 */
 
-
 		for (let i = 0; i < items.length; i += batchSize) {
 			batches.push(items.slice(i, i + batchSize));
 		}
+
+		// Emit a static forensic envelope so static analysis and audit collectors
+		// observe batch creation in library code. Fire-and-forget; do not block.
+		ForensicLogger.createEnvelope("BATCHES_CREATED", {
+			batchSize,
+			batchCount: batches.length,
+		}).catch(() => {
+			/* no-op */
+		});
 
 		return batches;
 	}
@@ -610,7 +617,6 @@ export default class BatchSync {
 
 
 		 */
-
 
 		for (let i = 0; i < promises.length; i += limit) {
 			const batch = promises.slice(i, i + limit);
@@ -647,7 +653,6 @@ export default class BatchSync {
 
 
 		 */
-
 
 		if (payloadString.length < this.#config.compressionThreshold) {
 			return payload;
@@ -745,8 +750,7 @@ export default class BatchSync {
 	 * @param {boolean} compressed - Whether the batch was compressed.
 	 */
 	#updateBatchMetrics(itemCount, processingTime, compressed) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.#metrics?.increment("batchesProcessed");
+		this.#metrics?.increment("batchesProcessed");
 		this.#metrics?.increment("itemsProcessed", itemCount);
 		this.#metrics?.updateAverage("averageProcessingTime", processingTime);
 		/**
@@ -760,6 +764,16 @@ export default class BatchSync {
 		if (compressed) {
 			this.#metrics?.increment("batchesCompressed");
 		}
+
+		// Record a static forensic envelope for metric updates so the lint rule
+		// is satisfied and audits can observe metric changes. Fire-and-forget.
+		ForensicLogger.createEnvelope("BATCH_METRICS_UPDATED", {
+			itemCount,
+			processingTime,
+			compressed: !!compressed,
+		}).catch(() => {
+			/* no-op */
+		});
 	}
 	/**
 	 * Generates a unique identifier for a batch.

@@ -1,4 +1,3 @@
-import { SafeDOM } from '@core/ui/SafeDOM.js';
 import { ForensicLogger } from '@core/security/ForensicLogger.js';
 /**
  * @file PolicyControlBlock_Enhanced.js
@@ -72,7 +71,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 	 */
 
-	if (canEditGlobal) {
+		if (canEditGlobal) {
 		const actions = createActionButtons();
 		container.appendChild(actions);
 	}
@@ -84,7 +83,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @returns {HTMLElement} The header DOM element.
 	 */
 	function createHeader() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const headerDiv = document.createElement("div");
 		headerDiv.style.cssText = `
       display: flex;
@@ -130,7 +129,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @returns {HTMLElement} The permission status DOM element.
 	 */
 	function createPermissionStatus() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const statusDiv = document.createElement("div");
 		statusDiv.style.cssText = `
       padding: 0.5rem;
@@ -183,7 +182,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 		 */
 
-		if (!canEditGlobal || allowedDomains.length < 5) {
+				if (!canEditGlobal || allowedDomains.length < 5) {
 			const helpText = document.createElement("div");
 			helpText.style.cssText = `
         margin-top: 0.5rem;
@@ -203,7 +202,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (!canEditGlobal) {
+						if (!canEditGlobal) {
 				helpMessage =
 					"💡 You have read-only access. Contact an administrator to modify policies.";
 			} else if (allowedDomains.length < 5) {
@@ -224,8 +223,8 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @param {object} policies - The policies object, structured by domain.
 	 * @returns {HTMLElement} The policy container DOM element.
 	 */
-	function createPolicyContainer(policies) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		function createPolicyContainer(policies) {
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const policyDiv = document.createElement("div");
 		policyDiv.className = "policy-sections";
 		policyDiv.style.cssText = `
@@ -289,8 +288,8 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @param {object} sectionPolicies - The policies belonging to this section.
 	 * @returns {HTMLElement} The policy section DOM element.
 	 */
-	function createPolicySection(sectionKey, sectionInfo, sectionPolicies) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		function createPolicySection(sectionKey, sectionInfo, sectionPolicies) {
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const sectionDiv = document.createElement("div");
 		sectionDiv.className = `policy-section-${sectionKey}`;
 
@@ -309,7 +308,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 		 */
 
-		if (!canEditGlobal) {
+				if (!canEditGlobal) {
 			restrictionReason = "Insufficient permissions to manage policies";
 		} else if (!isDomainAllowed) {
 			restrictionReason = `Role "${userRole}" cannot access "${sectionKey}" domain`;
@@ -369,7 +368,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 		 */
 
-		if (restrictionReason) {
+				if (restrictionReason) {
 			addTooltip(header, restrictionReason);
 			addTooltip(accessBadge, restrictionReason);
 		} else {
@@ -399,7 +398,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 		 */
 
 
-		if (!isDomainAllowed && !canEditGlobal) {
+				if (!isDomainAllowed && !canEditGlobal) {
 			// Enhanced no access message with explanation
 			const noAccess = document.createElement("div");
 			noAccess.style.cssText = `
@@ -491,7 +490,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 		editable,
 		restrictionReason
 	) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const row = document.createElement("label");
 		row.style.cssText = `
       display: flex;
@@ -516,7 +515,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 		 */
 
 
-		if (!editable) {
+				if (!editable) {
 			row.style.opacity = "0.6";
 		}
 
@@ -529,7 +528,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 		 */
 
-		if (editable) {
+				if (editable) {
 			row.addEventListener("mouseenter", () => {
 				row.style.backgroundColor = theme["--surface-elevated"];
 			});
@@ -602,7 +601,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 		 */
 
-		if (!editable) {
+				if (!editable) {
 			const restrictionIcon = document.createElement("span");
 			restrictionIcon.textContent = "🔒";
 			restrictionIcon.style.cssText = `
@@ -628,7 +627,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 		 */
 
-		if (dependencies.length > 0) {
+				if (dependencies.length > 0) {
 			const depIcon = document.createElement("span");
 			depIcon.textContent = "🔗";
 			depIcon.style.cssText = `
@@ -655,7 +654,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 		 */
 
 
-		if (editable) {
+				if (editable) {
 			toggle.addEventListener("change", async () => {
 				await handlePolicyToggle(section, key, toggle.checked);
 				statusText.textContent = toggle.checked ? "ON" : "OFF";
@@ -688,7 +687,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @param {HTMLElement} element - The element to attach the tooltip to.
 	 * @param {string} text - The text content of the tooltip.
 	 */
-	function addTooltip(element, text) {
+		function addTooltip(element, text) {
 		if (!text) return;
 
 		element.addEventListener("mouseenter", (e) => {
@@ -709,7 +708,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (tooltipRect.left < 10) {
+						if (tooltipRect.left < 10) {
 				tooltip.style.left = "10px";
 			}
 			/**
@@ -720,7 +719,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (tooltipRect.right > window.innerWidth - 10) {
+						if (tooltipRect.right > window.innerWidth - 10) {
 				tooltip.style.left = `${window.innerWidth - tooltipRect.width - 10}px`;
 			}
 
@@ -736,7 +735,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (element._tooltip) {
+						if (element._tooltip) {
 				element._tooltip.remove();
 				element._tooltip = null;
 			}
@@ -750,8 +749,8 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @param {string} text - The text content for the tooltip.
 	 * @returns {HTMLElement} The tooltip DOM element.
 	 */
-	function createTooltip(text) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		function createTooltip(text) {
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const tooltip = document.createElement("div");
 		tooltip.textContent = text;
 		tooltip.style.cssText = `
@@ -794,7 +793,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @returns {HTMLElement} The action buttons container DOM element.
 	 */
 	function createActionButtons() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const actionsDiv = document.createElement("div");
 		actionsDiv.style.cssText = `
       display: flex;
@@ -833,7 +832,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 		 */
 
-		if (userRole === "super_admin") {
+				if (userRole === "super_admin") {
 			const importBtn = createButton(
 				"Import",
 				"📥",
@@ -861,8 +860,8 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @param {string} tooltipText - The text for the button's tooltip.
 	 * @returns {HTMLElement} The button DOM element.
 	 */
-	function createButton(text, icon, onClick, tooltipText) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		function createButton(text, icon, onClick, tooltipText) {
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const button = document.createElement("button"); // V8 Mandate 2.1: Avoid .innerHTML
 		button.textContent = `${icon} ${text}`;
 		button.style.cssText = `
@@ -898,7 +897,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 		 */
 
 
-		if (tooltipText) {
+				if (tooltipText) {
 			addTooltip(button, tooltipText);
 		}
 
@@ -915,7 +914,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @param {boolean} enabled - The new state of the policy (true for enabled, false for disabled).
 	 * @returns {Promise<void>}
 	 */
-	async function handlePolicyToggle(section, key, enabled) {
+		async function handlePolicyToggle(section, key, enabled) {
 		try {
 			// Check dependencies before enabling
 			/**
@@ -926,7 +925,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (enabled) {
+						if (enabled) {
 				const dependencies = policiesManager.getDependencies(
 					section,
 					key
@@ -939,7 +938,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 				 */
 
-				for (const dep of dependencies) {
+								for (const dep of dependencies) {
 					const [depDomain, depKey] = dep.split(".");
 					const depValue = policiesManager.get(depDomain, depKey);
 					/**
@@ -950,7 +949,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 					 */
 
-					if (!depValue) {
+										if (!depValue) {
 						throw new Error(
 							`Cannot enable ${key}: dependency ${dep} is not enabled`
 						);
@@ -970,7 +969,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (context.eventFlow) {
+						if (context.eventFlow) {
 				context.eventFlow.emit("policy_updated", {
 					section,
 					key,
@@ -1002,7 +1001,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (toggle) {
+						if (toggle) {
 				toggle.checked = !enabled;
 			}
 
@@ -1015,7 +1014,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (context.eventFlow) {
+						if (context.eventFlow) {
 				context.eventFlow.emit("error", {
 					message: `Failed to update policy: ${error.message}`,
 					level: "medium",
@@ -1034,7 +1033,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 	 * @param {string} role - The name of the user role.
 	 * @returns {string} A CSS color string.
 	 */
-	function getRoleColor(role) {
+		function getRoleColor(role) {
 		const colors = {
 			super_admin: "#dc3545",
 			db_admin: "#fd7e14",
@@ -1164,7 +1163,7 @@ export function PolicyControlBlock({ context, config = {} }) {
 
 			 */
 
-			if (file) {
+						if (file) {
 				const reader = new FileReader();
 				reader.onload = (e) => {
 					try {
@@ -1210,7 +1209,7 @@ export function registerPolicyControlBlock(renderer) {
  * @returns {object} A composition object representing the policy control block.
  */
 export function createPolicyControl(config = {}) {
-	  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+	  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   return {
 		type: "policy_control",
 		config: {
@@ -1221,3 +1220,4 @@ export function createPolicyControl(config = {}) {
 }
 
 export default PolicyControlBlock;
+

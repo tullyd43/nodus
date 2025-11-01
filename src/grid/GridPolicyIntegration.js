@@ -9,7 +9,7 @@
  * @privateFields {#policyManager, #cache}
  */
 export class GridPolicyService {
-	/** @private @type {import('../core/SystemPolicies_Cached.js').SystemPolicies} */
+	/** @private @type {import('../core/SystemPoliciesCached.js').SystemPolicies} */
 	#policyManager;
 	/** @private @type {import('../managers/CacheManager.js').LRUCache} */
 	#cache;
@@ -81,7 +81,7 @@ export class GridPolicyService {
 		try {
 			// Prefer the cleaned policy module if present (safe migration path)
 			// Use the canonical core policy module
-			const core = await import("./policies/core.js");
+			const core = await import("./policies/CoreGridPolicy.js");
 			this.#policyManager.registerPolicyDefinitions({
 				...core.CORE_GRID_POLICY_DEFINITIONS,
 			});
@@ -119,7 +119,7 @@ export class GridPolicyService {
 			 */
 
 			if (options.includeNesting) {
-				const nesting = await import("./policies/nesting.js");
+				const nesting = await import("./policies/NestingPolicy.js");
 				this.#policyManager.registerPolicyDefinitions({
 					...nesting.NESTING_POLICY_DEFINITIONS,
 				});
@@ -149,7 +149,6 @@ export class GridPolicyService {
 
 
 	 */
-
 
 	async ensureNestingPoliciesLoaded() {
 		if (this.#nestingLoaded) return;

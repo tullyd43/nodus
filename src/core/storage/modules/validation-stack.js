@@ -1,4 +1,4 @@
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
 // modules/validation-stack.js
 // Validation stack for composable data validation
 
@@ -180,7 +180,6 @@ export default class ValidationStack {
 
 		 */
 
-
 		if (validator.init) {
 			validator.init();
 		}
@@ -260,7 +259,6 @@ export default class ValidationStack {
 
 		 */
 
-
 		if (!result.valid && this.#stateManager) {
 			this.#stateManager.emit("validationError", {
 				entity,
@@ -325,7 +323,6 @@ export default class ValidationStack {
 
 					 */
 
-
 					if (!result.valid) {
 						errors.push(...(result.errors || []));
 						warnings.push(...(result.warnings || []));
@@ -340,7 +337,6 @@ export default class ValidationStack {
 
 
 						 */
-
 
 						if (this.#config.failFast) {
 							break;
@@ -496,7 +492,6 @@ export default class ValidationStack {
 
 					 */
 
-
 					if (!result.valid) {
 						errors.push(...(result.errors || []));
 						warnings.push(...(result.warnings || []));
@@ -511,7 +506,6 @@ export default class ValidationStack {
 
 
 						 */
-
 
 						if (this.#config.failFast) {
 							break;
@@ -552,8 +546,7 @@ export default class ValidationStack {
 	}
 
 	#updateValidationMetrics(isValid, validationTime) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.#metrics?.increment("validationsPerformed");
+		this.#metrics?.increment("validationsPerformed");
 
 		/**
 
@@ -566,17 +559,31 @@ export default class ValidationStack {
 
 		 */
 
-
 		if (!isValid) {
 			this.#metrics?.increment("validationsFailed");
 		}
 
 		this.#metrics?.updateAverage("averageValidationTime", validationTime);
+
+		// Emit a static forensic envelope so static analysis and audit collectors
+		// observe validation metric updates in library code. Fire-and-forget.
+		ForensicLogger.createEnvelope("VALIDATION_METRICS_UPDATED", {
+			isValid: !!isValid,
+			validationTime,
+		}).catch(() => {
+			/* no-op */
+		});
 	}
 
 	#updateCacheMetrics(isHit) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.#metrics?.increment(isHit ? "cacheHits" : "cacheMisses");
+		this.#metrics?.increment(isHit ? "cacheHits" : "cacheMisses");
+
+		// Emit a static forensic envelope for cache metric updates. Fire-and-forget.
+		ForensicLogger.createEnvelope("VALIDATION_CACHE_METRICS_UPDATED", {
+			isHit: !!isHit,
+		}).catch(() => {
+			/* no-op */
+		});
 	}
 
 	#addToHistory(entity, result, validationTime) {

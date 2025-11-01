@@ -35,7 +35,7 @@ export class ClassificationCrypto {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 	}
 
@@ -50,7 +50,7 @@ export class ClassificationCrypto {
 
 	 */
 
-	initialize() {
+		initialize() {
 		this.#keyring = this.#stateManager.managers.keyring;
 		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
 		this.#metrics = this.#stateManager.metricsRegistry?.namespace("crypto");
@@ -74,7 +74,7 @@ export class ClassificationCrypto {
 
 	 */
 
-	async encryptEntity(storeName, label, entity) {
+		async encryptEntity(storeName, label, entity) {
 		return this.#errorHelpers.tryAsync(
 			async () => {
 				const payload =
@@ -115,7 +115,7 @@ export class ClassificationCrypto {
 
 	 */
 
-	async decryptEntity(storeName, label, envelope) {
+		async decryptEntity(storeName, label, envelope) {
 		return this.#errorHelpers.tryAsync(
 			async () => {
 				const bytes = await this.decrypt(label, envelope);
@@ -151,7 +151,7 @@ export class ClassificationCrypto {
 
 	 */
 
-	async encrypt(label, plaintextBytes) {
+		async encrypt(label, plaintextBytes) {
 		const timer = this.#metrics?.timer("encrypt.duration", {
 			classification: label.classification,
 		});
@@ -166,7 +166,7 @@ export class ClassificationCrypto {
 
 			 */
 
-			if (!key?.encrypt) {
+						if (!key?.encrypt) {
 				throw new Error(
 					`No valid encryption key found for domain: ${domain}`
 				);
@@ -201,7 +201,7 @@ export class ClassificationCrypto {
 
 	 */
 
-	async decrypt(label, envelope) {
+		async decrypt(label, envelope) {
 		const timer = this.#metrics?.timer("decrypt.duration", {
 			classification: label.classification,
 		});
@@ -216,7 +216,7 @@ export class ClassificationCrypto {
 
 			 */
 
-			if (!key?.decrypt) {
+						if (!key?.decrypt) {
 				throw new Error(
 					`No valid decryption key found for domain: ${domain}`
 				);

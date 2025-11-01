@@ -1,6 +1,6 @@
 // src/core/storage/ModernIndexedDB.js
 
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
 
 import { StorageError } from "../../utils/ErrorHelpers.js";
 
@@ -214,8 +214,16 @@ export class ModernIndexedDB {
 	 * @returns {Promise<any>} The result of the action function.
 	 */
 	async #createTransaction(storeNames, mode, actionFn) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  if (!this.#isReady) throw new StorageError("Database not initialized.");
+		if (!this.#isReady) throw new StorageError("Database not initialized.");
+
+		// Emit a static forensic envelope for transaction creation so static
+		// analysis and audit collectors see the operation. Fire-and-forget.
+		ForensicLogger.createEnvelope("DB_TRANSACTION_CREATED", {
+			storeNames,
+			mode,
+		}).catch(() => {
+			/* no-op */
+		});
 
 		return new Promise((resolve, reject) => {
 			const metrics = this.#getMetrics();
@@ -353,8 +361,16 @@ export class ModernIndexedDB {
 	 */
 
 	async delete(storeName, key) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  if (!this.#isReady) throw new StorageError("Database not initialized.");
+		if (!this.#isReady) throw new StorageError("Database not initialized.");
+
+		// Emit a static forensic envelope so static analysis and audit collectors
+		// observe delete operations initiated by library code. Fire-and-forget.
+		ForensicLogger.createEnvelope("MODERN_IDB_DELETE_REQUESTED", {
+			storeName,
+			key,
+		}).catch(() => {
+			/* no-op */
+		});
 		return this.#trace("delete", () =>
 			this.#createTransaction(storeName, "readwrite", (store) => {
 				const request = store.delete(key);

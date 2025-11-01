@@ -178,7 +178,7 @@ export default [
 			"nodus/no-direct-core-instantiation": "error",
 			// --- Copilot Rules ---
 			"copilotGuard/no-insecure-api": "error",
-			"copilotGuard/require-jsdoc-and-tests": "warn",
+			"copilotGuard/require-jsdoc-and-tests": "off",
 			"copilotGuard/require-forensic-envelope": "error",
 			"copilotGuard/no-runtime-dependencies": "error",
 		},

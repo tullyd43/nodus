@@ -10,7 +10,7 @@ export class LayoutStore {
 
    */
 
-  constructor({ stateManager }) {
+    constructor({ stateManager }) {
     this.#stateManager = stateManager;
   }
 
@@ -26,8 +26,8 @@ export class LayoutStore {
    */
 
 
-  async save(id, layout, scope) {
-      await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+    async save(id, layout, scope) {
+      ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const db = this.#stateManager?.storage?.instance;
     if (!db) throw new Error('Storage instance not available');
     const key = this.#key('grid_layout', id, scope);
@@ -46,7 +46,7 @@ export class LayoutStore {
    */
 
 
-  async load(id, scope) {
+    async load(id, scope) {
     const db = this.#stateManager?.storage?.instance;
     if (!db) throw new Error('Storage instance not available');
     const key = this.#key('grid_layout', id, scope);
@@ -63,8 +63,8 @@ export class LayoutStore {
 
    */
 
-  async saveConfig(id, config, scope) {
-      await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+    async saveConfig(id, config, scope) {
+      ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const db = this.#stateManager?.storage?.instance;
     if (!db) throw new Error('Storage instance not available');
     const key = this.#key('grid_config', id, scope);
@@ -83,7 +83,7 @@ export class LayoutStore {
    */
 
 
-  async loadConfig(id, scope) {
+    async loadConfig(id, scope) {
     const db = this.#stateManager?.storage?.instance;
     if (!db) throw new Error('Storage instance not available');
     const key = this.#key('grid_config', id, scope);
@@ -97,3 +97,4 @@ export class LayoutStore {
     return `${prefix}:${tenant}:${user}:${id}`;
   }
 }
+

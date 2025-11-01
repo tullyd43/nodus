@@ -30,7 +30,7 @@ export class IdManager {
 
 	 */
 
-	constructor({ stateManager } = {}) {
+		constructor({ stateManager } = {}) {
 		// V8 Parity Mandate: Derive dependencies from the stateManager.
 		this.#metrics = stateManager?.metricsRegistry?.namespace("idManager");
 		this.#logger = stateManager?.managers?.forensicLogger;
@@ -53,7 +53,7 @@ export class IdManager {
 
 	 */
 
-	generate(context = {}) {
+		generate(context = {}) {
 		const { prefix = "", entityType = "", classification } = context;
 
 		// Use the browser's built-in crypto API for secure UUIDs.
@@ -70,7 +70,7 @@ export class IdManager {
 
 		 */
 
-		if (entityType) {
+				if (entityType) {
 			this.#metrics?.increment(`ids.generated.by_type.${entityType}`);
 		}
 
@@ -107,7 +107,7 @@ export class IdManager {
 
 	 */
 
-	generateSimpleId(prefix = "id") {
+		generateSimpleId(prefix = "id") {
 		// Generate a small, non-secure random hex string. More performant than Math.random().toString().
 		const randomPart = Array.from(crypto.getRandomValues(new Uint8Array(4)))
 			.map((b) => b.toString(16).padStart(2, "0"))

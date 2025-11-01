@@ -1,0 +1,232 @@
+Perfect — this is the right time to **pause, define what “done” means for your VanillaJS foundation**, and build a **clear migration roadmap** so your move into the enterprise-grade (WASM + certifiable) architecture is smooth and justified.
+
+Let’s break this into three stages:
+
+---
+
+## 🚧 PHASE 1: Stabilize the VanillaJS Foundation (Current → Working Prototype)
+
+**Goal:** A fully functioning *client-side product* with working grid, binding, state updates, and async behaviors — all written in clean, auditable Vanilla JS that respects your mandates (security, modularity, auditability).
+
+### ✅ Definition of “DONE” for Vanilla Phase
+
+Your base stack should do the following **without external frameworks**:
+
+| Subsystem                         | Target Behavior                                                                          | Dependencies                                               | Status Check                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
+| **Grid System**                   | Blocks render, drag, resize, snap to grid; persistent positions; per-block metadata      | `CompleteGridSystem.js`, `EnhancedGridRenderer.js`         | ❌ Dragging/resizing not yet working |
+| **UI–State Binding (BindEngine)** | DOM updates automatically on HybridStateManager changes                                  | `BindEngine.js`, `StateUIBridge.js`, `ActionDispatcher.js` | ⚠️ BindEngine logic not connected   |
+| **Async Coordination**            | Asynchronous UI operations don’t break reactivity; pending states visible                | `AsyncHelper.js`                                           | ❌ Not integrated                    |
+| **Security/Audit Envelope**       | Every state mutation, UI event, and storage action emits a forensic event                | `ForensicLogger`, CopilotGuard rules                       | ✅ Partial enforcement               |
+| **Persistence & Storage**         | IndexedDB + MAC + crypto all functional offline                                          | `StorageLoader.js`                                         | ✅ Stable                            |
+| **i18n/i10n**                     | Language switch works and strings are cached                                             | Translation JSON + service registry                        | ⚠️ Partial                          |
+| **Main Loop / App Lifecycle**     | App boots, grid loads, state hydrates, UI initializes bindings, async helpers registered | `main.js`, `SystemBootstrap.js`                            | ⚠️ Grid initializes only            |
+
+---
+
+### 🧩 Step-by-Step Plan to Finish the VanillaJS Core
+
+#### 1. 🧠 Fix Grid Interactivity
+
+**Goal:** Enable dragging, resizing, and adaptive layout.
+
+* ✅ **Check**: Each block’s `draggable` and `resizable` flags.
+* 🛠 **Update** `EnhancedGridRenderer.js`:
+
+  * Ensure each block calls `BindEngine.registerBinding()` on creation.
+  * Add `mousedown` → `mousemove` → `mouseup` listeners on `.grid-block`.
+  * Handle `transform: translate()` and grid snap calculations in `GridEnhancementIntegration.js`.
+  * Use `requestAnimationFrame` in drag loop for smoother performance.
+* 💾 **Persist** block layout:
+
+  * On `mouseup`, emit `grid:layoutChange` event.
+  * `StateUIBridge` listens → updates `HybridStateManager`.
+  * Verify changes persist to `localStorage`/IndexedDB via `StorageLoader`.
+
+#### 2. 🔄 Integrate BindEngine with StateUIBridge
+
+**Goal:** One-way reactive data flow.
+
+* In `SystemBootstrap.js`, after HybridStateManager is created:
+
+  ```js
+  const bindEngine = new BindEngine(stateManager, document);
+  bindEngine.initialize();
+  ```
+* In `StateUIBridge.js`, forward state change events:
+
+  ```js
+  stateManager.on("state:changed", (key, value) => bindEngine.updateBindings(key, value));
+  ```
+* In `BindEngine.js`, add:
+
+  ```js
+  updateBindings(key, value) {
+    document.querySelectorAll(`[data-bind="${key}"]`).forEach(el => {
+      el.textContent = value;
+    });
+  }
+  ```
+* ✅ Test by binding a simple counter or task title and ensuring DOM auto-updates.
+
+#### 3. ⚙️ Hook in AsyncHelper
+
+**Goal:** Allow async tasks (like network or DB calls) to show progress states in the UI.
+
+* Create `/core/utils/AsyncHelper.js`:
+
+  ```js
+  export class AsyncHelper {
+    static async wrap(promise, label) {
+      StateUIBridge.emit("async:start", label);
+      try { return await promise; }
+      finally { StateUIBridge.emit("async:end", label); }
+    }
+  }
+  ```
+* Integrate with the grid’s async ops (saving layout, loading blocks, etc.):
+
+  ```js
+  await AsyncHelper.wrap(storage.save(entity), "SaveLayout");
+  ```
+
+#### 4. 🔐 Ensure Security Hooks Work
+
+* Every action that modifies state or storage must go through:
+
+  ```js
+  ForensicLogger.createEnvelope("UI_ACTION", { action, target });
+  ```
+* Verify lint (`copilotGuard/require-forensic-envelope`) passes after these changes.
+
+#### 5. 🌍 Finish i18n/i10n Integration
+
+* Keep translations **per domain** (system, UI, meta).
+* Cache translations in IndexedDB (lightweight subset only).
+* Add `TranslationService`:
+
+  ```js
+  export function t(key) {
+    return translations[currentLang][key] || key;
+  }
+  ```
+* Integrate in BindEngine (`data-i18n="app.title"` → replaced on load).
+
+---
+
+### ✅ Output of Phase 1
+
+At the end of this phase, you’ll have a **working VanillaJS app** that can:
+
+* Load and display a resizable, draggable grid.
+* Persist state locally with MAC/crypto enforcement.
+* Reflect UI changes automatically via BindEngine.
+* Manage async flows gracefully.
+* Enforce forensic event logging on all state changes.
+
+Once that is achieved, you are ready to **lock feature freeze** and move to Phase 2.
+
+
+✅ Confirmed Ready
+Subsystem	Status	Evidence
+App bootstrap + state layer	✅ Working	main.js correctly bootstraps SystemBootstrap and initializes HybridStateManager (stateManager.managers.completeGridSystem.initialize() is called)
+Service registry + storage	✅ Working	SystemBootstrap initializes services; MAC/crypto/IndexedDB layers already in place (seen in earlier storage files).
+Forensic logging integration	✅ Partial, functional	ForensicLogger is imported and referenced inside grid and component systems. Enforcement exists but JSDoc annotations are missing in many methods.
+UI binding skeleton	✅ Initialized	main.js instantiates BindEngine and ActionDispatcher, connecting them to the DOM.
+⚠️ Needs Completion for “Baseline Done”
+Area	Issue	Action Needed
+Grid Interactivity (drag, resize, snap)	CompleteGridSystem and EnhancedGridRenderer have no attached drag/resize handlers. No binding to DOM events found.	Implement mouse event listeners and transform updates (use requestAnimationFrame for performance). Emit grid:layoutChange to state manager.
+BindEngine Integration	Exists but not fully wired to the state event bus. StateUIBridge handles updates from the state manager to the grid, but not general DOM bindings.	Extend BindEngine to register [data-bind] elements and subscribe to stateManager.on("state:changed").
+AsyncHelper Integration	Missing entirely; async ops (like saving layouts) are synchronous.	Add AsyncHelper.wrap() calls around async storage and grid updates to emit "async:start" / "async:end" events.
+State–UI feedback loop	StateUIBridge connects events to the grid, but not the other way around (grid → state).	Add StateUIBridge.emit() or equivalent callback hooks to propagate UI actions back to the state layer.
+ComponentRegistry / default components	Exists but no registered default UI components.	Add simple base component types (text, html, button, input) to validate ComponentRegistry behavior.
+JSDoc coverage (copilotGuard)	Incomplete — many methods have TODO placeholders (especially in CompleteGridSystem.js, StateUIBridge.js, ComponentRegistry.js).	Fill all missing JSDoc comments with descriptions, params, and forensic envelope annotations to satisfy linting rules.
+Grid policy + layout persistence	LayoutStore is declared but unused; policies (auto-save, performance mode) not linked to UI.	Ensure grid state changes trigger LayoutStore.save(); bind toggles to policy updates in grid control UI.
+🧩 Specific Integration Path to Finish the Vanilla Baseline
+
+Fix Grid Interactivity
+
+Add drag and resize listeners in EnhancedGridRenderer or GridEnhancementIntegration.
+
+On mouseup, persist layout via HybridStateManager and StorageLoader.
+
+Example:
+
+element.addEventListener('mousedown', e => {
+  const target = e.currentTarget;
+  const start = { x: e.clientX, y: e.clientY };
+  const rect = target.getBoundingClientRect();
+  const move = ev => {
+    const dx = ev.clientX - start.x;
+    const dy = ev.clientY - start.y;
+    target.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
+  const up = () => {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    stateManager.emit('grid:layoutChange', { id: target.dataset.id });
+  };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+});
+
+
+Connect BindEngine ↔ StateUIBridge
+
+In SystemBootstrap, after creating both:
+
+stateManager.on('state:changed', (key, value) => bindEngine.updateBindings(key, value));
+
+
+Add [data-bind="task.name"] support in the DOM.
+
+Integrate AsyncHelper
+
+Create AsyncHelper.js and wrap async methods:
+
+await AsyncHelper.wrap(storage.save(entity), "grid:layoutSave");
+
+
+Populate ComponentRegistry
+
+Register defaults:
+
+componentRegistry.register('text', {
+  mount: (el, props) => { el.textContent = props.text || ''; },
+  unmount: el => { el.textContent = ''; }
+});
+
+
+Use it to dynamically render cells or task views.
+
+Ensure LayoutStore Persistence
+
+Add inside CompleteGridSystem:
+
+this.#stateManager.on('grid:layoutChange', async (layout) => {
+  await this.#layoutStore.save(layout);
+});
+
+
+Complete JSDoc Coverage
+
+Every public method needs:
+
+/**
+ * @method refreshLayout
+ * @description Refreshes grid layout based on updated positions.
+ * @forensicEnvelope {type:"UI_ACTION", context:"Grid"}
+ * @param {object} layout - The layout configuration object.
+ */
+
+✅ When “Baseline is Done”
+
+You can confidently move to the next phase (WASM integration, SLSA CI, and certification prep) when all of these hold true:
+
+Criteria	Verification
+Grid drag/resize works smoothly	You can drag blocks and reload to see positions persist
+BindEngine updates UI on state change	[data-bind] text reflects live changes
+AsyncHelper events visible	Console shows "async:start" and "async:end" logs
+Forensic events fire	Every user action triggers an envelope in the ForensicLogger
+Layout and policies persist	Refreshing the page restores prior layout
+ESLint passes with 0 errors	npm run lint exits code 0

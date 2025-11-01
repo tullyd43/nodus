@@ -34,7 +34,7 @@ export class ActionHandlerRegistry {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from the stateManager.
 		this.#stateManager = stateManager;
 		this.#metrics =
@@ -53,7 +53,7 @@ export class ActionHandlerRegistry {
 
 	 */
 
-	initialize() {
+		initialize() {
 		this.#registerBuiltinHandlers();
 		console.log(
 			`[ActionHandlerRegistry] Initialized with ${this.#handlers.size} built-in handlers.`
@@ -73,7 +73,7 @@ export class ActionHandlerRegistry {
 
 	 */
 
-	register(actionType, handler) {
+		register(actionType, handler) {
 		if (this.#handlers.has(actionType)) {
 			console.warn(
 				`[ActionHandlerRegistry] Overwriting existing handler for action type: ${actionType}`
@@ -96,7 +96,7 @@ export class ActionHandlerRegistry {
 
 	 */
 
-	get(actionType) {
+		get(actionType) {
 		return this.#handlers.get(actionType);
 	}
 
@@ -136,7 +136,7 @@ export class ActionHandlerRegistry {
 
 						 */
 
-						if (action.audit) {
+												if (action.audit) {
 							const forensicLogger =
 								stateManager.managers.forensicLogger;
 							/**
@@ -147,7 +147,7 @@ export class ActionHandlerRegistry {
 
 							 */
 
-							if (forensicLogger) {
+														if (forensicLogger) {
 								await forensicLogger.logAuditEvent(
 									`EVENT_FLOW_LOG_${level.toUpperCase()}`,
 									{
@@ -252,7 +252,7 @@ export class ActionHandlerRegistry {
 						 */
 
 
-						if (pattern === "*") {
+												if (pattern === "*") {
 							cacheManager.clearAll();
 							console.log(
 								`[ActionHandlerRegistry] Cleared all caches via flow: ${flow.id}`
@@ -316,7 +316,7 @@ export class ActionHandlerRegistry {
 
 						 */
 
-						if (!entityData) {
+												if (!entityData) {
 							console.warn(
 								`[ActionHandlerRegistry] 'save_entity' action in flow ${flow.id} is missing entity data.`
 							);
@@ -356,7 +356,7 @@ export class ActionHandlerRegistry {
 
 	 */
 
-	cleanup() {
+		cleanup() {
 		this.#handlers.clear();
 		console.log("[ActionHandlerRegistry] Cleaned up.");
 	}

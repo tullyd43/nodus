@@ -15,7 +15,7 @@ export function normalizeConfig(input = {}) {
   cfg.gap = Number.isFinite(cfg.gap) && cfg.gap >= 0 ? cfg.gap : 16;
   cfg.blocks = Array.isArray(cfg.blocks) ? cfg.blocks : [];
 
-  const normalizeBlocks = (blocks) => {
+    const normalizeBlocks = (blocks) => {
     const out = [];
     /**
 
@@ -25,7 +25,7 @@ export function normalizeConfig(input = {}) {
 
      */
 
-    for (const raw of blocks || []) {
+        for (const raw of blocks || []) {
       const id = String(raw?.id || raw?.blockId || '').trim();
       if (!id) continue;
       const x = clampInt(raw?.x ?? raw?.position?.x ?? 0, 0);
@@ -60,7 +60,7 @@ export function normalizeConfig(input = {}) {
 
    */
 
-  if (rawTemplates) {
+    if (rawTemplates) {
     const templates = {};
     for (const [name, t] of Object.entries(rawTemplates)) {
       const tpl = typeof t === 'object' && t ? t : {};

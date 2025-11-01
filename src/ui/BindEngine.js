@@ -1,264 +1,468 @@
-// src/ui/BindEngine.js
-// Lightweight DOM binding engine: registers elements with `data-bind` and
-// populates them from `stateManager.clientState` or via `QueryService`.
-export class BindEngine {
+// BindEngine_v2.js
+// Lightweight reactive binding engine with security, forensic, and metrics integration
+// Vanilla ESM. No frameworks. Safe rendering only.
+
+/**
+ * @file BindEngine_v2.js
+ * @version 2.0.0
+ * @summary Reactive UI binder for HybridStateManager with MAC, ForensicLogger, and Metrics hooks.
+ * @mandates
+ *  - copilotGuard/require-jsdoc-and-tests
+ *  - copilotGuard/require-forensic-envelope
+ *  - copilotGuard/no-insecure-api
+ * @remarks
+ *  - Never uses innerHTML/outerHTML. Only textContent/attributes/properties.
+ *  - All DOM mutations are wrapped in forensic envelopes.
+ *  - Access decisions use constant-time padding to mitigate timing channels.
+ */
+
+import { constantTimeCheck } from "@core/security/ct.js";
+
+/**
+ * @typedef {Object} BindEngineDeps
+ * @property {import('../HybridStateManager.js').HybridStateManager} stateManager
+ * @property {{ canRead?: (label: { level:string, compartments:Set<string> }|string, path?: string)=>Promise<boolean>, label?: (obj:any)=>{level:string, compartments:Set<string>} }} [securityManager]
+ * @property {{ createEnvelope:(type:string,payload:any)=>Promise<any>, commitEnvelope:(env:any)=>Promise<void> }} forensicLogger
+ * @property {{ record?:(name:string,data?:any)=>void, increment?:(name:string,delta?:number)=>void }} [metrics]
+ * @property {{ renderRestriction:(el:Element, info:any)=>void }} [securityExplainer]
+ * @property {{ on:(evt:string,cb:(data:any)=>void)=>void, off?:(evt:string,cb:(data:any)=>void)=>void }} [eventBus]
+ */
+
+/**
+ * @typedef {Object} BindingOptions
+ * @property {string} [format] A named formatter (from stateManager or registry) to apply before render.
+ * @property {boolean} [twoWay] Enable input->state synchronization.
+ * @property {string} [attr] If set, bind to this attribute instead of textContent.
+ * @property {(value:any)=>any} [map] Optional mapping fn prior to render.
+ * @property {string} [fallback] Text to show when access denied or value absent.
+ */
+
+/**
+ * Lightweight, auditable, security-aware binding layer.
+ *
+ * Public methods:
+ * - start(root) : Promise<void> — scan and begin reacting to state changes
+ * - stop() : void — unregister bindings and stop listening
+ * - bindAll(root) : Promise<void> — find and register elements with `data-bind`
+ * - registerBinding(el,path,opts) : Promise<void> — register a specific element binding
+ * - unregisterBinding(el) : void — remove a binding
+ *
+ * Inputs (via constructor deps): see {@link BindEngineDeps}
+ *
+ * @example
+ * const engine = new BindEngine({ stateManager, forensicLogger, securityManager });
+ * await engine.start(document);
+ *
+ * @export
+ * @class BindEngine
+ */
+export default class BindEngine {
 	/**
-	 * Create a BindEngine.
-	 * @param {Object} stateManager - HybridStateManager instance exposing managers/events.
+	 * Dependencies for the BindEngine.
+	 * @type {BindEngineDeps}
+	 * @private
 	 */
-	constructor(stateManager) {
-		this.stateManager = stateManager;
-		this.bindings = new Map();
+	#deps;
+	/**
+	 * A map of all active bindings, with the element as the key.
+	 * @type {Map<Element, {path:string, opts:BindingOptions, unsub?:()=>void}>}
+	 * @private
+	 */
+	#bindings = new Map();
+	/**
+	 * Tracks if the engine has been started.
+	 * @type {boolean}
+	 * @private
+	 */
+	#started = false;
+
+	/**
+	 * Creates an instance of BindEngine.
+	 *
+	 * @constructor
+	 * @function
+	 * @memberof BindEngine
+	 * @param {BindEngineDeps} deps Dependencies required by the engine (see {@link BindEngineDeps}).
+	 */
+
+	constructor(deps) {
+		this.#deps = deps;
+		if (!deps?.stateManager)
+			throw new Error("BindEngine requires stateManager");
 	}
 
 	/**
-	 * Initialize the engine by registering existing [data-bind] elements under root.
-	 * @param {Document|Element} [root=document]
+	 * Initializes the engine, scans for bindings, and listens for state changes.
+	 *
+	 * @public
+	 * @async
+	 * @function start
+	 * @memberof BindEngine
+	 * @param {Document|ParentNode} [root=document] Root to scan for bindings
+	 * @returns {Promise<void>}
 	 */
-	init(root = document) {
-		root.querySelectorAll("[data-bind]").forEach((el) => this.register(el));
+
+	async start(root = document) {
+		if (this.#started) return;
+		this.#started = true;
+
+		// Reactivity: listen to state changes
+		this.#deps.stateManager.on?.("stateChanged", (evt) => {
+			try {
+				this.#onStateChanged(evt);
+			} catch {
+				/* swallow to avoid UI lock */
+			}
+		});
+
+		// Initial scan
+		await this.bindAll(root);
 	}
 
 	/**
-	 * Register a single element that uses data-bind so it receives updates.
-	 * This is useful for dynamically created elements.
-	 * @param {HTMLElement} el
+	 * Stops the engine, unregisters all bindings, and cleans up listeners.
+	 *
+	 * @public
+	 * @function stop
+	 * @memberof BindEngine
+	 * @returns {void}
 	 */
-	register(el, definition = {}) {
-		if (!el || !el.dataset) return;
-		// Allow programmatic definition override (register(el, { bindingPath }) )
-		const path =
-			el.dataset.bind ||
-			definition?.bindingPath ||
-			definition?.bind ||
-			"";
-		if (!path) return;
-		if (this.bindings.has(el)) return; // already registered
+	stop() {
+		for (const [el, meta] of this.#bindings) {
+			meta.unsub?.();
+			this.#bindings.delete(el);
+		}
+		this.#started = false;
+	}
 
-		const securityManager = this.stateManager?.managers?.securityManager;
-		const _checkCanRead = (p) => {
-			try {
-				const res =
-					typeof securityManager?.canRead === "function"
-						? securityManager.canRead(p)
-						: true;
-				// support sync boolean or Promise<boolean>
-				if (res && typeof res.then === "function")
-					return res.catch(() => false);
-				return Promise.resolve(Boolean(res));
-			} catch (e) {
-				return Promise.resolve(false);
+	/**
+	 * Scans a DOM tree for elements with `data-bind` attributes and registers them.
+	 *
+	 * @public
+	 * @async
+	 * @function bindAll
+	 * @memberof BindEngine
+	 * @param {Document|ParentNode} [root=document]
+	 * @returns {Promise<void>}
+	 */
+	async bindAll(root = document) {
+		const list = root.querySelectorAll?.("[data-bind]") ?? [];
+		for (const el of list) {
+			const path = el.getAttribute("data-bind");
+			if (!path) continue;
+			/** @type {BindingOptions} */
+			const opts = {
+				format: el.getAttribute("data-bind-format") || undefined,
+				twoWay: el.getAttribute("data-bind-two-way") === "true",
+				attr: el.getAttribute("data-bind-attr") || undefined,
+				fallback: el.getAttribute("data-bind-fallback") || "",
+			};
+			await this.registerBinding(el, path, opts);
+		}
+	}
+
+	/**
+	 * Registers and renders a single element binding.
+	 *
+	 * @public
+	 * @async
+	 * @function registerBinding
+	 * @memberof BindEngine
+	 * @param {Element} el The DOM element to bind
+	 * @param {string} path dot.notation path in clientState
+	 * @param {BindingOptions} [opts] Binding options
+	 * @returns {Promise<void>}
+	 */
+	async registerBinding(el, path, opts = {}) {
+		// Unregister any existing
+		this.unregisterBinding(el);
+
+		// Subscribe to fine-grained path updates if supported
+		const unsub = this.#deps.stateManager.subscribe
+			? this.#deps.stateManager.subscribe(path, (value) =>
+					this.#safeRender(el, path, value, opts)
+				)
+			: undefined;
+
+		this.#bindings.set(el, { path, opts, unsub });
+
+		// Initial render
+		const current = this.#deps.stateManager.get?.(path);
+		await this.#safeRender(el, path, current, opts);
+
+		// Two-way
+		if (opts.twoWay) {
+			this.#wireTwoWay(el, path, opts);
+		}
+	}
+
+	/**
+	 * Removes a binding for a given element and cleans up its listeners.
+	 *
+	 * @public
+	 * @function unregisterBinding
+	 * @memberof BindEngine
+	 * @param {Element} el The element to remove binding for
+	 * @returns {void}
+	 */
+	unregisterBinding(el) {
+		const meta = this.#bindings.get(el);
+		if (!meta) return;
+		meta.unsub?.();
+		this.#bindings.delete(el);
+	}
+
+	// ---------------------------------------------------------------------------
+	// Internal: Rendering & Security
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Handles global `stateChanged` events as a coarse-grained fallback if fine-grained subscriptions are not available.
+	 *
+	 * @private
+	 * @param {{changedPaths?: string[], patches?: any[]}} evt Event payload from StateManager
+	 * @returns {void}
+	 */
+	#onStateChanged(evt) {
+		const changed = new Set(evt?.changedPaths || []);
+		for (const [el, { path, opts }] of this.#bindings) {
+			if (changed.size === 0 || changed.has(path)) {
+				const v = this.#deps.stateManager.get?.(path);
+				this.#safeRender(el, path, v, opts);
 			}
-		};
+		}
+	}
 
-		// Helper: clear children safely
-		const _clearChildren = (node) => {
-			while (node.firstChild) node.removeChild(node.firstChild);
-		};
+	/**
+	 * Renders a value to an element after performing security checks, formatting, and forensic logging.
+	 *
+	 * @private
+	 * @param {Element} el Target element
+	 * @param {string} path State path
+	 * @param {any} value Value to render
+	 * @param {BindingOptions} opts Rendering options
+	 * @returns {Promise<void>}
+	 */
+	async #safeRender(el, path, value, opts) {
+		const t0 = globalThis.performance?.now?.() ?? Date.now();
 
-		// Async registration flow to avoid nested promises and allow awaiting canRead.
-		let disposed = false;
-		const markDisposed = () => {
-			disposed = true;
-		};
-
-		(async () => {
-			const allowed = await _checkCanRead(path);
-			if (!allowed) {
-				// Render a safe restricted placeholder instead of exposing data.
-				try {
-					if (el.matches && el.matches("input, textarea, select")) {
-						// For form controls show a restricted placeholder and disable interaction.
-						el.value = "";
-						el.placeholder = "Restricted";
-						el.disabled = true;
-						el.setAttribute("data-restricted", "true");
-					} else {
-						_clearChildren(el);
-						const stub = document.createElement("span");
-						stub.className = "restricted";
-						stub.textContent = "Restricted";
-						el.appendChild(stub);
-						el.setAttribute("data-restricted", "true");
+		// Security decision. If no security manager or MAC engine is provided we
+		// can short-circuit to `allowed=true` synchronously to avoid microtask
+		// delays that would make UI updates race with tests. When a security
+		// manager is present, perform the constant-time check.
+		let allowed;
+		if (!this.#deps.securityManager && !this.#deps.stateManager?.mac) {
+			allowed = true;
+		} else {
+			allowed = await constantTimeCheck(
+				async () => {
+					const label = this.#labelForPath(path);
+					if (this.#deps.securityManager?.canRead) {
+						return !!(await this.#deps.securityManager.canRead(
+							label,
+							path
+						));
 					}
-				} catch {
-					// ignore failures when attempting to render placeholder
-				}
-				// Store a no-op unsubscriber so unregister works predictably.
-				this.bindings.set(el, () => markDisposed());
-				return;
+					// Default allow if no security manager present (dev mode)
+					return true;
+				},
+				{ minDurationMs: this.#deps.ctMinDurationMs ?? 0 }
+			);
+		}
 
-			// If this is a query-based binding, fetch results and populate.
-			if (path.startsWith("query:")) {
-				const queryString = path.slice("query:".length).trim();
-				const qsvc = this.stateManager?.managers?.queryService;
-				if (qsvc && typeof qsvc.search === "function") {
-					try {
-						const results = await qsvc.search(queryString);
-						if (disposed) return;
-						if (!results || !results.length) {
-							// no-op
-						} else if (el.matches && el.matches("select")) {
-							_clearChildren(el);
-							const frag = document.createDocumentFragment();
-							results.forEach((r) => {
-								const opt = document.createElement("option");
-								opt.value =
-									r.id ?? r.value ?? JSON.stringify(r);
-								opt.textContent =
-									r.title ||
-									r.name ||
-									String(r.value ?? r.id ?? r);
-								frag.appendChild(opt);
-							});
-							el.appendChild(frag);
-						} else if (el.matches && el.matches("ul, ol")) {
-							_clearChildren(el);
-							const frag = document.createDocumentFragment();
-							results.forEach((r) => {
-								const li = document.createElement("li");
-								li.textContent =
-									r.title ||
-									r.name ||
-									String(r.value ?? r.id ?? r);
-								frag.appendChild(li);
-							});
-							el.appendChild(frag);
-						} else {
-							const r = results[0];
-							if (r != null) {
-								if (
-									el.matches &&
-									el.matches("input, textarea, select")
-								) {
-									if (document.activeElement !== el)
-										el.value = this._format(
-											r.title ??
-												r.name ??
-												r.value ??
-												r.id ??
-												r
-										);
-								} else {
-									el.textContent = this._format(
-										r.title ??
-											r.name ??
-											r.value ??
-											r.id ??
-											r
-									);
-								}
-							}
-						}
-					} catch (e) {
-						// best-effort
+		if (!allowed) {
+			// Render restriction via explainer
+			if (this.#deps.securityExplainer) {
+				this.#deps.securityExplainer.renderRestriction(el, {
+					reason: "no-read-up",
+					path,
+				});
+			} else {
+				// Fallback minimal safe rendering
+				this.#mutate(
+					el,
+					() => {
+						el.textContent = opts.fallback ?? "Restricted";
+					},
+					{
+						type: "UI_BIND_DENIED",
+						path,
 					}
-				}
+				);
 			}
+			this.#deps.metrics?.increment?.("bind.render.denied", 1);
+			return;
+		}
 
-			// Initial population from client state
-			try {
-				const clientState = this.stateManager?.clientState || {};
-				let initial = undefined;
+		// Optional mapping/formatting
+		let out = value;
+		if (typeof opts.map === "function") out = opts.map(out);
+		if (
+			opts.format &&
+			typeof this.#deps.stateManager.format === "function"
+		) {
+			out = this.#deps.stateManager.format(opts.format, out);
+		}
 
-				if (path.startsWith("entities.")) {
-					const parts = path.split(".");
-					const id = parts[1];
-					const propPath = parts.slice(2).join(".");
-					const entities = clientState.entities;
-					let entity = undefined;
-					if (entities) {
-						if (typeof entities.get === "function")
-							entity = entities.get(id);
-						else entity = entities[id] || undefined;
-					}
-					if (entity && propPath) {
-						initial = propPath
-							.split(".")
-							.reduce(
-								(cur, k) =>
-									cur && cur[k] !== undefined
-										? cur[k]
-										: undefined,
-								entity
-							);
-					} else if (entity) {
-						initial = entity;
-					}
-				} else {
-					const parts = path.split(".");
-					let cur = clientState;
-					for (const p of parts) {
-						if (cur == null) {
-							cur = undefined;
-							break;
-						}
-						if (typeof cur.get === "function") cur = cur.get(p);
-						else cur = cur[p];
-					}
-					initial = cur;
-				}
+		// Mutate DOM safely under forensic envelope
+		if (opts.attr) {
+			this.#mutate(
+				el,
+				() => {
+					el.setAttribute(opts.attr, out == null ? "" : String(out));
+				},
+				{ type: "UI_BIND_ATTR", path, attr: opts.attr, value: out }
+			);
+		} else {
+			this.#mutate(
+				el,
+				() => {
+					// textContent only – prevents HTML injection
+					el.textContent = out == null ? "" : String(out);
+				},
+				{ type: "UI_BIND_TEXT", path, value: out }
+			);
+		}
 
-				if (initial !== undefined) {
-					if (el.matches && el.matches("input, textarea, select")) {
-						if (document.activeElement !== el)
-							el.value = this._format(initial);
-					} else {
-						el.textContent = this._format(initial);
-					}
-				}
-			} catch (e) {
-				// best-effort
+		const dt = (globalThis.performance?.now?.() ?? Date.now()) - t0;
+		this.#deps.metrics?.record?.("bind.render.time", { path, ms: dt });
+		this.#deps.metrics?.increment?.("bind.render.count", 1);
+	}
+
+	/**
+	 * Computes the security label for a given state path by inspecting the value or its context.
+	 *
+	 * @private
+	 * @param {string} path
+	 * @returns {{level:string, compartments:Set<string>}}
+	 */
+	#labelForPath(path) {
+		const sm = this.#deps.stateManager;
+		const mac = sm?.mac || this.#deps.securityManager;
+		const node = sm?.get?.(path);
+		if (mac?.label)
+			return mac.label(
+				node ?? { classification: "unclassified", compartments: [] }
+			);
+		const level = node?.classification || "unclassified";
+		const compartments = new Set(node?.compartments || []);
+		return { level, compartments };
+	}
+
+	/**
+	 * Wraps a DOM mutation function within a forensic envelope for auditable UI changes.
+	 *
+	 * @private
+	 * @param {Element} el Target element being mutated
+	 * @param {() => void} fn Mutation function (synchronous)
+	 * @param {Record<string, any>} meta Additional metadata to include in envelope
+	 * @returns {Promise<void>}
+	 */
+	async #mutate(el, fn, meta) {
+		/* copilotGuard:require-forensic-envelope */
+		// Start creating the forensic envelope but don't await it — perform the
+		// mutation synchronously so callers and tests see immediate updates.
+		const envPromise = this.#deps.forensicLogger.createEnvelope(
+			"DOM_MUTATION",
+			{
+				target: el.tagName,
+				...meta,
 			}
+		);
+		try {
+			fn();
+			// When the envelope is available, commit it. Fire-and-forget; swallow
+			// errors to avoid disrupting the UI path. Chain commitEnvelope so
+			// promise nesting is avoided.
+			envPromise
+				.then((env) => this.#deps.forensicLogger.commitEnvelope(env))
+				.catch(() => {
+					/* envelope creation or commit failed — swallow to avoid UI disruption */
+				});
+		} catch (e) {
+			// If the mutation itself throws, attempt to commit any envelope when
+			// available and then rethrow to surface the error.
+			envPromise
+				.then((env) => this.#deps.forensicLogger.commitEnvelope(env))
+				.catch(() => {});
+			throw e;
+		}
+	}
 
-			// Subscribe to state changes to keep element in sync
-			const unsub = this.stateManager.on(
-				"stateChange",
-				({ path: changed, value }) => {
-					if (changed === path && !disposed) {
-						if (
-							el.matches &&
-							el.matches("input, textarea, select")
-						) {
-							if (document.activeElement !== el)
-								el.value = this._format(value);
-						} else {
-							el.textContent = this._format(value);
-						}
-					}
+	// ---------------------------------------------------------------------------
+	// Two-way binding
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Sets up two-way data binding for an input element, updating state on user input.
+	 *
+	 * @private
+	 * @param {Element} el Input element to observe
+	 * @param {string} path State path to update
+	 * @param {BindingOptions} opts Binding options
+	 * @returns {void}
+	 */
+	#wireTwoWay(el, path, opts) {
+		const handler = async (e) => {
+			const newVal = /** @type {HTMLInputElement|any} */ (e.target).value;
+			/* copilotGuard:require-forensic-envelope */
+			const env = await this.#deps.forensicLogger.createEnvelope(
+				"UI_BIND_MUTATION",
+				{
+					path,
+					value: newVal,
+					source: "input",
 				}
 			);
+			try {
+				await this.#deps.stateManager.set?.(path, newVal);
+				await this.#deps.forensicLogger.commitEnvelope(env);
+			} catch (err) {
+				await this.#deps.forensicLogger.commitEnvelope(env);
+				throw err;
+			}
+		};
 
-			this.bindings.set(el, () => {
-				markDisposed();
-				if (typeof unsub === "function")
-					try {
-						unsub();
-					} catch (e) {}
-			});
-		})();
+		el.addEventListener("input", handler);
+		el.addEventListener("change", handler);
+
+		// Store unsub alongside existing
+		const meta = this.#bindings.get(el);
+		const prevUnsub = meta?.unsub;
+		const unsub = () => {
+			el.removeEventListener("input", handler);
+			el.removeEventListener("change", handler);
+			prevUnsub?.();
+		};
+		if (meta) this.#bindings.set(el, { ...meta, unsub });
 	}
+}
 
-	/**
-	 * Unregister a previously registered element.
-	 * @param {HTMLElement} el
-	 */
-	unregister(el) {
-		const unsub = this.bindings.get(el);
-		if (typeof unsub === "function") unsub();
-		this.bindings.delete(el);
-	}
+// -----------------------------------------------------------------------------
+// Optional service helper for SystemBootstrap
+// -----------------------------------------------------------------------------
 
-	_format(v) {
-		return v == null ? "" : String(v);
-	}
-
-	/**
-	 * Dispose this engine and remove all registrations.
-	 */
-	dispose() {
-		for (const unsub of this.bindings.values())
-			if (typeof unsub === "function") unsub();
-		this.bindings.clear();
+/**
+ * Create, start and return a BindEngine instance.
+ * Useful for SystemBootstrap wiring where a running service instance is required.
+ *
+ * @param {BindEngineDeps} deps
+ * @returns {Promise<BindEngine>} Resolves to the running BindEngine instance
+ */
+export async function createBindEngineService(deps) {
+	/* copilotGuard:require-forensic-envelope */
+	/* ForensicLogger.createEnvelope */
+	const env = await deps.forensicLogger.createEnvelope("SERVICE_START", {
+		service: "BindEngine",
+		context: "bootstrap",
+	});
+	try {
+		const engine = new BindEngine(deps);
+		await engine.start(document);
+		await deps.forensicLogger.commitEnvelope(env);
+		return engine;
+	} catch (err) {
+		await deps.forensicLogger.commitEnvelope(env);
+		throw err;
 	}
 }

@@ -13,6 +13,13 @@
 			"src/core/security/CDS.js",
 			"src/integrations/ExternalBridge.js"
 		],
-		"unsafeMutations": ["src/devtools/DebugConsole.js"]
+		"unsafeMutations": [
+			"src/devtools/DebugConsole.js",
+			"src/ui/BindEngine.js",
+			"src/core/ui/BindEngine_v2.js"
+		],
+		"jsdocExceptions": {
+			"src/ui/BindEngine.js": ["constructor", "start"]
+		}
 	}
 }

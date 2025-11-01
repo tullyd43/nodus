@@ -1,4 +1,3 @@
-import { SafeDOM } from '@core/ui/SafeDOM.js';
 import { ForensicLogger } from '@core/security/ForensicLogger.js';
 /**
  * @file GridBootstrap.js
@@ -38,7 +37,7 @@ export class GridBootstrap {
 
 	 */
 
-	constructor(container, stateManager, options = {}) {
+		constructor(container, stateManager, options = {}) {
 		this.#container = container;
 		this.#stateManager = stateManager;
 		// V8.0 Parity: Mandate 1.2 - Access ModernIndexedDB from the stateManager
@@ -71,7 +70,7 @@ export class GridBootstrap {
 
 	 */
 
-	async render() {
+		async render() {
 		this.#container.textContent = ""; // [auto: innerHTML → SafeDOM.setText()]
 		this.#container.classList.add("nodus-grid");
 
@@ -94,7 +93,7 @@ export class GridBootstrap {
 		 */
 
 
-		for (const item of items) {
+				for (const item of items) {
 			const cell = document.createElement("div");
 			cell.classList.add("grid-cell", `density-${this.#options.density}`);
 			cell.dataset.entityId = item.id;
@@ -144,8 +143,8 @@ export class GridBootstrap {
 	 */
 
 
-	updateGridTemplate() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		updateGridTemplate() {
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const cellCount = this.cells.size || 1;
 		const cols = Math.min(
 			this.options.maxCols,
@@ -172,7 +171,7 @@ export class GridBootstrap {
 
 	 */
 
-	attachCellEvents(cell, item) {
+		attachCellEvents(cell, item) {
 		cell.addEventListener("click", () => {
 			// V8.0 Parity: Use arrow function to maintain correct `this` context.
 			this.#stateManager.emit("grid.cell.selected", item);
@@ -208,7 +207,7 @@ export class GridBootstrap {
 
 		 */
 
-		switch (this.options.density) {
+				switch (this.options.density) {
 			case "compact": // V8.0 Parity: Use const for readability.
 				return "0.25rem"; // V8.0 Parity: Use const for readability.
 			case "spacious":
@@ -238,7 +237,7 @@ export class GridBootstrap {
 
 			 */
 
-			if (pref.type === "grid_density") {
+						if (pref.type === "grid_density") {
 				this.#options.density = pref.value;
 				this.updateGridTemplate(); // V8.0 Parity: Call updateGridTemplate to refresh the grid.
 			}
@@ -251,7 +250,7 @@ export class GridBootstrap {
 	 * @returns {void}
 	 */
 	#updateResponsiveLayout() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
+		  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
   const width = window.innerWidth;
 		if (width < 600) this.#options.density = "compact";
 		else if (width > 1600) this.#options.density = "spacious";
@@ -261,3 +260,4 @@ export class GridBootstrap {
 }
 
 export default GridBootstrap;
+

@@ -33,7 +33,7 @@ export function getCryptoDomain({ classification, compartments = [] }) {
 
 	 */
 
-	if (!classification) {
+		if (!classification) {
 		// Per Mandate 5.1, errors should be specific and helpful.
 		throw new TypeError(
 			"[getCryptoDomain] Classification is required to determine a crypto domain."

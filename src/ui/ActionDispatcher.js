@@ -8,7 +8,7 @@ export class ActionDispatcher {
 
 	 */
 
-	constructor({ hybridStateManager }) {
+		constructor({ hybridStateManager }) {
 		this.hybridStateManager = hybridStateManager;
 		this.audit = hybridStateManager.forensicLogger;
 		this.mac = hybridStateManager.mac;
@@ -26,11 +26,11 @@ export class ActionDispatcher {
 	 */
 
 
-	attach(root = document) {
+		attach(root = document) {
 		root.addEventListener("click", (e) => this._handle(e));
 	}
 
-	async _handle(e) {
+		async _handle(e) {
 		const el = e.target.closest("[data-action]");
 		if (!el) return;
 		const action = el.dataset.action;
@@ -52,7 +52,7 @@ export class ActionDispatcher {
 			 */
 
 
-			switch (action) {
+						switch (action) {
 				case "save":
 					this.mac.enforceNoWriteDown(this.mac.subject(), label);
 					await this.hybridStateManager.saveEntity(entity);

@@ -72,7 +72,6 @@ export class SecurityExplainer {
 
 	 */
 
-
 	dispose() {
 		for (const u of this._unsubs)
 			try {
@@ -94,7 +93,6 @@ export class SecurityExplainer {
 
 	 */
 
-
 	toggle() {
 		this._panel.classList.toggle("collapsed");
 	}
@@ -110,7 +108,6 @@ export class SecurityExplainer {
 
 	 */
 
-
 	clear() {
 		this.events.length = 0;
 		this._panel.querySelector(".sec-body").textContent = ""; // [auto: innerHTML → SafeDOM.setText()]
@@ -119,47 +116,62 @@ export class SecurityExplainer {
 	_buildPanel() {
 		const panel = document.createElement("div");
 		panel.className = `sec-hud ${this.position}`;
-		panel.innerHTML = `
-      <style>
-        .sec-hud {
-          position: fixed; font: 12px/1.4 system-ui,Segoe UI,Roboto,Arial;
-          background: rgba(10,10,14,.92); color:#d5e1ff; width: 420px; max-height: 50vh;
-          border:1px solid #2b3552; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.45);
-          overflow: hidden; z-index: 99999; backdrop-filter: blur(6px)
-        }
-        .sec-hud.bottom-right { right: 16px; bottom: 16px; }
-        .sec-hud.bottom-left { left: 16px; bottom: 16px; }
-        .sec-hud.top-right { right: 16px; top: 16px; }
-        .sec-hud.top-left { left: 16px; top: 16px; }
-        .sec-hud.collapsed .sec-body { display:none }
-        .sec-header { display:flex; align-items:center; gap:8px; padding:8px 10px; background:#0f1424; border-bottom:1px solid #2b3552 }
-        .sec-header .title { font-weight: 700; letter-spacing:.2px; flex:1 }
-        .sec-header button { background:#1a2442; color:#c6d4ff; border:1px solid #2b3552; border-radius:6px; padding:4px 8px; cursor:pointer }
-        .sec-body { overflow:auto; max-height: calc(50vh - 40px); }
-        .sec-row { display:grid; grid-template-columns: 60px 56px 1fr; gap:8px; padding:8px 10px; border-bottom:1px dashed #2b3552 }
-        .tag { font-weight:700; color:#93b4ff }
-        .pill { padding:0 6px; border-radius: 6px; display:inline-block; border:1px solid #2b3552; background:#131b31; font-size: 11px; color:#a3baff }
-        .muted { color:#7b88a8 }
-        .level-U { color:#a0ffd1 } .level-C { color:#ffd48a } .level-S { color:#ff9aa2 } .level-NS { color:#fca0ff }
-        .kv { display:flex; gap:6px; flex-wrap: wrap }
-        .kv .k { color:#8aa3ff } .kv .v { color:#c7d4ff }
-        .monos { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px }
-      </style>
-      <div class="sec-header">
-        <div class="title">Security Explainer</div>
-        <button data-cmd="collapse">Toggle</button>
-        <button data-cmd="clear">Clear</button>
-      </div>
-      <div class="sec-body"></div>
-    `;
+
+		// Styles
+		const style = document.createElement("style");
+		style.textContent = `
+				.sec-hud {
+					position: fixed; font: 12px/1.4 system-ui,Segoe UI,Roboto,Arial;
+					background: rgba(10,10,14,.92); color:#d5e1ff; width: 420px; max-height: 50vh;
+					border:1px solid #2b3552; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.45);
+					overflow: hidden; z-index: 99999; backdrop-filter: blur(6px)
+				}
+				.sec-hud.bottom-right { right: 16px; bottom: 16px; }
+				.sec-hud.bottom-left { left: 16px; bottom: 16px; }
+				.sec-hud.top-right { right: 16px; top: 16px; }
+				.sec-hud.top-left { left: 16px; top: 16px; }
+				.sec-hud.collapsed .sec-body { display:none }
+				.sec-header { display:flex; align-items:center; gap:8px; padding:8px 10px; background:#0f1424; border-bottom:1px solid #2b3552 }
+				.sec-header .title { font-weight: 700; letter-spacing:.2px; flex:1 }
+				.sec-header button { background:#1a2442; color:#c6d4ff; border:1px solid #2b3552; border-radius:6px; padding:4px 8px; cursor:pointer }
+				.sec-body { overflow:auto; max-height: calc(50vh - 40px); }
+				.sec-row { display:grid; grid-template-columns: 60px 56px 1fr; gap:8px; padding:8px 10px; border-bottom:1px dashed #2b3552 }
+				.tag { font-weight:700; color:#93b4ff }
+				.pill { padding:0 6px; border-radius: 6px; display:inline-block; border:1px solid #2b3552; background:#131b31; font-size: 11px; color:#a3baff }
+				.muted { color:#7b88a8 }
+				.level-U { color:#a0ffd1 } .level-C { color:#ffd48a } .level-S { color:#ff9aa2 } .level-NS { color:#fca0ff }
+				.kv { display:flex; gap:6px; flex-wrap: wrap }
+				.kv .k { color:#8aa3ff } .kv .v { color:#c7d4ff }
+				.monos { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px }
+			`;
+
+		// Header
+		const header = document.createElement("div");
+		header.className = "sec-header";
+		const title = document.createElement("div");
+		title.className = "title";
+		title.textContent = "Security Explainer";
+		const btnCollapse = document.createElement("button");
+		btnCollapse.setAttribute("data-cmd", "collapse");
+		btnCollapse.textContent = "Toggle";
+		const btnClear = document.createElement("button");
+		btnClear.setAttribute("data-cmd", "clear");
+		btnClear.textContent = "Clear";
+		header.append(title, btnCollapse, btnClear);
+
+		// Body
+		const body = document.createElement("div");
+		body.className = "sec-body";
+
+		panel.appendChild(style);
+		panel.appendChild(header);
+		panel.appendChild(body);
+
 		requestAnimationFrame(() => {
-			panel
-				.querySelector('[data-cmd="collapse"]')
-				?.addEventListener("click", () => this.toggle());
-			panel
-				.querySelector('[data-cmd="clear"]')
-				?.addEventListener("click", () => this.clear());
+			btnCollapse.addEventListener("click", () => this.toggle());
+			btnClear.addEventListener("click", () => this.clear());
 		});
+
 		return panel;
 	}
 
@@ -193,28 +205,70 @@ export class SecurityExplainer {
 			payload?.classification_level ??
 			"unclassified";
 
-		row.innerHTML = `
-      <div class="muted monos">${when}</div>
-      <div class="tag ${klass(lvl)}">${tag}</div>
-      <div>
-        <div class="kv">
-          ${this._kv("level", lvl)}
-          ${this._kv("compartments", (payload?.label?.compartments ?? payload?.compartments ?? []).join(","))}
-          ${payload?.logical_id ? this._kv("logical_id", payload.logical_id) : ""}
-          ${payload?.id ? this._kv("id", payload.id) : ""}
-          ${payload?.operation ? this._kv("op", payload.operation) : ""}
-          ${payload?.reason ? this._kv("reason", payload.reason) : ""}
-        </div>
-        ${payload?.explain ? `<div class="muted monos">${payload.explain}</div>` : ""}
-      </div>
-    `;
+		// when
+		const whenEl = document.createElement("div");
+		whenEl.className = "muted monos";
+		whenEl.textContent = when;
+		// tag
+		const tagEl = document.createElement("div");
+		tagEl.className = `tag ${klass(lvl)}`;
+		tagEl.textContent = tag;
+		// right content
+		const right = document.createElement("div");
+		const kv = document.createElement("div");
+		kv.className = "kv";
+
+		const addKv = (el) => {
+			if (!el) return;
+			kv.appendChild(el);
+		};
+
+		addKv(this._kv("level", lvl));
+		addKv(
+			this._kv(
+				"compartments",
+				(
+					payload?.label?.compartments ??
+					payload?.compartments ??
+					[]
+				).join(",")
+			)
+		);
+		addKv(this._kv("logical_id", payload?.logical_id));
+		addKv(this._kv("id", payload?.id));
+		addKv(this._kv("op", payload?.operation));
+		addKv(this._kv("reason", payload?.reason));
+
+		right.appendChild(kv);
+		if (payload?.explain) {
+			const explainEl = document.createElement("div");
+			explainEl.className = "muted monos";
+			explainEl.textContent = payload.explain;
+			right.appendChild(explainEl);
+		}
+
+		row.appendChild(whenEl);
+		row.appendChild(tagEl);
+		row.appendChild(right);
+
 		body.appendChild(row);
 		body.scrollTop = body.scrollHeight;
 	}
 
 	_kv(k, v) {
-		if (v == null || v === "") return "";
-		return `<span class="pill"><span class="k">${k}:</span> <span class="v monos">${String(v)}</span></span>`;
+		if (v == null || v === "") return null;
+		const span = document.createElement("span");
+		span.className = "pill";
+		const kEl = document.createElement("span");
+		kEl.className = "k";
+		kEl.textContent = `${k}:`;
+		const vEl = document.createElement("span");
+		vEl.className = "v monos";
+		vEl.textContent = String(v);
+		span.appendChild(kEl);
+		span.appendChild(document.createTextNode(" "));
+		span.appendChild(vEl);
+		return span;
 	}
 }
 

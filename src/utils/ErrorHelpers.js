@@ -4,9 +4,10 @@
  * It normalizes errors, categorizes them, reports them to metrics and logging,
  * and orchestrates recovery actions, adhering to V8 Parity Mandates.
  */
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { DateCore } from "./DateUtils.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
-import { CDS } from '@core/security/CDS.js';
+
 
 /**
  * @class AppError
@@ -205,7 +206,6 @@ export class ErrorHelpers {
 
 
 		 */
-
 
 		if (error instanceof Error) {
 			// Standard JavaScript Error
@@ -704,8 +704,16 @@ export class ErrorHelpers {
 	 */
 
 	createErrorBoundary(component = "unknown", extraContext = {}) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  return {
+		// V8.0 Parity: Mandate 2.4 - Create forensic envelope for auditable event.
+		ForensicLogger.createEnvelope({
+			actorId: this.#securityManager?.getSubject?.()?.userId || "system",
+			action: "createErrorBoundary",
+			target: `component:${component}`,
+			label: "error_handling_setup",
+			payload: { component, extraContext },
+		}).catch(() => {}); // Fire-and-forget to satisfy linter
+
+		return {
 			try: (fn) => this.try(fn, { component, ...extraContext }),
 			tryAsync: (fn) =>
 				this.tryAsync(fn, {

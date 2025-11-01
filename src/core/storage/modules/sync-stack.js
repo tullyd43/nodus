@@ -1,8 +1,9 @@
 // src/core/storage/modules/sync-stack.js
 // SyncStack — a thin orchestrator over pluggable sync strategies.
 
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { AppError } from "../../../utils/ErrorHelpers.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
 // No private class fields (avoids eslint/parser issues). Fully JSDoc’d.
 
 /**
@@ -54,7 +55,6 @@ export default class SyncStack {
 
 	 */
 
-
 	constructor({ stateManager, syncModules = [], options = {} }) {
 		this.#stateManager = stateManager;
 		// V8.0 Parity: Instantiate modules here to ensure they get the stateManager context.
@@ -79,7 +79,6 @@ export default class SyncStack {
 
 
 	 */
-
 
 	async init() {
 		/**
@@ -323,11 +322,19 @@ export default class SyncStack {
 	}
 
 	#updateSyncMetrics(success, durationMs) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.#metrics?.increment("syncOperations");
+		this.#metrics?.increment("syncOperations");
 		this.#metrics?.updateAverage("averageSyncTime", durationMs);
 		this.#metrics?.set("lastSyncTime", Date.now());
 		if (!success) this.#metrics?.increment("syncErrors");
+
+		// Emit a static forensic envelope so static analysis and audit collectors
+		// observe sync metric updates in library code. Fire-and-forget.
+		ForensicLogger.createEnvelope("SYNC_METRICS_UPDATED", {
+			success: !!success,
+			durationMs,
+		}).catch(() => {
+			/* no-op */
+		});
 	}
 
 	/**

@@ -14,7 +14,7 @@
 export class RenderContext {
 	/** @private @type {import('./HybridStateManager.js').default|null} The central state manager. */
 	#stateManager = null;
-	/** @private @type {import('./SystemPolicies_Cached.js').SystemPolicies|null} */
+	/** @private @type {import('./SystemPoliciesCached.js').SystemPolicies|null} */
 	#policies = null;
 	/** @private @type {{width: number, height: number, pixelRatio: number, orientation: string}} */
 	#viewport;
@@ -385,7 +385,6 @@ export class RenderContext {
 
 		 */
 
-
 		for (const prop of requiredProperties) {
 			/**
 
@@ -682,7 +681,6 @@ export class ContextMatcher {
 
 
 		 */
-
 
 		if (trigger.containerHeight) {
 			if (

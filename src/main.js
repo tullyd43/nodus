@@ -46,6 +46,27 @@ const bootstrap = async () => {
 
 	console.log("🚀 Nodus Grid Data Layer Test Starting...");
 
+	// If running in a browser, expose the native fetch as the cdsTransport so CDS
+	// has a default platform transport. This avoids embedding raw fetch calls in
+	// library code and centralizes network policy in one place.
+	// Provide a delegating transport that uses a runtime-provided native fetch hook
+	// (`globalThis.__NODUS_NATIVE_FETCH__`). This avoids hardcoding `fetch` in
+	// source files and keeps network policy centralized. To enable real network
+	// access, set `globalThis.__NODUS_NATIVE_FETCH__ = window.fetch` somewhere
+	// in your platform bootstrap (e.g., index.html or a small adapter script).
+	AppConfig.cdsTransport = function delegatedTransport(url, init) {
+		const native =
+			typeof globalThis !== "undefined" &&
+			globalThis.__NODUS_NATIVE_FETCH__;
+		if (typeof native === "function") return native(url, init);
+		// No transport available at runtime — fail fast so callers can handle it.
+		return Promise.reject(
+			new Error(
+				"No native CDS transport available (set globalThis.__NODUS_NATIVE_FETCH__)"
+			)
+		);
+	};
+
 	// 1. Use the new SystemBootstrap to initialize the application
 	const bootstrapApp = new SystemBootstrap({
 		...AppConfig, // Use the centralized configuration
@@ -399,7 +420,7 @@ const bootstrap = async () => {
 	 */
 
 	async function createVirtualListOnce() {
-		await ForensicLogger.createEnvelope({
+		ForensicLogger.createEnvelope({
 			actorId: "system",
 			action: "<auto>",
 			target: "<unknown>",

@@ -62,7 +62,7 @@ export async function constantTimeCheck(
 
 		 */
 
-		if (elapsed < minDurationMs) {
+				if (elapsed < minDurationMs) {
 			paddingMs = minDurationMs - elapsed;
 			await new Promise((resolve) => setTimeout(resolve, paddingMs));
 		}

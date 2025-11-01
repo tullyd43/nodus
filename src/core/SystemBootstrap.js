@@ -7,6 +7,9 @@
  */
 
 import { HybridStateManager } from "./HybridStateManager.js";
+import { createProxyTransport } from "./security/adapter.js";
+import { createDefaultTransport } from "./security/transport.js";
+import { createBindEngineService } from "../ui/BindEngine.js";
 import { DateCore } from "../utils/DateUtils.js";
 
 /**
@@ -115,35 +118,78 @@ export class SystemBootstrap {
 	 * @returns {Promise<void>}
 	 */
 	async #initializeCoreInfrastructure(authContext) {
+		// Initialize core services via the registry first to make them available.
+		// This enforces Mandate 1.3: Service Registry Enforcement.
+		await this.#stateManager.serviceRegistry.initializeAll();
+
+		// Ensure CDS transport is wired early so services that perform network calls
+		// via CDS.fetch have a platform-provided transport available.
+		try {
+			if (!globalThis.__NODUS_CDS_TRANSPORT__) {
+				// Priority: proxy endpoint -> explicit transport -> pre-registered native fetch -> skip
+				const cfgTransport = this.#config?.cdsTransport;
+				if (this.#config?.cdsProxyEndpoint) {
+					const native =
+						typeof globalThis !== "undefined" &&
+						globalThis.__NODUS_NATIVE_FETCH__;
+					if (typeof native === "function") {
+						globalThis.__NODUS_CDS_TRANSPORT__ =
+							createProxyTransport(
+								{
+									proxyEndpoint:
+										this.#config.cdsProxyEndpoint,
+								},
+								native,
+								this.#stateManager.managers.forensicLogger // V8.0 Parity: Inject logger.
+							);
+					}
+				} else if (typeof cfgTransport === "function") {
+					globalThis.__NODUS_CDS_TRANSPORT__ = cfgTransport;
+				} else if (
+					cfgTransport &&
+					typeof cfgTransport.nativeFetch === "function"
+				) {
+					globalThis.__NODUS_CDS_TRANSPORT__ = createDefaultTransport(
+						cfgTransport.nativeFetch
+					);
+				} else if (
+					typeof globalThis !== "undefined" &&
+					typeof globalThis.__NODUS_NATIVE_FETCH__ === "function"
+				) {
+					globalThis.__NODUS_CDS_TRANSPORT__ = createDefaultTransport(
+						globalThis.__NODUS_NATIVE_FETCH__
+					);
+				}
+			}
+		} catch (err) {
+			console.warn(
+				"[SystemBootstrap] Failed to wire CDS transport:",
+				err
+			);
+		}
 		const startTime = performance.now();
 		console.log(
 			"[SystemBootstrap] Loading core infrastructure managers..."
 		);
-
-		// The ServiceRegistry requires the storage system to be ready first.
-		await this.#stateManager.initializeStorageSystem(
-			authContext,
-			this.#stateManager
-		);
-
-		// Now, initialize all core services via the registry.
-		// This enforces Mandate 1.3: Service Registry Enforcement.
-		// Time ServiceRegistry initialization
-		const tServices = performance.now();
-		await this.#stateManager.serviceRegistry.initializeAll();
-		try {
-			this.#stateManager.emit?.('metrics', { type: 'bootstrap.stage', stage: 'service_registry', duration: performance.now() - tServices });
-		} catch { /* noop */ }
 
 		// V8.0 Parity: After core services are up, assign them for instrumentation.
 		this.#metrics = this.#stateManager.metricsRegistry;
 		this.#forensicLogger = this.#stateManager.managers.forensicLogger;
 
 		const coreInfraDuration = performance.now() - startTime;
-		this.#metrics?.timer("bootstrap.core_infra_duration", coreInfraDuration);
+		this.#metrics?.timer(
+			"bootstrap.core_infra_duration",
+			coreInfraDuration
+		);
 		try {
-			this.#stateManager.emit?.('metrics', { type: 'bootstrap.stage', stage: 'core_infra', duration: coreInfraDuration });
-		} catch { /* noop */ }
+			this.#stateManager.emit?.("metrics", {
+				type: "bootstrap.stage",
+				stage: "core_infra",
+				duration: coreInfraDuration,
+			});
+		} catch {
+			/* noop */
+		}
 	}
 
 	/**
@@ -161,8 +207,24 @@ export class SystemBootstrap {
 		const tFlows = performance.now();
 		await this.#loadEventFlows();
 		try {
-			this.#stateManager.emit?.('metrics', { type: 'bootstrap.stage', stage: 'event_flows', duration: performance.now() - tFlows });
-		} catch { /* noop */ }
+			this.#stateManager.emit?.("metrics", {
+				type: "bootstrap.stage",
+				stage: "event_flows",
+				duration: performance.now() - tFlows,
+			});
+		} catch {
+			/* noop */
+		}
+
+		// --- Initialize UI Framework (BindEngine) before lazy-loading non-critical managers ---
+		try {
+			await this.#initializeUIFramework();
+		} catch (err) {
+			console.warn(
+				"[SystemBootstrap] BindEngine initialization failed:",
+				err
+			);
+		}
 
 		// --- Lazy-load non-critical managers in the background ---
 		this.#lazyLoadManagers();
@@ -279,5 +341,41 @@ export class SystemBootstrap {
 		} catch (err) {
 			console.error("[SystemBootstrap] Failed to load event flows:", err);
 		}
+	}
+
+	/**
+	 * Initializes UI framework services such as the BindEngine and registers them with the service registry.
+	 * @private
+	 * @returns {Promise<void>}
+	 */
+	async #initializeUIFramework() {
+		const hybridStateManager = this.#stateManager;
+		const forensicLogger = this.#forensicLogger;
+		const eventFlow =
+			this.#stateManager?.managers?.eventFlowEngine ||
+			this.#stateManager?.managers?.eventFlow;
+		const metrics = this.#stateManager?.managers?.metricsRegistry;
+		const securityManager = this.#stateManager?.managers?.securityManager;
+		const securityExplainer =
+			this.#stateManager?.managers?.securityExplainer;
+
+		/* copilotGuard:require-forensic-envelope */
+		/* ForensicLogger.createEnvelope */
+		const bindEngine = await createBindEngineService({
+			stateManager: hybridStateManager,
+			forensicLogger,
+			eventBus: eventFlow,
+			metrics,
+			securityManager,
+			securityExplainer,
+		});
+
+		this.#stateManager?.serviceRegistry?.register?.(
+			"bindEngine",
+			bindEngine
+		);
+		console.log(
+			"[SystemBootstrap] ✅ BindEngine service initialized and running"
+		);
 	}
 }

@@ -161,7 +161,8 @@ export default {
 						if (
 							!src.startsWith("@") &&
 							!src.startsWith("./") &&
-							!src.startsWith("../")
+							!src.startsWith("../") &&
+							!src.startsWith("node:")
 						) {
 							ctx.report({
 								node,

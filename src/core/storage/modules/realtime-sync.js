@@ -1,8 +1,9 @@
 // modules/realtime-sync.js
 // Real-time synchronization module for low-latency updates
 
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { AppError, StorageError } from "../../../utils/ErrorHelpers.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
 
 /**
  * @description
@@ -158,7 +159,6 @@ export default class RealtimeSync {
 
 		 */
 
-
 		if (callback) {
 			this.#subscriptions.get(entityType).delete(callback);
 		} else {
@@ -206,7 +206,6 @@ export default class RealtimeSync {
 
 
 		 */
-
 
 		for (const item of items) {
 			try {
@@ -398,7 +397,6 @@ export default class RealtimeSync {
 
 		 */
 
-
 		if (this.#connection) {
 			this.#connection.close();
 			this.#connection = null;
@@ -574,7 +572,6 @@ export default class RealtimeSync {
 
 			 */
 
-
 			switch (message.type) {
 				case "entity_update":
 					this.#handleEntityUpdate(message);
@@ -661,7 +658,6 @@ export default class RealtimeSync {
 
 		 */
 
-
 		if (callbacks) {
 			callbacks.forEach((callback) => {
 				try {
@@ -703,7 +699,6 @@ export default class RealtimeSync {
 
 
 		 */
-
 
 		if (callbacks) {
 			callbacks.forEach((callback) => {
@@ -879,8 +874,15 @@ export default class RealtimeSync {
 	 * @param {number} latency - The latency of the last message in milliseconds.
 	 */
 	#updateLatencyMetrics(latency) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.#metrics?.updateAverage("averageLatency", latency);
+		this.#metrics?.updateAverage("averageLatency", latency);
+
+		// Emit a static forensic envelope so static analysis and audit collectors
+		// observe latency updates in library code. Fire-and-forget.
+		ForensicLogger.createEnvelope("REALTIME_LATENCY_UPDATED", {
+			latency,
+		}).catch(() => {
+			/* no-op */
+		});
 	}
 
 	/**

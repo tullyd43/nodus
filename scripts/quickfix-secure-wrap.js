@@ -12,7 +12,7 @@ const rootDir = path.resolve("./src");
 const forensicImport =
 	"import { ForensicLogger } from '@core/security/ForensicLogger.js';";
 const forensicLine =
-	"await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });";
+	"ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });";
 
 function collectFiles(dir) {
 	let files = [];
@@ -113,3 +113,4 @@ console.log("🚀 Running Nodus QuickFix Secure Wrapper...");
 const allFiles = collectFiles(rootDir);
 allFiles.forEach(processFile);
 console.log(`✨ Completed: ${allFiles.length} files scanned.`);
+

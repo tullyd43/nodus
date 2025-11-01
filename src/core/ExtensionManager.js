@@ -38,7 +38,7 @@ export class ExtensionManager {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		// V8.0 Parity: Mandate 1.2 & 3.2 - Store stateManager privately and derive all dependencies.
 		this.#stateManager = stateManager;
 		this.#metrics =
@@ -59,7 +59,7 @@ export class ExtensionManager {
 
 	 */
 
-	async initialize() {
+		async initialize() {
 		await this.#errorHelpers?.tryOr(
 			() => {
 				console.log("[ExtensionManager] Initialized (stub)");
@@ -82,7 +82,7 @@ export class ExtensionManager {
 
 	 */
 
-	async discover() {
+		async discover() {
 		return this.#errorHelpers?.tryOr(
 			() => {
 				console.log("[ExtensionManager] Discovery placeholder");
@@ -108,7 +108,7 @@ export class ExtensionManager {
 
 	 */
 
-	registerExtension(id, extension) {
+		registerExtension(id, extension) {
 		this.#extensions.set(id, extension);
 		this.#metrics?.increment("registered");
 		console.log(`[ExtensionManager] Registered extension: ${id}`);
@@ -128,7 +128,7 @@ export class ExtensionManager {
 
 	 */
 
-	getExtension(id) {
+		getExtension(id) {
 		return this.#extensions.get(id);
 	}
 
@@ -145,7 +145,7 @@ export class ExtensionManager {
 
 	 */
 
-	cleanup() {
+		cleanup() {
 		this.#extensions.clear();
 		console.log("[ExtensionManager] Cleaned up (stub).");
 	}

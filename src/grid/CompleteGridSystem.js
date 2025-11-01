@@ -14,9 +14,9 @@
  * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #initialized, #unsubscribeFunctions}
  * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #gridPolicyService, #initialized, #unsubscribeFunctions}
  */
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { GridHistoryInspector } from "./GridHistoryInspector.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
-import { SafeDOM } from '@core/ui/SafeDOM.js';
 import { componentRegistry } from "./runtime/ComponentRegistry.js";
 import { normalizeConfig } from "./runtime/GridRuntimeConfig.js";
 import { LayoutStore } from "./runtime/LayoutStore.js";
@@ -228,7 +228,6 @@ export class CompleteGridSystem {
 
 			 */
 
-
 			if (this.#toastManager) {
 				this.#toastManager.error(
 					"Failed to initialize grid enhancements",
@@ -332,25 +331,73 @@ export class CompleteGridSystem {
 		const card = document.createElement("div");
 		card.style.cssText =
 			"background:#fff;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,0.3);width:420px;max-width:90vw;padding:16px;";
-		card.innerHTML = `
-			<h3 style="margin:0 0 10px">Add Grid Block</h3>
-			<label style="display:block;margin-bottom:8px">
-				<span>Component Type</span>
-				<select id="gb-type" style="width:100%;padding:8px;margin-top:4px">
-					<option value="block">Block</option>
-					<option value="text">Text</option>
-					<option value="html">HTML</option>
-				</select>
-			</label>
-			<label style="display:block;margin-bottom:8px">
-				<span>Title/Text</span>
-				<input id="gb-title" type="text" style="width:100%;padding:8px;margin-top:4px" placeholder="Title or text"/>
-			</label>
-			<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-				<button id="gb-cancel" style="padding:8px 12px">Cancel</button>
-				<button id="gb-add" style="padding:8px 12px;background:#2b7cff;color:#fff;border:0;border-radius:6px">Add</button>
-			</div>
-		`;
+		// Build modal content programmatically to avoid innerHTML usage
+		const header = document.createElement("h3");
+		header.style.margin = "0 0 10px";
+		header.textContent = "Add Grid Block";
+
+		const typeLabel = document.createElement("label");
+		typeLabel.style.display = "block";
+		typeLabel.style.marginBottom = "8px";
+		const typeSpan = document.createElement("span");
+		typeSpan.textContent = "Component Type";
+		const typeSelect = document.createElement("select");
+		typeSelect.id = "gb-type";
+		typeSelect.style.width = "100%";
+		typeSelect.style.padding = "8px";
+		typeSelect.style.marginTop = "4px";
+		[
+			["block", "Block"],
+			["text", "Text"],
+			["html", "HTML"],
+		].forEach(([val, label]) => {
+			const opt = document.createElement("option");
+			opt.value = val;
+			opt.textContent = label;
+			typeSelect.appendChild(opt);
+		});
+		typeLabel.appendChild(typeSpan);
+		typeLabel.appendChild(typeSelect);
+
+		const titleLabel = document.createElement("label");
+		titleLabel.style.display = "block";
+		titleLabel.style.marginBottom = "8px";
+		const titleSpan = document.createElement("span");
+		titleSpan.textContent = "Title/Text";
+		const titleInput = document.createElement("input");
+		titleInput.id = "gb-title";
+		titleInput.type = "text";
+		titleInput.style.width = "100%";
+		titleInput.style.padding = "8px";
+		titleInput.style.marginTop = "4px";
+		titleInput.placeholder = "Title or text";
+		titleLabel.appendChild(titleSpan);
+		titleLabel.appendChild(titleInput);
+
+		const actions = document.createElement("div");
+		actions.style.display = "flex";
+		actions.style.gap = "8px";
+		actions.style.justifyContent = "flex-end";
+		actions.style.marginTop = "12px";
+		const cancelBtn = document.createElement("button");
+		cancelBtn.id = "gb-cancel";
+		cancelBtn.style.padding = "8px 12px";
+		cancelBtn.textContent = "Cancel";
+		const addBtn = document.createElement("button");
+		addBtn.id = "gb-add";
+		addBtn.style.padding = "8px 12px";
+		addBtn.style.background = "#2b7cff";
+		addBtn.style.color = "#fff";
+		addBtn.style.border = "0";
+		addBtn.style.borderRadius = "6px";
+		addBtn.textContent = "Add";
+		actions.appendChild(cancelBtn);
+		actions.appendChild(addBtn);
+
+		card.appendChild(header);
+		card.appendChild(typeLabel);
+		card.appendChild(titleLabel);
+		card.appendChild(actions);
 		wrap.appendChild(card);
 		document.body.appendChild(wrap);
 		const cancel = () => wrap.remove();
@@ -625,8 +672,13 @@ export class CompleteGridSystem {
 	 */
 
 	async saveRuntimeConfig(id = "default", scope = null) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  try {
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		try {
 			if (!this.#layoutStore || !this.#runtimeConfig) return;
 			const sc = scope || this.#computeScopeFromPolicy();
 			// V8.0 Parity: Add retry logic for constraint errors
@@ -762,8 +814,13 @@ export class CompleteGridSystem {
 	 */
 
 	async saveRuntimeLayout(id = "default", scope = null) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  try {
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		try {
 			const layout = this.#gridEnhancer?.getCurrentLayout?.();
 			if (!layout || !this.#layoutStore) return;
 			const sc = scope || this.#computeScopeFromPolicy();
@@ -964,7 +1021,6 @@ export class CompleteGridSystem {
 
 
 			 */
-
 
 			if (this.#options.enableAI) {
 				this.#unsubscribeFunctions.push(
@@ -1291,7 +1347,6 @@ export class CompleteGridSystem {
 
 	 */
 
-
 	redoLayoutChange() {
 		try {
 			// V8.0 Parity: Use the state manager's history API for redo.
@@ -1348,83 +1403,171 @@ export class CompleteGridSystem {
 	 * @returns {HTMLElement} The control panel element.
 	 */
 	#createPolicyControlPanel() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const panel = document.createElement("div");
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		const panel = document.createElement("div");
 		panel.className = "grid-policy-panel";
-		panel.innerHTML = `
-      <h4>Grid Settings</h4>
-      
-      <div class="policy-control">
-        <label>
-          <input type="checkbox" id="perf-mode-toggle"> 
-          Performance Mode
-        </label>
-        <small>Override automatic FPS-based switching</small>
-      </div>
-      
-      <div class="policy-control">
-        <label>
-          <input type="checkbox" id="auto-save-toggle" checked> 
-          Auto-save Layouts
-        </label>
-      </div>
-      
-      <div class="policy-control">
-        <label>
-          <input type="checkbox" id="save-feedback-toggle" checked> 
-          Save Notifications
-        </label>
-      </div>
-      
-      <div class="policy-control">
-        <label>
-          <input type="checkbox" id="ai-suggestions-toggle"> 
-          AI Suggestions <span class="badge">Future</span>
-        </label>
-      </div>
 
-      <hr style="margin: 12px 0;"/>
-      <h5>Tenant Overrides</h5>
-      <small>Applies only to this tenant. Use Revert to return to global policy.</small>
+		// Header
+		const header = document.createElement("h4");
+		header.textContent = "Grid Settings";
+		panel.appendChild(header);
 
-      <div class="policy-control" style="margin-top:8px; display:flex; align-items:center; gap:8px;">
-        <label style="min-width:150px;">Performance Mode</label>
-        <select id="tenant-perf-mode">
-          <option value="auto">Use Global / Auto</option>
-          <option value="on">Force On</option>
-          <option value="off">Force Off</option>
-        </select>
-        <button id="tenant-perf-revert" class="btn-secondary" style="margin-left:auto;">Revert</button>
-      </div>
+		// helper to create checkbox control rows
+		const checkboxControl = (id, labelText, help) => {
+			const wrap = document.createElement("div");
+			wrap.className = "policy-control";
+			const label = document.createElement("label");
+			const input = document.createElement("input");
+			input.type = "checkbox";
+			input.id = id;
+			label.appendChild(input);
+			label.appendChild(document.createTextNode(" " + labelText));
+			wrap.appendChild(label);
+			if (help) {
+				const small = document.createElement("small");
+				small.textContent = help;
+				wrap.appendChild(small);
+			}
+			return wrap;
+		};
 
-      <div class="policy-control" style="display:flex; align-items:center; gap:8px;">
-        <label style="min-width:150px;">
-          <input type="checkbox" id="tenant-auto-save-toggle"> Auto-save Layouts
-        </label>
-        <button id="tenant-auto-save-revert" class="btn-secondary" style="margin-left:auto;">Revert</button>
-      </div>
+		panel.appendChild(
+			checkboxControl(
+				"perf-mode-toggle",
+				"Performance Mode",
+				"Override automatic FPS-based switching"
+			)
+		);
+		panel.appendChild(
+			checkboxControl("auto-save-toggle", "Auto-save Layouts")
+		);
+		panel.appendChild(
+			checkboxControl("save-feedback-toggle", "Save Notifications")
+		);
+		panel.appendChild(
+			checkboxControl("ai-suggestions-toggle", "AI Suggestions")
+		);
 
-      <div class="policy-control" style="display:flex; align-items:center; gap:8px;">
-        <label style="min-width:150px;">
-          <input type="checkbox" id="tenant-save-feedback-toggle"> Save Notifications
-        </label>
-        <button id="tenant-save-feedback-revert" class="btn-secondary" style="margin-left:auto;">Revert</button>
-      </div>
+		// Tenant section
+		panel.appendChild(document.createElement("hr"));
+		const tHead = document.createElement("h5");
+		tHead.textContent = "Tenant Overrides";
+		panel.appendChild(tHead);
+		const tInfo = document.createElement("small");
+		tInfo.textContent =
+			"Applies only to this tenant. Use Revert to return to global policy.";
+		panel.appendChild(tInfo);
 
-      ${
-			this.#options.enableNesting
-				? `
-      <div class="policy-control" style="display:flex; align-items:center; gap:8px;">
-        <label style="min-width:150px;">
-          <input type="checkbox" id="tenant-nesting-toggle"> Enable Nesting
-        </label>
-        <button id="tenant-nesting-revert" class="btn-secondary" style="margin-left:auto;">Revert</button>
-      </div>`
-				: ""
+		// Tenant: performance select
+		const tenantPerfRow = document.createElement("div");
+		tenantPerfRow.className = "policy-control";
+		tenantPerfRow.style.cssText =
+			"margin-top:8px; display:flex; align-items:center; gap:8px;";
+		const perfLabel = document.createElement("label");
+		perfLabel.style.minWidth = "150px";
+		perfLabel.textContent = "Performance Mode";
+		const perfSelect = document.createElement("select");
+		perfSelect.id = "tenant-perf-mode";
+		[
+			["auto", "Use Global / Auto"],
+			["on", "Force On"],
+			["off", "Force Off"],
+		].forEach(([v, t]) => {
+			const o = document.createElement("option");
+			o.value = v;
+			o.textContent = t;
+			perfSelect.appendChild(o);
+		});
+		const perfRevert = document.createElement("button");
+		perfRevert.id = "tenant-perf-revert";
+		perfRevert.className = "btn-secondary";
+		perfRevert.style.marginLeft = "auto";
+		perfRevert.textContent = "Revert";
+		tenantPerfRow.appendChild(perfLabel);
+		tenantPerfRow.appendChild(perfSelect);
+		tenantPerfRow.appendChild(perfRevert);
+		panel.appendChild(tenantPerfRow);
+
+		// Tenant: auto save
+		const tenantAutoRow = document.createElement("div");
+		tenantAutoRow.className = "policy-control";
+		tenantAutoRow.style.cssText =
+			"display:flex; align-items:center; gap:8px;";
+		const tenantAutoLabel = document.createElement("label");
+		tenantAutoLabel.style.minWidth = "150px";
+		const tenantAutoInput = document.createElement("input");
+		tenantAutoInput.type = "checkbox";
+		tenantAutoInput.id = "tenant-auto-save-toggle";
+		tenantAutoLabel.appendChild(tenantAutoInput);
+		tenantAutoLabel.appendChild(
+			document.createTextNode(" Auto-save Layouts")
+		);
+		const tenantAutoRevert = document.createElement("button");
+		tenantAutoRevert.id = "tenant-auto-save-revert";
+		tenantAutoRevert.className = "btn-secondary";
+		tenantAutoRevert.style.marginLeft = "auto";
+		tenantAutoRevert.textContent = "Revert";
+		tenantAutoRow.appendChild(tenantAutoLabel);
+		tenantAutoRow.appendChild(tenantAutoRevert);
+		panel.appendChild(tenantAutoRow);
+
+		// Tenant: save feedback
+		const tenantSaveRow = document.createElement("div");
+		tenantSaveRow.className = "policy-control";
+		tenantSaveRow.style.cssText =
+			"display:flex; align-items:center; gap:8px;";
+		const tenantSaveLabel = document.createElement("label");
+		tenantSaveLabel.style.minWidth = "150px";
+		const tenantSaveInput = document.createElement("input");
+		tenantSaveInput.type = "checkbox";
+		tenantSaveInput.id = "tenant-save-feedback-toggle";
+		tenantSaveLabel.appendChild(tenantSaveInput);
+		tenantSaveLabel.appendChild(
+			document.createTextNode(" Save Notifications")
+		);
+		const tenantSaveRevert = document.createElement("button");
+		tenantSaveRevert.id = "tenant-save-feedback-revert";
+		tenantSaveRevert.className = "btn-secondary";
+		tenantSaveRevert.style.marginLeft = "auto";
+		tenantSaveRevert.textContent = "Revert";
+		tenantSaveRow.appendChild(tenantSaveLabel);
+		tenantSaveRow.appendChild(tenantSaveRevert);
+		panel.appendChild(tenantSaveRow);
+
+		if (this.#options.enableNesting) {
+			const tenantNestRow = document.createElement("div");
+			tenantNestRow.className = "policy-control";
+			tenantNestRow.style.cssText =
+				"display:flex; align-items:center; gap:8px;";
+			const tenantNestLabel = document.createElement("label");
+			tenantNestLabel.style.minWidth = "150px";
+			const tenantNestInput = document.createElement("input");
+			tenantNestInput.type = "checkbox";
+			tenantNestInput.id = "tenant-nesting-toggle";
+			tenantNestLabel.appendChild(tenantNestInput);
+			tenantNestLabel.appendChild(
+				document.createTextNode(" Enable Nesting")
+			);
+			const tenantNestRevert = document.createElement("button");
+			tenantNestRevert.id = "tenant-nesting-revert";
+			tenantNestRevert.className = "btn-secondary";
+			tenantNestRevert.style.marginLeft = "auto";
+			tenantNestRevert.textContent = "Revert";
+			tenantNestRow.appendChild(tenantNestLabel);
+			tenantNestRow.appendChild(tenantNestRevert);
+			panel.appendChild(tenantNestRow);
 		}
-      
-      <button id="reset-policies" class="btn-secondary">Reset to Defaults</button>
-    `;
+
+		const resetButton = document.createElement("button");
+		resetButton.id = "reset-policies";
+		resetButton.className = "btn-secondary";
+		resetButton.textContent = "Reset to Defaults";
+		panel.appendChild(resetButton);
 
 		// Add event listeners
 		this.#setupPolicyEventListeners(panel);
@@ -1489,7 +1632,6 @@ export class CompleteGridSystem {
 
 			 */
 
-
 			if (e.target.checked && !this.#aiAssistant) {
 				this.#aiAssistant =
 					this.#stateManager.managers.aiLayoutAssistant;
@@ -1526,24 +1668,17 @@ export class CompleteGridSystem {
 			const v = String(e.target.value);
 			const val = v === "on" ? true : v === "off" ? false : null;
 			try {
-				await svc.setTenantPolicy(
-					"system",
-					"grid_performance_mode",
-					val
-				);
-				okToast?.("Tenant performance mode updated");
+				await svc.setTenantPolicy("grid", "performance_mode", val);
+				okToast?.("Tenant performance updated");
 			} catch {
-				errToast?.("Failed to update tenant policy");
+				errToast?.("Failed to update");
 			}
 		});
+
 		perfRevert?.addEventListener("click", async () => {
 			try {
-				await svc.setTenantPolicy(
-					"system",
-					"grid_performance_mode",
-					null
-				);
-				perfSelect.value = "auto";
+				await svc.setTenantPolicy("grid", "performance_mode", null);
+				if (perfSelect) perfSelect.value = "auto";
 				okToast?.("Reverted to global");
 			} catch {
 				errToast?.("Failed to revert");
@@ -1553,8 +1688,8 @@ export class CompleteGridSystem {
 		autoSaveToggle?.addEventListener("change", async (e) => {
 			try {
 				await svc.setTenantPolicy(
-					"system",
-					"grid_auto_save_layouts",
+					"grid",
+					"auto_save_layouts",
 					!!e.target.checked
 				);
 				okToast?.("Tenant auto-save updated");
@@ -1562,15 +1697,11 @@ export class CompleteGridSystem {
 				errToast?.("Failed to update");
 			}
 		});
+
 		autoSaveRevert?.addEventListener("click", async () => {
 			try {
-				await svc.setTenantPolicy(
-					"system",
-					"grid_auto_save_layouts",
-					null
-				);
-				autoSaveToggle.checked =
-					this.#gridPolicyService.isAutoSaveEnabled();
+				await svc.setTenantPolicy("grid", "auto_save_layouts", null);
+				if (autoSaveToggle) autoSaveToggle.checked = false;
 				okToast?.("Reverted to global");
 			} catch {
 				errToast?.("Failed to revert");
@@ -1580,20 +1711,20 @@ export class CompleteGridSystem {
 		saveFeedbackToggle?.addEventListener("change", async (e) => {
 			try {
 				await svc.setTenantPolicy(
-					"system",
-					"grid_save_feedback",
+					"grid",
+					"save_feedback",
 					!!e.target.checked
 				);
-				okToast?.("Tenant save feedback updated");
+				okToast?.("Tenant save-feedback updated");
 			} catch {
 				errToast?.("Failed to update");
 			}
 		});
+
 		saveFeedbackRevert?.addEventListener("click", async () => {
 			try {
-				await svc.setTenantPolicy("system", "grid_save_feedback", null);
-				saveFeedbackToggle.checked =
-					this.#gridPolicyService.shouldShowSaveFeedback();
+				await svc.setTenantPolicy("grid", "save_feedback", null);
+				if (saveFeedbackToggle) saveFeedbackToggle.checked = false;
 				okToast?.("Reverted to global");
 			} catch {
 				errToast?.("Failed to revert");
@@ -1610,7 +1741,6 @@ export class CompleteGridSystem {
 
 
 		 */
-
 
 		if (nestingToggle && nestingRevert) {
 			nestingToggle.addEventListener("change", async (e) => {
@@ -1726,7 +1856,6 @@ export class CompleteGridSystem {
 
 			 */
 
-
 			if (this.#toastManager) {
 				this.#toastManager.success(
 					`Policy updated: ${policyKey}`,
@@ -1746,7 +1875,6 @@ export class CompleteGridSystem {
 
 
 			 */
-
 
 			if (this.#toastManager) {
 				this.#toastManager.error(
@@ -1844,7 +1972,6 @@ export class CompleteGridSystem {
 
 			 */
 
-
 			if (this.#toastManager) {
 				const statusMessages = [];
 				if (policies.performanceMode === true)
@@ -1866,7 +1993,6 @@ export class CompleteGridSystem {
 
 
 				 */
-
 
 				if (statusMessages.length > 0) {
 					this.#toastManager.info(statusMessages.join(" • "), 4000);
@@ -1936,16 +2062,50 @@ export class CompleteGridSystem {
 				font: 12px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 				display: none; min-width: 180px; box-shadow: 0 6px 18px rgba(0,0,0,0.3);
 			`;
-			el.innerHTML = `
-				<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;">
-					<strong>Grid Analytics</strong>
-					<button id="ga-close" style="background:#444;color:#fff;border:0;border-radius:4px;padding:2px 6px;cursor:pointer">×</button>
-				</div>
-				<div>FPS: <span id="ga-fps">—</span></div>
-				<div>Blocks: <span id="ga-blocks">—</span></div>
-				<div>Visible: <span id="ga-visible">—</span></div>
-				<div style="margin-top:6px;opacity:0.8;">Toggle: Alt+G</div>
-			`;
+			// Build analytics panel programmatically to avoid innerHTML
+			const headerRow = document.createElement("div");
+			headerRow.style.cssText =
+				"display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;";
+			const strong = document.createElement("strong");
+			strong.textContent = "Grid Analytics";
+			const closeBtn = document.createElement("button");
+			closeBtn.id = "ga-close";
+			closeBtn.style.cssText =
+				"background:#444;color:#fff;border:0;border-radius:4px;padding:2px 6px;cursor:pointer";
+			closeBtn.textContent = "×";
+			headerRow.appendChild(strong);
+			headerRow.appendChild(closeBtn);
+			el.appendChild(headerRow);
+
+			const fpsRow = document.createElement("div");
+			fpsRow.appendChild(document.createTextNode("FPS: "));
+			const fpsSpan = document.createElement("span");
+			fpsSpan.id = "ga-fps";
+			fpsSpan.textContent = "—";
+			fpsRow.appendChild(fpsSpan);
+			el.appendChild(fpsRow);
+
+			const blocksRow = document.createElement("div");
+			blocksRow.appendChild(document.createTextNode("Blocks: "));
+			const blocksSpan = document.createElement("span");
+			blocksSpan.id = "ga-blocks";
+			blocksSpan.textContent = "—";
+			blocksRow.appendChild(blocksSpan);
+			el.appendChild(blocksRow);
+
+			const visibleRow = document.createElement("div");
+			visibleRow.appendChild(document.createTextNode("Visible: "));
+			const visibleSpan = document.createElement("span");
+			visibleSpan.id = "ga-visible";
+			visibleSpan.textContent = "—";
+			visibleRow.appendChild(visibleSpan);
+			el.appendChild(visibleRow);
+
+			const toggleInfo = document.createElement("div");
+			toggleInfo.style.marginTop = "6px";
+			toggleInfo.style.opacity = "0.8";
+			toggleInfo.textContent = "Toggle: Alt+G";
+			el.appendChild(toggleInfo);
 			document.body.appendChild(el);
 			const close = () => (el.style.display = "none");
 			el.querySelector("#ga-close").addEventListener("click", close);
@@ -2099,7 +2259,6 @@ export class CompleteGridSystem {
 
 		 */
 
-
 		if (this.#toastManager) {
 			this.#toastManager.success("Grid policies reset to defaults", 3000);
 		}
@@ -2117,7 +2276,6 @@ export class CompleteGridSystem {
 
 
 	 */
-
 
 	isInitialized() {
 		return this.#initialized;
@@ -2158,7 +2316,6 @@ export class CompleteGridSystem {
 
 
 		 */
-
 
 		if (this.#toastManager) {
 			this.#toastManager.destroy();

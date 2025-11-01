@@ -68,7 +68,7 @@ export class MACEngine {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 	}
 
@@ -84,7 +84,7 @@ export class MACEngine {
 
 	 */
 
-	initialize() {
+		initialize() {
 		const managers = this.#stateManager.managers;
 		// V8.0 Parity: The MACEngine depends on the SecurityManager to get subject/object labels.
 		this.#securityManager = managers?.securityManager ?? null;
@@ -116,7 +116,7 @@ export class MACEngine {
 		 */
 
 
-		if (this.#metrics) {
+				if (this.#metrics) {
 			this.canRead = measure(this.canRead, "canRead");
 			this.canWrite = measure(this.canWrite, "canWrite");
 		}
@@ -138,7 +138,7 @@ export class MACEngine {
 
 	 */
 
-	canRead(subject, object) {
+		canRead(subject, object) {
 		// The @measure decorator handles timing and call counts.
 		const cacheKey = `read::${this.#getCacheKey(subject, object)}`;
 		if (this.#cache?.has(cacheKey)) {
@@ -158,7 +158,7 @@ export class MACEngine {
 
 		 */
 
-		if (sl >= 0 && ol >= 0 && sl >= ol) {
+				if (sl >= 0 && ol >= 0 && sl >= ol) {
 			result = this.#isSuperset(
 				subject.compartments,
 				object.compartments ?? new Set()
@@ -190,7 +190,7 @@ export class MACEngine {
 
 	 */
 
-	canWrite(subject, object) {
+		canWrite(subject, object) {
 		// The @measure decorator handles timing and call counts.
 		const cacheKey = `write::${this.#getCacheKey(subject, object)}`;
 		if (this.#cache?.has(cacheKey)) {
@@ -210,7 +210,7 @@ export class MACEngine {
 
 		 */
 
-		if (sl >= 0 && ol >= 0 && sl <= ol) {
+				if (sl >= 0 && ol >= 0 && sl <= ol) {
 			result = this.#isSubset(
 				subject.compartments,
 				object.compartments ?? new Set()
@@ -240,7 +240,7 @@ export class MACEngine {
 
 	 */
 
-	enforceNoReadUp(subject, object) {
+		enforceNoReadUp(subject, object) {
 		if (!this.canRead(subject, object)) {
 			const error = new Error(
 				"MAC Policy Violation: Read access denied."
@@ -271,7 +271,7 @@ export class MACEngine {
 
 	 */
 
-	enforceNoWriteDown(subject, object) {
+		enforceNoWriteDown(subject, object) {
 		if (!this.canWrite(subject, object)) {
 			const error = new Error(
 				"MAC Policy Violation: Write access denied."
@@ -300,7 +300,7 @@ export class MACEngine {
 
 	 */
 
-	subject() {
+		subject() {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -309,7 +309,7 @@ export class MACEngine {
 
 		 */
 
-		if (!this.#securityManager) {
+				if (!this.#securityManager) {
 			return { level: "public", compartments: new Set() };
 		}
 		const s = this.#securityManager.getSubject() || {};
@@ -334,7 +334,7 @@ export class MACEngine {
 
 	 */
 
-	label(obj, { storeName } = {}) {
+		label(obj, { storeName } = {}) {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -343,7 +343,7 @@ export class MACEngine {
 
 		 */
 
-		if (!this.#securityManager) {
+				if (!this.#securityManager) {
 			return { level: "public", compartments: new Set() };
 		}
 		// V8.0 Parity: Delegate label extraction to the SecurityManager, which is the authority on this.

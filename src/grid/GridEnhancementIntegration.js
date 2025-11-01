@@ -49,7 +49,7 @@ export class MainViewWithEnhancedGrid {
 
 	 */
 
-	constructor({ appViewModel, stateManager }) {
+		constructor({ appViewModel, stateManager }) {
 		this.#appViewModel = appViewModel;
 		this.#stateManager = stateManager;
 
@@ -75,7 +75,7 @@ export class MainViewWithEnhancedGrid {
 
 		 */
 
-		if (this.#stateManager.eventFlowEngine) {
+				if (this.#stateManager.eventFlowEngine) {
 			this.#stateManager.eventFlowEngine.emit(eventName, detail);
 		}
 	}
@@ -92,7 +92,7 @@ export class MainViewWithEnhancedGrid {
 
 	 */
 
-	initializeExistingGrid() {
+		initializeExistingGrid() {
 		// This represents your existing grid initialization
 		// from main-view.js - keeping it intact
 		console.log(
@@ -108,7 +108,7 @@ export class MainViewWithEnhancedGrid {
 
 		 */
 
-		if (this.#stateManager.eventFlowEngine) {
+				if (this.#stateManager.eventFlowEngine) {
 			this.#unsubscribeFunctions.push(
 				this.#stateManager.eventFlowEngine.on(
 					"gridChange",
@@ -137,7 +137,7 @@ export class MainViewWithEnhancedGrid {
 
 	 */
 
-	async enhanceGrid() {
+		async enhanceGrid() {
 		// Mandate 1.2: No Direct Instantiation. Get service from the state manager.
 		this.#gridEnhancer = this.#stateManager.managers.enhancedGridRenderer;
 
@@ -153,7 +153,7 @@ export class MainViewWithEnhancedGrid {
 		 */
 
 
-		if (!this.#gridEnhancer) {
+				if (!this.#gridEnhancer) {
 			console.error(
 				"[MainViewWithEnhancedGrid] EnhancedGridRenderer service not available from state manager."
 			);
@@ -191,7 +191,7 @@ export class MainViewWithEnhancedGrid {
 
 		 */
 
-		if (this.#stateManager.eventFlowEngine) {
+				if (this.#stateManager.eventFlowEngine) {
 			this.#unsubscribeFunctions.push(
 				this.#stateManager.eventFlowEngine.on(
 					"gridEnhanced",
@@ -230,7 +230,7 @@ export class MainViewWithEnhancedGrid {
 
 	 */
 
-	renderGrid(gridBlocks) {
+		renderGrid(gridBlocks) {
 		const container = this.#elements.gridContainer;
 		// Mandate 2.1: Avoid innerHTML. Use replaceChildren for clearing.
 		container.replaceChildren();
@@ -285,7 +285,7 @@ export class MainViewWithEnhancedGrid {
 		// Your existing drag logic - the enhancer will layer on top
 		let startX, startY, origX, origY;
 
-		const onMouseDown = (e) => {
+				const onMouseDown = (e) => {
 			if (e.target.classList.contains("resize-handle")) return;
 
 			e.preventDefault();
@@ -298,7 +298,7 @@ export class MainViewWithEnhancedGrid {
 			document.addEventListener("mouseup", onMouseUp);
 		};
 
-		const onMouseMove = (e) => {
+				const onMouseMove = (e) => {
 			const deltaX = e.clientX - startX;
 			const deltaY = e.clientY - startY;
 			const gridWidth = this.#elements.gridContainer.clientWidth;
@@ -312,7 +312,7 @@ export class MainViewWithEnhancedGrid {
 			div.style.gridRowStart = newY + 1;
 		};
 
-		const onMouseUp = () => {
+				const onMouseUp = () => {
 			document.removeEventListener("mousemove", onMouseMove);
 			document.removeEventListener("mouseup", onMouseUp);
 			this.#appViewModel.gridLayoutViewModel.updatePositions([
@@ -335,7 +335,7 @@ export class MainViewWithEnhancedGrid {
 		// Your existing resize logic - enhanced automatically
 		let startX, startY, origW, origH;
 
-		const onMouseDown = (e) => {
+				const onMouseDown = (e) => {
 			e.preventDefault();
 			startX = e.clientX;
 			startY = e.clientY;
@@ -346,7 +346,7 @@ export class MainViewWithEnhancedGrid {
 			document.addEventListener("mouseup", onMouseUp);
 		};
 
-		const onMouseMove = (e) => {
+				const onMouseMove = (e) => {
 			const deltaX = e.clientX - startX; // V8.0 Parity: Access block.position directly.
 			const deltaY = e.clientY - startY;
 			const gridWidth = this.#elements.gridContainer.clientWidth;
@@ -360,7 +360,7 @@ export class MainViewWithEnhancedGrid {
 			div.style.gridRowEnd = block.position.y + 1 + newH;
 		};
 
-		const onMouseUp = () => {
+				const onMouseUp = () => {
 			document.removeEventListener("mousemove", onMouseMove);
 			document.removeEventListener("mouseup", onMouseUp);
 			this.#appViewModel.gridLayoutViewModel.updatePositions([
@@ -532,7 +532,7 @@ export class MainViewWithEnhancedGrid {
 
 	 */
 
-	toggleEnhancement() {
+		toggleEnhancement() {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -541,7 +541,7 @@ export class MainViewWithEnhancedGrid {
 
 		 */
 
-		if (this.#gridEnhancer?.isEnhanced) {
+				if (this.#gridEnhancer?.isEnhanced) {
 			// V8.0 Parity: Access private field.
 			this.#gridEnhancer.disable();
 		} else {
@@ -570,7 +570,7 @@ export class MainViewWithEnhancedGrid {
 
 	 */
 
-	destroy() {
+		destroy() {
 		this.#unsubscribeFunctions.forEach((unsubscribe) => unsubscribe());
 		this.#unsubscribeFunctions = [];
 		this.#gridEnhancer?.destroy();
@@ -603,7 +603,7 @@ export async function enhanceExistingGrid(
 
 	 */
 
-	if (!gridContainer) {
+		if (!gridContainer) {
 		console.warn("Grid container not found - enhancement skipped");
 		return null;
 	}
@@ -628,7 +628,7 @@ export async function enhanceExistingGrid(
 
 					 */
 
-					if (appViewModel.hybridStateManager) {
+										if (appViewModel.hybridStateManager) {
 						stateManager.recordOperation({
 							// V8.0 Parity: Use the passed stateManager.
 							type: "grid_layout_change",
@@ -656,7 +656,7 @@ export async function enhanceExistingGrid(
 
 	 */
 
-	if (!options.hideToggle) {
+		if (!options.hideToggle) {
 		addEnhancementToggle(enhancer);
 	}
 
@@ -697,7 +697,7 @@ function addEnhancementToggle(enhancer) {
 
 		 */
 
-		if (enhancer.isEnhanced) {
+				if (enhancer.isEnhanced) {
 			// V8.0 Parity: Use stateManager.
 			enhancer.disable();
 			toggle.textContent = "Enable Grid Enhancement";

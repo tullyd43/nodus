@@ -59,7 +59,7 @@ export class EventFlowEngine {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 
 		// V8.0 Parity: Derive all dependencies from the stateManager in the constructor.
@@ -87,7 +87,7 @@ export class EventFlowEngine {
 
 			 */
 
-			if (payload?.source === "stack:eventQueue" && payload?.reason === "capacity") {
+						if (payload?.source === "stack:eventQueue" && payload?.reason === "capacity") {
 				this.#metrics?.increment("queueOverflows");
 				console.warn(
 					"[EventFlowEngine] Event queue capacity reached. Oldest event evicted:",
@@ -126,7 +126,7 @@ initialize() {
 
 			 */
 
-			if (eventName && eventName !== "systemInitialized") {
+						if (eventName && eventName !== "systemInitialized") {
 				// Avoid processing the init event itself
 				this.#handleEvent(eventName, payload);
 			}
@@ -155,7 +155,7 @@ initialize() {
 
 	 */
 
-	registerFlow(flowDefinition) {
+		registerFlow(flowDefinition) {
 		const flow = {
 			id:
 				flowDefinition.id ||
@@ -200,7 +200,7 @@ initialize() {
 		 */
 
 
-		for (const event of triggers) {
+				for (const event of triggers) {
 			if (!this.#triggerIndex.has(event)) {
 				this.#triggerIndex.set(event, new Set());
 			}
@@ -235,7 +235,7 @@ initialize() {
 		 */
 
 
-		if (!this.#processing) {
+				if (!this.#processing) {
 			this.#processEventQueue();
 		}
 	}
@@ -284,7 +284,7 @@ initialize() {
 
 				 */
 
-				for (const flow of sortedFlows) {
+								for (const flow of sortedFlows) {
 					/**
 
 					 * TODO: Add JSDoc for method if
@@ -293,7 +293,7 @@ initialize() {
 
 					 */
 
-					if (flow?.enabled) {
+										if (flow?.enabled) {
 						await this.#executeFlow(flow, event);
 					}
 				}
@@ -324,7 +324,7 @@ initialize() {
 
 			 */
 
-			for (const flowId of flowIds) {
+						for (const flowId of flowIds) {
 				const flow = this.#flows.get(flowId);
 				/**
 
@@ -334,7 +334,7 @@ initialize() {
 
 				 */
 
-				if (flow) {
+								if (flow) {
 					matchingFlows.push(flow);
 				}
 			}
@@ -351,7 +351,7 @@ initialize() {
 
 			 */
 
-			for (const flowId of wildcardFlowIds) {
+						for (const flowId of wildcardFlowIds) {
 				const flow = this.#flows.get(flowId);
 				if (flow && !matchingFlows.includes(flow)) {
 					matchingFlows.push(flow);
@@ -424,7 +424,7 @@ initialize() {
 			 */
 
 
-			for (const action of actions) {
+						for (const action of actions) {
 				await this.#executeAction(action, event, flow);
 			}
 		} finally {
@@ -461,7 +461,7 @@ initialize() {
 
 			 */
 
-			if (result) {
+						if (result) {
 				const duration = performance.now() - startTime;
 				this.#metrics?.updateAverage("conditionEvalTime", duration);
 				return conditionName; // Return the name of the first matched condition
@@ -493,7 +493,7 @@ initialize() {
 
 		 */
 
-		if (!this.#conditionRegistry || !this.#errorHelpers) {
+				if (!this.#conditionRegistry || !this.#errorHelpers) {
 			console.warn(
 				"[EventFlowEngine] ConditionRegistry or ErrorHelpers not found. Cannot evaluate condition."
 			);
@@ -540,7 +540,7 @@ initialize() {
 
 		 */
 
-		if (!this.#actionHandler) {
+				if (!this.#actionHandler) {
 			console.warn("[EventFlowEngine] ActionHandlerRegistry not found.");
 			return;
 		}
@@ -553,7 +553,7 @@ initialize() {
 
 		 */
 
-		if (!handler) {
+				if (!handler) {
 			console.warn(
 				`[EventFlowEngine] No handler for action type: ${action.type}`
 			);
@@ -572,7 +572,7 @@ initialize() {
 		 */
 
 
-		if (!this.#errorHelpers) {
+				if (!this.#errorHelpers) {
 			console.warn("[EventFlowEngine] ErrorHelpers not found.");
 			await handler(action, event, flow, this.#stateManager);
 			return;
@@ -621,7 +621,7 @@ initialize() {
 
 	 */
 
-	getStats() {
+		getStats() {
 		return {
 			...(this.#metrics?.getAllAsObject() || {}),
 			registeredFlows: this.#flows.size,
@@ -643,7 +643,7 @@ initialize() {
 
 	 */
 
-	removeFlow(flowId) {
+		removeFlow(flowId) {
 		const removed = this.#flows.delete(flowId);
 		/**
 
@@ -653,7 +653,7 @@ initialize() {
 
 		 */
 
-		if (removed) {
+				if (removed) {
 			this.#rebuildTriggerIndex();
 		}
 		return removed;
@@ -735,7 +735,7 @@ initialize() {
 
 	 */
 
-	exportFlows() {
+		exportFlows() {
 		return Array.from(this.#flows.values()).map((flow) => ({
 			domain: "system",
 			type: "event_flow",

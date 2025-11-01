@@ -30,7 +30,7 @@ export class ComponentDefinition {
 
 	 */
 
-	constructor(id, config = {}) {
+		constructor(id, config = {}) {
 		// V8.0 Parity: Store stateManager for context-aware operations.
 		this.#stateManager = config.stateManager || null;
 
@@ -125,7 +125,7 @@ export class ComponentDefinition {
 
 	 */
 
-	canRender(entityTypes) {
+		canRender(entityTypes) {
 		if (this.supportedEntityTypes.length === 0) return true; // Universal component
 
 		const types = Array.isArray(entityTypes) ? entityTypes : [entityTypes];
@@ -151,7 +151,7 @@ export class ComponentDefinition {
 
 	 */
 
-	hasPermissions(userPermissions = []) {
+		hasPermissions(userPermissions = []) {
 		if (this.requiredPermissions.length === 0) return true;
 
 		const securityManager = this.#stateManager?.managers?.securityManager;
@@ -163,7 +163,7 @@ export class ComponentDefinition {
 
 		 */
 
-		if (securityManager) {
+				if (securityManager) {
 			const subject = securityManager.getSubject();
 			return this.requiredPermissions.every((perm) =>
 				subject.permissions.includes(perm)
@@ -189,7 +189,7 @@ export class ComponentDefinition {
 
 	 */
 
-	getAdaptation(context) {
+		getAdaptation(context) {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -198,7 +198,7 @@ export class ComponentDefinition {
 
 		 */
 
-		if (!this.#stateManager) {
+				if (!this.#stateManager) {
 			console.warn(
 				`[ComponentDefinition] stateManager not available for component '${this.id}'. Adaptation selection may be inaccurate.`
 			);
@@ -231,7 +231,7 @@ export class ComponentDefinition {
 		 */
 
 
-		if (bestMatch) {
+				if (bestMatch) {
 			return bestMatch;
 		}
 
@@ -256,7 +256,7 @@ export class ComponentDefinition {
 
 	 */
 
-	validateConfig(config) {
+		validateConfig(config) {
 		// Simple validation - could be enhanced with JSON Schema
 		const errors = [];
 
@@ -277,7 +277,7 @@ export class ComponentDefinition {
 			 */
 
 
-			if (key in config) {
+						if (key in config) {
 				const value = config[key];
 
 				/**
@@ -292,7 +292,7 @@ export class ComponentDefinition {
 				 */
 
 
-				if (schema.type && typeof value !== schema.type) {
+								if (schema.type && typeof value !== schema.type) {
 					errors.push(`Config ${key} must be of type ${schema.type}`);
 				}
 
@@ -324,7 +324,7 @@ export class ComponentDefinition {
 
 	 */
 
-	mergeConfig(userConfig = {}) {
+		mergeConfig(userConfig = {}) {
 		return {
 			...this.defaultConfig,
 			...userConfig,
@@ -344,7 +344,7 @@ export class ComponentDefinition {
 
 	 */
 
-	toEntity() {
+		toEntity() {
 		return {
 			domain: "ui",
 			type: "component_definition",
@@ -373,7 +373,7 @@ export class ComponentDefinition {
 	 * @param {object} entity - The storage entity.
 	 * @returns {ComponentDefinition}
 	 */
-	static fromEntity(entity) {
+		static fromEntity(entity) {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -382,7 +382,7 @@ export class ComponentDefinition {
 
 		 */
 
-		if (entity.domain !== "ui" || entity.type !== "component_definition") {
+				if (entity.domain !== "ui" || entity.type !== "component_definition") {
 			throw new Error("Invalid entity for ComponentDefinition");
 		}
 
@@ -403,7 +403,7 @@ export class ComponentDefinition {
 
 	 */
 
-	clone(modifications = {}) {
+		clone(modifications = {}) {
 		const clonedConfig = {
 			name: this.name,
 			description: this.description,
@@ -453,7 +453,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 		// V8.0 Parity: Derive metricsRegistry from stateManager
 		this.#metrics =
@@ -474,7 +474,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	register(definition) {
+		register(definition) {
 		if (!(definition instanceof ComponentDefinition)) {
 			// V8.0 Parity: Pass stateManager to the definition constructor.
 			const config = { ...definition, stateManager: this.#stateManager };
@@ -509,7 +509,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	get(id) {
+		get(id) {
 		return this.#definitions.get(id);
 	}
 
@@ -527,7 +527,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	getByCategory(category) {
+		getByCategory(category) {
 		return Array.from(this.#definitions.values()).filter(
 			(def) => def.category === category
 		);
@@ -547,7 +547,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	getForEntityTypes(entityTypes) {
+		getForEntityTypes(entityTypes) {
 		return Array.from(this.#definitions.values()).filter((def) =>
 			def.canRender(entityTypes)
 		);
@@ -567,7 +567,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	getForUser(userPermissions = []) {
+		getForUser(userPermissions = []) {
 		const subject =
 			this.#stateManager?.managers?.securityManager?.getSubject();
 		return Array.from(this.#definitions.values()).filter((def) =>
@@ -589,7 +589,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	search(query) {
+		search(query) {
 		const lowerQuery = query.toLowerCase();
 		return Array.from(this.#definitions.values()).filter(
 			(def) =>
@@ -613,7 +613,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	unregister(id) {
+		unregister(id) {
 		const definition = this.#definitions.get(id);
 		if (!definition) return false;
 
@@ -642,7 +642,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	getCategories() {
+		getCategories() {
 		return Array.from(this.#categories);
 	}
 
@@ -659,7 +659,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	exportAsEntities() {
+		exportAsEntities() {
 		return Array.from(this.#definitions.values()).map((def) =>
 			def.toEntity()
 		);
@@ -679,7 +679,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	importFromEntities(entities) {
+		importFromEntities(entities) {
 		const imported = [];
 
 		/**
@@ -694,7 +694,7 @@ export class ComponentDefinitionRegistry {
 		 */
 
 
-		for (const entity of entities) {
+				for (const entity of entities) {
 			try {
 				const definition = ComponentDefinition.fromEntity(entity);
 				this.register(definition);
@@ -720,7 +720,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	getStats() {
+		getStats() {
 		const definitions = Array.from(this.#definitions.values());
 
 		const stats = {
@@ -754,7 +754,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	getEntityTypeSupport(definitions) {
+		getEntityTypeSupport(definitions) {
 		const support = {};
 		definitions.forEach((def) => {
 			def.supportedEntityTypes.forEach((type) => {
@@ -779,7 +779,7 @@ export class ComponentDefinitionRegistry {
 
 	 */
 
-	getPermissionRequirements(definitions) {
+		getPermissionRequirements(definitions) {
 		const requirements = {};
 		definitions.forEach((def) => {
 			def.requiredPermissions.forEach((perm) => {

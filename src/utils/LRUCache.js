@@ -1,5 +1,6 @@
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { DateCore } from "./DateUtils.js"; // DateCore is now the lean, integrated version
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
 
 /**
  * @class LRUCache
@@ -211,7 +212,6 @@ export class LRUCache {
 
 			 */
 
-
 			if (this.#options.enableMetrics) {
 				this.#getMetrics()?.increment("hits"); // This is a 'hit'
 			}
@@ -234,7 +234,6 @@ export class LRUCache {
 
 
 		 */
-
 
 		if (this.#options.enableMetrics && this.#errorHelpers) {
 			return this.#errorHelpers.trace("cache.get", execute, { key });
@@ -431,7 +430,6 @@ export class LRUCache {
 
 		 */
 
-
 		if (this.#options.enableMetrics && this.#errorHelpers) {
 			this.#errorHelpers.trace("cache.set", execute, { key });
 			return;
@@ -579,8 +577,17 @@ export class LRUCache {
 	 */
 
 	delete(key) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  return this.#errorHelpers?.trace("cache.delete", () => {
+		return this.#errorHelpers?.trace("cache.delete", () => {
+			// Fire-and-forget forensic envelope to satisfy audit enforcement.
+			// Fire-and-forget forensic envelope to satisfy audit enforcement (static call)
+			if (typeof ForensicLogger.createEnvelope === "function") {
+				ForensicLogger.createEnvelope({
+					actorId: "system",
+					action: "cache.delete",
+					target: key,
+					label: "unclassified",
+				}).catch(() => {});
+			}
 			const prefixedKey = this.#getPrefixedKey(key);
 			const item = this.#cache.get(prefixedKey);
 			/**
@@ -610,7 +617,6 @@ export class LRUCache {
 
 
 			 */
-
 
 			if (this.#options.auditOperations) {
 				this.#auditOperation("cache_delete", {
@@ -669,7 +675,6 @@ export class LRUCache {
 
 
 		 */
-
 
 		if (this.#options.auditOperations) {
 			this.#auditOperation("cache_clear", { itemCount: clearedCount });
@@ -928,7 +933,6 @@ export class LRUCache {
 
 		 */
 
-
 		if (typeof value === "string") {
 			return value.length * 2; // UTF-16 encoding
 		}
@@ -944,7 +948,6 @@ export class LRUCache {
 
 		 */
 
-
 		if (typeof value === "number") {
 			return 8; // 64-bit number
 		}
@@ -959,7 +962,6 @@ export class LRUCache {
 
 
 		 */
-
 
 		if (typeof value === "boolean") {
 			return 4;
@@ -984,7 +986,6 @@ export class LRUCache {
 
 
 		 */
-
 
 		if (typeof value === "object") {
 			let size = 0;
@@ -1082,7 +1083,6 @@ export class LRUCache {
 
 		 */
 
-
 		if (this.#options.auditOperations) {
 			this.#auditOperation("cache_expire", {
 				key,
@@ -1126,7 +1126,6 @@ export class LRUCache {
 
 		 */
 
-
 		if (this.#options.auditOperations) {
 			this.#auditOperation("cache_evict", {
 				key: oldestKey,
@@ -1169,7 +1168,6 @@ export class LRUCache {
 
 
 		 */
-
 
 		for (const key of expiredKeys) {
 			this.#expireItem(key);
@@ -1270,7 +1268,6 @@ export class LRUCache {
 
 	 */
 
-
 	resetMetrics() {
 		/**
 		 * Resets all collected metrics to their initial state, except for current memory usage and total entity count.
@@ -1335,8 +1332,17 @@ export class LRUCache {
 	 */
 
 	updateOptions(newOptions) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const oldTTL = this.#options.ttl;
+		const oldTTL = this.#options.ttl;
+		// Fire-and-forget forensic envelope to satisfy audit enforcement for config changes
+		// Fire-and-forget forensic envelope to satisfy audit enforcement for config changes (static call)
+		if (typeof ForensicLogger.createEnvelope === "function") {
+			ForensicLogger.createEnvelope({
+				actorId: "system",
+				action: "cache.updateOptions",
+				target: "cache_config",
+				label: "unclassified",
+			}).catch(() => {});
+		}
 		this.#options = { ...this.#options, ...newOptions };
 
 		// Handle TTL changes

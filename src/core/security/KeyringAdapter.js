@@ -32,7 +32,7 @@ export class KeyringAdapter {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		console.warn(
 			"[KeyringAdapter] is deprecated and should not be instantiated. " +
 				"The ServiceRegistry now provides the correct keyring implementation directly."

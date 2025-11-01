@@ -29,7 +29,7 @@ export class AILayoutAssistant {
 	 */
 
 
-	constructor(stateManager = null, options = {}) {
+		constructor(stateManager = null, options = {}) {
 		this.#stateManager = stateManager || null;
 		this.#options = { ...this.#options, ...options };
 
@@ -57,7 +57,7 @@ export class AILayoutAssistant {
 
 	 */
 
-	initialize() {
+		initialize() {
 		return this;
 	}
 
@@ -73,7 +73,7 @@ export class AILayoutAssistant {
 	 */
 
 
-	isEnabled() {
+		isEnabled() {
 		return !!this.#options.enabled;
 	}
 
@@ -86,7 +86,7 @@ export class AILayoutAssistant {
 
 	 */
 
-	queueAnalysis(blocks = []) {
+		queueAnalysis(blocks = []) {
 		if (!Array.isArray(blocks) || blocks.length === 0) return;
 		this.#analysisQueue.push(...blocks);
 		// Debounce analysis to coalesce multiple requests
@@ -110,7 +110,7 @@ export class AILayoutAssistant {
 
 			 */
 
-			if (queued.length > 0) {
+						if (queued.length > 0) {
 				suggestions.push({
 					id: `suggest_positions_${Date.now()}`,
 					type: "positions",
@@ -136,7 +136,7 @@ export class AILayoutAssistant {
 			 */
 
 
-			if (queued.length > 3) {
+						if (queued.length > 3) {
 				suggestions.push({
 					id: `suggest_sizes_${Date.now()}`,
 					type: "size_optimization",
@@ -187,7 +187,7 @@ export class AILayoutAssistant {
 
 	 */
 
-	getActiveSuggestions() {
+		getActiveSuggestions() {
 		return Array.from(this.#suggestions.values())
 			.filter((s) => !s.dismissed && !s.applied)
 			.sort((a, b) => b.confidence - a.confidence)
@@ -203,7 +203,7 @@ export class AILayoutAssistant {
 
 	 */
 
-	async applySuggestion(suggestionId) {
+		async applySuggestion(suggestionId) {
 		const s = this.#suggestions.get(suggestionId);
 		if (!s) throw new Error("Suggestion not found");
 		// Mark applied and emit event; real work is left for future implementation
@@ -227,7 +227,7 @@ export class AILayoutAssistant {
 	 */
 
 
-	dismissSuggestion(suggestionId) {
+		dismissSuggestion(suggestionId) {
 		const s = this.#suggestions.get(suggestionId);
 		if (!s) return;
 		s.dismissed = true;
@@ -247,7 +247,7 @@ export class AILayoutAssistant {
 	 */
 
 
-	clearSuggestions() {
+		clearSuggestions() {
 		this.#suggestions.clear();
 		this.#stateManager?.emit?.("aiSuggestionsCleared");
 	}
@@ -264,7 +264,7 @@ export class AILayoutAssistant {
 	 */
 
 
-	getAnalyticsData() {
+		getAnalyticsData() {
 		return {
 			activeSuggestions: this.getActiveSuggestions().length,
 			queuedAnalysis: this.#analysisQueue.length,
@@ -284,7 +284,7 @@ export class AILayoutAssistant {
 	 */
 
 
-	destroy() {
+		destroy() {
 		if (this.#analysisTimeout) clearTimeout(this.#analysisTimeout);
 		this.#analysisQueue.length = 0;
 		this.#suggestions.clear();
@@ -303,7 +303,7 @@ export class AISuggestionPanel {
 
 	 */
 
-	constructor({ stateManager } = {}) {
+		constructor({ stateManager } = {}) {
 		this.stateManager = stateManager || null;
 		this.assistant = this.stateManager?.managers?.aiLayoutAssistant || null;
 		this._onSuggestions = this.onSuggestionsReceived.bind(this);
@@ -315,7 +315,7 @@ export class AISuggestionPanel {
 
 		 */
 
-		if (this.stateManager && typeof this.stateManager.on === "function") {
+				if (this.stateManager && typeof this.stateManager.on === "function") {
 			this.stateManager.on("aiLayoutSuggestions", this._onSuggestions);
 		}
 	}
@@ -332,7 +332,7 @@ export class AISuggestionPanel {
 	 */
 
 
-	onSuggestionsReceived(data) {
+		onSuggestionsReceived(data) {
 		// Present a non-throwing integration path for tests/runtime
 		try {
 			const count = Array.isArray(data?.suggestions)
@@ -346,7 +346,7 @@ export class AISuggestionPanel {
 
 			 */
 
-			if (this.stateManager?.emit) {
+						if (this.stateManager?.emit) {
 				this.stateManager.emit("show_notification", {
 					message: `AI: ${count} layout suggestion(s) available`,
 					type: "info",
@@ -370,7 +370,7 @@ export class AISuggestionPanel {
 	 */
 
 
-	render() {
+		render() {
 		if (typeof document === "undefined") return null;
 		const el = document.createElement("div");
 		el.className = "ai-suggestion-panel";
@@ -390,7 +390,7 @@ export class AISuggestionPanel {
 	 */
 
 
-	destroy() {
+		destroy() {
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -399,7 +399,7 @@ export class AISuggestionPanel {
 
 		 */
 
-		if (this.stateManager && typeof this.stateManager.off === "function") {
+				if (this.stateManager && typeof this.stateManager.off === "function") {
 			this.stateManager.off("aiLayoutSuggestions", this._onSuggestions);
 		}
 		this.stateManager = null;

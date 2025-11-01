@@ -20,7 +20,7 @@ export class TenantPolicyService {
 	 */
 
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 		this.#cache = stateManager.managers.cacheManager.getCache(
 			"tenantPolicies",
@@ -74,7 +74,7 @@ export class TenantPolicyService {
 	 */
 
 
-	async getPolicy(domain, key, tenantId = null) {
+		async getPolicy(domain, key, tenantId = null) {
 		const tid = this.#tenantId(tenantId);
 		if (!tid) return undefined;
 		// Prevent returning overrides for internal policies
@@ -87,7 +87,7 @@ export class TenantPolicyService {
 
 		 */
 
-		if (sys && typeof sys.isPolicyExposedToTenants === "function") {
+				if (sys && typeof sys.isPolicyExposedToTenants === "function") {
 			if (!sys.isPolicyExposedToTenants(domain, key)) return undefined;
 		}
 		const data = await this.#load(tid);
@@ -106,7 +106,7 @@ export class TenantPolicyService {
 	 */
 
 
-	async setPolicy(domain, key, value, tenantId = null) {
+		async setPolicy(domain, key, value, tenantId = null) {
 		const tid = this.#tenantId(tenantId);
 		if (!tid) throw new Error("No tenantId in context");
 		// Disallow tenants from setting internal policies
@@ -119,7 +119,7 @@ export class TenantPolicyService {
 
 		 */
 
-		if (sys && typeof sys.isPolicyExposedToTenants === "function") {
+				if (sys && typeof sys.isPolicyExposedToTenants === "function") {
 			if (!sys.isPolicyExposedToTenants(domain, key)) {
 				throw new Error(
 					`Policy ${domain}.${key} cannot be overridden by tenants`
@@ -137,7 +137,7 @@ export class TenantPolicyService {
 
 		 */
 
-		if (value === undefined || value === null) {
+				if (value === undefined || value === null) {
 			delete data.overrides[`${domain}.${key}`];
 		} else {
 			data.overrides[`${domain}.${key}`] = value;
@@ -152,7 +152,7 @@ export class TenantPolicyService {
 
 			 */
 
-			if (this.#stateManager.storage.ready) {
+						if (this.#stateManager.storage.ready) {
 				await this.#stateManager.storage.instance.put(this.#STORE, {
 					id: ck,
 					...data,

@@ -1,6 +1,6 @@
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 import { BoundedStack } from "../utils/BoundedStack.js";
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
-import { SafeDOM } from '@core/ui/SafeDOM.js';
 import { DateCore } from "../utils/DateUtils.js";
 
 // Policies that are readonly in production (UI disabled)
@@ -199,7 +199,6 @@ export class DeveloperDashboard {
 
 
 		 */
-
 
 		if (this.#options.startOpen) {
 			this.open();
@@ -905,8 +904,13 @@ export class DeveloperDashboard {
 	 * @private
 	 */
 	#createPerfItem(label, initialValue) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const item = document.createElement("div");
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		const item = document.createElement("div");
 		item.className = "perf-item";
 		const strong = document.createElement("strong");
 		strong.textContent = `${label}:`;
@@ -1397,8 +1401,13 @@ export class DeveloperDashboard {
 		hasPermission,
 		canUpdatePolicy,
 	} = {}) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  if (!this.#policyStatusEl) return;
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		if (!this.#policyStatusEl) return;
 		const prod = !!import.meta?.env?.PROD;
 		const dev = !!(
 			import.meta?.env?.DEV || window.location.hostname === "localhost"
@@ -1453,7 +1462,6 @@ export class DeveloperDashboard {
 
 
 		 */
-
 
 		if (dev) {
 			const btn = document.createElement("button");
@@ -1534,8 +1542,13 @@ export class DeveloperDashboard {
 	}
 
 	#updateFlagSummary({ hud, vl, ga } = {}) {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  try {
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		try {
 			const policies = this.#stateManager?.managers?.policies;
 			if (hud === undefined)
 				hud = !!policies?.getPolicy?.("ui", "enable_security_hud");
@@ -1682,8 +1695,13 @@ export class DeveloperDashboard {
 	}
 
 	#updatePolicySnapshot() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  try {
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		try {
 			if (!this.#policySnapshotPre) return;
 			const snap = this.#buildPolicySnapshot();
 			this.#policySnapshotPre.textContent = JSON.stringify(snap, null, 2);
@@ -1695,15 +1713,44 @@ export class DeveloperDashboard {
 	#renderBootstrapStages() {
 		try {
 			if (!this.#bootstrapStagesContainer) return;
-			const rows = (this.#bootstrapStages || [])
-				.map(
-					(s) =>
-						`<tr><td>${s.stage}</td><td style="text-align:right">${Number(s.duration).toFixed(2)} ms</td></tr>`
-				)
-				.join("");
-			this.#bootstrapStagesContainer.innerHTML = rows
-				? `<table class="stages"><thead><tr><th>Stage</th><th>Duration</th></tr></thead><tbody>${rows}</tbody></table>`
-				: "No stage metrics yet";
+			// Build table programmatically to avoid innerHTML usage
+			const stages = this.#bootstrapStages || [];
+			// Clear container
+			while (this.#bootstrapStagesContainer.firstChild)
+				this.#bootstrapStagesContainer.removeChild(
+					this.#bootstrapStagesContainer.firstChild
+				);
+			if (!stages.length) {
+				this.#bootstrapStagesContainer.textContent =
+					"No stage metrics yet";
+				return;
+			}
+			const table = document.createElement("table");
+			table.className = "stages";
+			const thead = document.createElement("thead");
+			const headerRow = document.createElement("tr");
+			const th1 = document.createElement("th");
+			th1.textContent = "Stage";
+			const th2 = document.createElement("th");
+			th2.textContent = "Duration";
+			headerRow.appendChild(th1);
+			headerRow.appendChild(th2);
+			thead.appendChild(headerRow);
+			const tbody = document.createElement("tbody");
+			for (const s of stages) {
+				const row = document.createElement("tr");
+				const cellStage = document.createElement("td");
+				cellStage.textContent = s.stage;
+				const cellDur = document.createElement("td");
+				cellDur.style.textAlign = "right";
+				cellDur.textContent = `${Number(s.duration).toFixed(2)} ms`;
+				row.appendChild(cellStage);
+				row.appendChild(cellDur);
+				tbody.appendChild(row);
+			}
+			table.appendChild(thead);
+			table.appendChild(tbody);
+			this.#bootstrapStagesContainer.appendChild(table);
 		} catch {
 			/* noop */
 		}
@@ -1789,7 +1836,6 @@ export class DeveloperDashboard {
 
 			 */
 
-
 			if (this.#snapshotModeFull) {
 				return pm.getAllPolicies
 					? pm.getAllPolicies()
@@ -1816,7 +1862,6 @@ export class DeveloperDashboard {
 
 
 			 */
-
 
 			if (this.#snapshotIncludePatterns.length > 0) {
 				const allKeys = pm.getAllPolicyKeys
@@ -1870,7 +1915,6 @@ export class DeveloperDashboard {
 
 
 			 */
-
 
 			for (const key of keysToInclude) {
 				const [domain, ...rest] = key.split(".");
@@ -1952,8 +1996,13 @@ export class DeveloperDashboard {
 	 * @private
 	 */
 	#updateMetrics() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  if (!this.#reporter) return;
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		if (!this.#reporter) return;
 		const summary = this.#reporter.getCurrentSummary();
 
 		// Update performance metrics
@@ -2011,11 +2060,23 @@ export class DeveloperDashboard {
 	 * @private
 	 */
 	#updateEventLog() {
-		  await ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  this.#eventLogContainer.innerHTML = this.#eventLog
-			.toArray()
-			.map(this.#renderEventLogItem)
-			.join("");
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "<auto>",
+			target: "<unknown>",
+			label: "unclassified",
+		});
+		// Clear container safely
+		while (this.#eventLogContainer.firstChild)
+			this.#eventLogContainer.removeChild(
+				this.#eventLogContainer.firstChild
+			);
+		for (const entry of this.#eventLog.toArray()) {
+			const el = this.#renderEventLogItem(entry);
+			// element guard (avoid relying on DOM globals in some lint environments)
+			if (el && el.nodeType === 1)
+				this.#eventLogContainer.appendChild(el);
+		}
 	}
 
 	/**
@@ -2028,7 +2089,7 @@ export class DeveloperDashboard {
 
 		const style = document.createElement("style");
 		style.id = styleId;
-		style.innerHTML = `
+		style.textContent = `
       .dev-dashboard {
         position: fixed;
         bottom: 10px;
@@ -2139,7 +2200,7 @@ export class DeveloperDashboard {
 		timeSpan.textContent = time;
 
 		item.append(nameSpan, sourceSpan, timeSpan);
-		return item.outerHTML;
+		return item;
 	}
 
 	/**

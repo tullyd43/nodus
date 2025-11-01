@@ -1,7 +1,7 @@
 // src/core/storage/modules/basic-crypto.js
 // BasicCrypto — foundational cryptographic module for Nodus storage systems.
 
-import { AppError } from "../../../utils/ErrorHelpers.js";
+import { AppError } from "../../../../utils/ErrorHelpers.js";
 // Handles lightweight encryption, hashing, and key generation utilities.
 // This acts as a default fallback when higher-level (enterprise/NATO) crypto modules are not loaded.
 
@@ -18,17 +18,17 @@ import { AppError } from "../../../utils/ErrorHelpers.js";
  * @privateFields {#config, #stateManager, #metrics, #errorHelpers}
  */
 export default class BasicCrypto {
-	/** @private @type {import('../../HybridStateManager.js').default} */
+	/** @private @type {import('../../../HybridStateManager.js').default} */
 	#stateManager;
-	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
+	/** @private @type {import('../../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics = null;
-	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
+	/** @private @type {import('../../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
 	#errorHelpers = null;
 
 	/**
 	 * Creates an instance of BasicCrypto.
 	 * @param {object} context - The application context.
-	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * @param {import('../../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
 	 * @param {object} [context.options={}] - Configuration options for the module.
 	 */
 	/**

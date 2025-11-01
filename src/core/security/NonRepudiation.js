@@ -42,7 +42,7 @@ export class NonRepudiation {
 
 	 */
 
-	constructor(context = {}) {
+		constructor(context = {}) {
 		const { stateManager } = context || {};
 		// Allow construction without a full stateManager for unit tests. Provide minimal fallbacks.
 		/**
@@ -53,7 +53,7 @@ export class NonRepudiation {
 
 		 */
 
-		if (!stateManager) {
+				if (!stateManager) {
 			this.#stateManager = {
 				managers: {
 					keyring: {
@@ -65,7 +65,7 @@ export class NonRepudiation {
 
 						 */
 
-						async derive(type, domain) {
+												async derive(type, domain) {
 							// Generate a fresh ECDSA P-256 keypair for tests/fallbacks
 							const kp = await crypto.subtle.generateKey(
 								{ name: "ECDSA", namedCurve: "P-256" },
@@ -84,7 +84,7 @@ export class NonRepudiation {
 
 						 */
 
-						async tryAsync(fn) {
+												async tryAsync(fn) {
 							return fn();
 						},
 						/**
@@ -95,7 +95,7 @@ export class NonRepudiation {
 
 						 */
 
-						async tryOr(fn, fallback) {
+												async tryOr(fn, fallback) {
 							try {
 								return await fn();
 							} catch (e) {
@@ -110,7 +110,7 @@ export class NonRepudiation {
 
 						 */
 
-						async captureAsync(fn) {
+												async captureAsync(fn) {
 							return fn();
 						},
 					},
@@ -142,7 +142,7 @@ export class NonRepudiation {
 
 	 */
 
-	initialize() {
+		initialize() {
 		const managers = this.#stateManager.managers;
 		this.#keyring = managers?.keyring ?? null;
 		this.#errorHelpers = managers?.errorHelpers ?? null;
@@ -170,7 +170,7 @@ export class NonRepudiation {
 
 				 */
 
-				if (!this.#keyring) {
+								if (!this.#keyring) {
 					throw new Error(
 						"[NonRepudiation] Keyring service is not available."
 					);
@@ -196,7 +196,7 @@ export class NonRepudiation {
 
 		 */
 
-		if (!this.#initializationPromise) {
+				if (!this.#initializationPromise) {
 			// This should not happen if the constructor is used, but it's a safe fallback.
 			this.#initializationPromise = this.#initializeKeys("system-audit");
 		}
@@ -209,7 +209,7 @@ export class NonRepudiation {
 
 		 */
 
-		if (!this.#keyPair) {
+				if (!this.#keyPair) {
 			throw new Error(
 				"Cryptographic keys for signing are not available."
 			);
@@ -235,7 +235,7 @@ export class NonRepudiation {
 
 	 */
 
-	async signAction({ userId, action, label }) {
+		async signAction({ userId, action, label }) {
 		return this.#errorHelpers?.tryAsync(
 			async () => {
 				await this.#ensureInitialized();
@@ -286,7 +286,7 @@ export class NonRepudiation {
 
 	 */
 
-	async verifySignature(signature, payload, publicKey) {
+		async verifySignature(signature, payload, publicKey) {
 		return (
 			this.#errorHelpers?.tryAsync(
 				async () => {
@@ -301,7 +301,7 @@ export class NonRepudiation {
 
 					 */
 
-					if (!keyToUse) {
+										if (!keyToUse) {
 						throw new Error(
 							"Public key for verification is not available."
 						);
@@ -354,7 +354,7 @@ export class NonRepudiation {
 
 	 */
 
-	async signWithCertificate({ action, userCert }) {
+		async signWithCertificate({ action, userCert }) {
 		return this.#errorHelpers?.tryAsync(
 			async () => {
 				/**
@@ -365,7 +365,7 @@ export class NonRepudiation {
 
 				 */
 
-				if (!userCert || !userCert.subject || !userCert.domain) {
+								if (!userCert || !userCert.subject || !userCert.domain) {
 					throw new Error(
 						"A valid user certificate object is required."
 					);
@@ -389,7 +389,7 @@ export class NonRepudiation {
 				 */
 
 
-				if (!userKeyPair?.privateKey) {
+								if (!userKeyPair?.privateKey) {
 					throw new Error(
 						`Could not derive signing key for certificate domain: ${userCert.domain}`
 					);
@@ -456,7 +456,7 @@ export class NonRepudiation {
 
 	 */
 
-	async sign(data) {
+		async sign(data) {
 		await this.#ensureInitialized();
 		const payload = new TextEncoder().encode(JSON.stringify(data));
 		const sigBuf = await crypto.subtle.sign(
@@ -492,7 +492,7 @@ export class NonRepudiation {
 
 	 */
 
-	async hash(obj) {
+		async hash(obj) {
 		const encoded = new TextEncoder().encode(JSON.stringify(obj));
 		const digest = await crypto.subtle.digest("SHA-256", encoded);
 		return Array.from(new Uint8Array(digest))

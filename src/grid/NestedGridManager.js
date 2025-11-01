@@ -20,7 +20,7 @@ export class NestedGridManager {
 	 */
 
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 		this.#policy = stateManager?.managers?.policies;
 	}
@@ -42,7 +42,7 @@ export class NestedGridManager {
 
 	 */
 
-	async attach(blockEl, appViewModel, nestedConfig = {}, depth = 0) {
+		async attach(blockEl, appViewModel, nestedConfig = {}, depth = 0) {
 		try {
 			if (!blockEl || !blockEl.classList?.contains("grid-block")) return;
 			if (!this.#isNestingEnabled()) return;
@@ -97,7 +97,7 @@ export class NestedGridManager {
 
 			 */
 
-			for (const b of blocks) {
+						for (const b of blocks) {
 				const blk = document.createElement("div");
 				blk.className = "grid-block";
 				blk.dataset.blockId = b.id;
@@ -119,7 +119,7 @@ export class NestedGridManager {
 
 				 */
 
-				if (b.nestedGrid) {
+								if (b.nestedGrid) {
 					await this.attach(
 						blk,
 						appViewModel,
@@ -138,7 +138,7 @@ export class NestedGridManager {
 
 			 */
 
-			for (const b of blocks) {
+						for (const b of blocks) {
 				renderer.updateBlockPosition?.(b.id, b.x, b.y, b.w, b.h);
 			}
 		} catch {
@@ -155,7 +155,7 @@ export class NestedGridManager {
 
 	 */
 
-	detachAll() {
+		detachAll() {
 		try {
 			for (const [container, renderer] of this.#instances.entries()) {
 				try {

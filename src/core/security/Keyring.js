@@ -46,7 +46,7 @@ export class InMemoryKeyring {
 
 		 */
 
-		constructor(key, kid) {
+				constructor(key, kid) {
 			this.#key = key;
 			this.kid = kid;
 		}
@@ -65,7 +65,7 @@ export class InMemoryKeyring {
 
 		 */
 
-		async encrypt(plaintext, aad) {
+				async encrypt(plaintext, aad) {
 			const iv = crypto.getRandomValues(new Uint8Array(12));
 			const ciphertext = await crypto.subtle.encrypt(
 				{ name: "AES-GCM", iv, additionalData: aad },
@@ -94,7 +94,7 @@ export class InMemoryKeyring {
 
 		 */
 
-		async decrypt(envelope, aad) {
+				async decrypt(envelope, aad) {
 			const plaintext = await crypto.subtle.decrypt(
 				{ name: "AES-GCM", iv: envelope.iv, additionalData: aad },
 				this.#key,
@@ -115,7 +115,7 @@ export class InMemoryKeyring {
 
 	 */
 
-	constructor({ stateManager }) {
+		constructor({ stateManager }) {
 		this.#stateManager = stateManager;
 	}
 
@@ -130,7 +130,7 @@ export class InMemoryKeyring {
 
 	 */
 
-	initialize() {
+		initialize() {
 		const managers = this.#stateManager?.managers;
 		/**
 
@@ -140,7 +140,7 @@ export class InMemoryKeyring {
 
 		 */
 
-		if (!managers?.cacheManager) {
+				if (!managers?.cacheManager) {
 			throw new Error("[InMemoryKeyring] CacheManager is not available.");
 		}
 		// Mandate 4.1: All caches MUST be bounded.
@@ -173,7 +173,7 @@ export class InMemoryKeyring {
 
 	 */
 
-	async getKey(domain) {
+		async getKey(domain) {
 		return this.#errorHelpers?.tryAsync(
 			async () => {
 				if (this.#cache.has(domain)) {
@@ -222,7 +222,7 @@ export class InMemoryKeyring {
 
 	 */
 
-	async derive(purpose, domain) {
+		async derive(purpose, domain) {
 		return this.#errorHelpers?.tryAsync(
 			async () => {
 				const keyId = `${purpose}::${domain}`;
@@ -248,7 +248,7 @@ export class InMemoryKeyring {
 				 */
 
 
-				if (purpose === "signing") {
+								if (purpose === "signing") {
 					const keyPair = await crypto.subtle.generateKey(
 						{
 							name: "ECDSA",
