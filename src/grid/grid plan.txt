@@ -333,3 +333,159 @@ Every defense and high-assurance org would love a browser that enforces classifi
 
 What you’re describing is a new trust platform — not just another app.
 If you execute it right, it’s not a “nice idea.” It’s a missing foundation piece.
+
+
+
+Got it. I went through the latest grid runtime files you shared (and aligned them with your V8 mandates). Here’s a tight review + concrete fixes so you can keep shipping.
+
+# What’s solid
+
+* **Nested grid** is real and scoped (tenant/user) with separate config + layout stores — nice separation of concerns.
+* **Runtime config normalization** clamps sizes, enforces columns, and supports responsive templates.
+* **HTML component hardening** strips scripts, inline handlers, styles, and JS/data URLs — huge win for mandate 2.1.
+* **AI Layout Assistant** hooks cleanly into the state manager, batches analysis, and emits suggestion events — fully V8-parity compliant.
+
+# Priority fixes (copy-paste sized)
+
+## 1) Parity 1.2 violation: don’t `new` core services in components
+
+`ComponentRegistry` still imports and instantiates `EnhancedGridRenderer` directly. Route this through the stateManager registry instead.
+
+**Fix (replace the instantiation block):**
+
+```diff
+- import { EnhancedGridRenderer } from "../EnhancedGridRenderer.js";
+...
+- const enhancer = new EnhancedGridRenderer(stateManager);
++ const enhancer =
++   stateManager.managers?.enhancedGridRenderer
++   || stateManager.serviceRegistry?.createNamespacedInstance?.(
++        'enhancedGridRenderer',
++        { stateManager }
++      );
++ if (!enhancer) {
++   el.textContent = '[grid enhancer unavailable]';
++   return () => el.replaceChildren();
++ }
+```
+
+Also add a **max nesting guard** (prevents runaway recursion / perf traps):
+
+```js
+const depth = Number(context?.depth || 0);
+if (depth > 3) {
+  el.textContent = '[max nesting depth exceeded]';
+  return () => {};
+}
+```
+
+And ensure cleanup always runs:
+
+```js
+return () => {
+  try { enhancer.destroy?.(); } catch {}
+  el.replaceChildren();
+};
+```
+
+## 2) Runtime config: enforce unique IDs + basic overlap check
+
+Right now, `normalizeConfig()` can accept duplicate IDs or overlapping blocks. Add a quick pass to enforce uniqueness and reject obvious overlaps.
+
+**Drop-in addition (after `cfg.blocks = normalizeBlocks(cfg.blocks);`):**
+
+```js
+// ensure unique IDs
+const seen = new Set();
+cfg.blocks = cfg.blocks.filter(b => {
+  if (seen.has(b.id)) return false;
+  seen.add(b.id);
+  return true;
+});
+
+// reject trivial overlaps (same row range and col range)
+function overlaps(a,b){
+  const ax2 = a.x + a.w - 1, bx2 = b.x + b.w - 1;
+  const ay2 = a.y + a.h - 1, by2 = b.y + b.h - 1;
+  const colsOverlap = !(ax2 < b.x || bx2 < a.x);
+  const rowsOverlap = !(ay2 < b.y || by2 < a.y);
+  return colsOverlap && rowsOverlap;
+}
+const out = [];
+for (const b of cfg.blocks) {
+  if (out.some(x => overlaps(x,b))) continue;
+  out.push(b);
+}
+cfg.blocks = out;
+```
+
+## 3) LayoutStore: be resilient on put() and consolidate keys
+
+Solid use of `stateManager.storage.instance`, but add a safe path in case of constraint collisions and centralize key derivation.
+
+**Enhance saves with a retry:**
+
+```js
+async save(id, layout, scope) {
+  const db = this.#stateManager?.storage?.instance;
+  if (!db) throw new Error('Storage instance not available');
+  const key = this.#key('grid_layout', id, scope);
+  const record = { id: key, layout, updatedAt: new Date().toISOString() };
+  try { await db.put('system_settings', record); }
+  catch (err) {
+    if (err?.code === 'ConstraintError') {
+      await db.delete('system_settings', key);
+      await db.put('system_settings', record);
+    } else throw err;
+  }
+}
+```
+
+(Do the same in `saveConfig()`.)
+
+## 4) AI Assistant: add destroy() + tiny policy cache
+
+You’re already clean on events and batching; add a simple `destroy()` and cache the AI policy to reduce lookups.
+
+**Add:**
+
+```js
+destroy() {
+  if (this.#analysisTimeout) clearTimeout(this.#analysisTimeout);
+  this.#analysisQueue.length = 0;
+  // if you subscribed via stateManager.on, make sure to keep unsubscribes and call them here
+}
+```
+
+**Micro-cache policy (inside `#isEnabled()`):**
+
+```js
+if (this.#cachedEnabled != null && (DateCore.now() - (this.#cachedAt||0) < 2500)) {
+  return this.#cachedEnabled;
+}
+const enabled = policies ? policies.getPolicy("system","grid_ai_suggestions") : this.#options.enabled;
+this.#cachedEnabled = !!enabled; this.#cachedAt = DateCore.now();
+return this.#cachedEnabled;
+```
+
+# Nice-to-haves (soon)
+
+* **Auto-pack (float up) toggle** via policy, to compact gaps after moves.
+* **Batch update façade** (`beginUpdate/commit`) that wraps your existing transaction to mirror GridStack’s “batch” UX.
+* **Viewport culling clean-up**: ensure your `IntersectionObserver` is disconnected in `destroy()` (prevents leaks if nested grids get added/removed frequently).
+* **Keyboard resize handles** parity (N/E/S/W) — optional, but feels premium.
+
+# Why this matters
+
+* Keeps you **100% inside V8 Parity** (no direct service instantiation, all state via `stateManager`).
+* Hardens your **security envelope** (no break-glass paths for HTML/JS).
+* Prevents **layout corruption** (dupe IDs, overlaps) at the config boundary (cheaper than fixing later on drag).
+* Improves **reliability** in multi-user/tenant scenarios with minimal code.
+
+If you want, I can spit out **ready-to-drop updated files** for:
+
+* `ComponentRegistry.js` (no direct `new`, nesting guard, robust cleanup)
+* `GridRuntimeConfig.js` (IDs + overlap prevention)
+* `LayoutStore.js` (safe writes)
+
+Just say “generate the patched files” and I’ll produce them inline.

@@ -7,6 +7,17 @@ import pluginPromise from "eslint-plugin-promise";
 import pluginSecurity from "eslint-plugin-security";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
 
+import nodusPlugin from "./tools/eslint-plugin-nodus/index.js";
+// Load override JSON in a way compatible with ESLint's loader (avoid import assertions runtime issue)
+const overrideCI = JSON.parse(
+	await (
+		await import("fs")
+	).promises.readFile(
+		new URL("./.eslint-override.ci.json", import.meta.url),
+		"utf8"
+	)
+);
+
 // Force modern parser
 process.env.ESLINT_USE_FLAT_CONFIG = "true";
 
@@ -100,40 +111,11 @@ export default [
 			promise: pluginPromise,
 			security: pluginSecurity,
 			"unused-imports": pluginUnusedImports,
-			// V8.0 Parity: Mandate 1.3 - Define the custom rule plugin inline.
-			"nodus-rules": {
-				rules: {
-					"no-direct-core-instantiation": {
-						meta: {
-							type: "problem",
-							docs: {
-								description:
-									"Disallow direct instantiation of core services. They must be accessed via the stateManager.",
-								category: "Best Practices",
-								recommended: true,
-							},
-							schema: [],
-						},
-						create(context) {
-							return {
-								NewExpression(node) {
-									if (
-										node.callee.type === "Identifier" &&
-										FORBIDDEN_CORE_CLASSES.has(
-											node.callee.name
-										)
-									) {
-										context.report({
-											node,
-											message: `Direct instantiation of core service '${node.callee.name}' is forbidden. Access it via the stateManager.`,
-										});
-									}
-								},
-							};
-						},
-					},
-				},
-			},
+			// Register the local 'nodus' plugin (tools/eslint-plugin-nodus)
+			nodus: nodusPlugin,
+			copilotGuard: (
+				await import("./tools/eslint-plugin-copilot-guard/index.js")
+			).default,
 		},
 		rules: {
 			// --- General Quality ---
@@ -153,6 +135,7 @@ export default [
 					],
 				},
 			],
+
 			"no-debugger": "error",
 
 			// --- Imports & Organization ---
@@ -192,7 +175,13 @@ export default [
 			"no-empty": "warn",
 
 			// --- Custom Project Rules ---
-			"nodus-rules/no-direct-core-instantiation": "error",
+			"nodus/no-direct-core-instantiation": "error",
+			// --- Copilot Rules ---
+			"copilotGuard/no-insecure-api": "error",
+			"copilotGuard/require-jsdoc-and-tests": "warn",
+			"copilotGuard/require-forensic-envelope": "error",
+			"copilotGuard/no-runtime-dependencies": "error",
 		},
 	},
+	process.env.ESLINT_MODE === "tolerant" ? overrideCI : {},
 ];

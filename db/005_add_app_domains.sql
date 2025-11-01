@@ -1,0 +1,3 @@
+INSERT INTO crypto_domains (domain_name, domain_key) VALUES 
+('user', 'GENERATE_A_NEW_ENCRYPTION_KEY_FOR_USER_DOMAIN'),
+('meta', 'GENERATE_A_NEW_ENCRYPTION_KEY_FOR_META_DOMAIN');

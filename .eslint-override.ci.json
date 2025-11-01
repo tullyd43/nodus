@@ -1,0 +1,7 @@
+{
+	"rules": {
+		"copilotGuard/require-jsdoc-and-tests": "warn",
+		"copilotGuard/require-forensic-envelope": "warn",
+		"copilotGuard/no-insecure-api": "error"
+	}
+}
