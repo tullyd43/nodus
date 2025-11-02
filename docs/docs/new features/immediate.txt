@@ -16,7 +16,7 @@ Your base stack should do the following **without external frameworks**:
 | --------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
 | **Grid System**                   | Blocks render, drag, resize, snap to grid; persistent positions; per-block metadata      | `CompleteGridSystem.js`, `EnhancedGridRenderer.js`         | ❌ Dragging/resizing not yet working |
 | **UI–State Binding (BindEngine)** | DOM updates automatically on HybridStateManager changes                                  | `BindEngine.js`, `StateUIBridge.js`, `ActionDispatcher.js` | ⚠️ BindEngine logic not connected   |
-| **Async Coordination**            | Asynchronous UI operations don’t break reactivity; pending states visible                | `AsyncHelper.js`                                           | ❌ Not integrated                    |
+| **Async Coordination**            | Asynchronous UI operations don’t break reactivity; pending states visible                | `AsyncOrchestrationService.js`                                           | ❌ Not integrated                    |
 | **Security/Audit Envelope**       | Every state mutation, UI event, and storage action emits a forensic event                | `ForensicLogger`, CopilotGuard rules                       | ✅ Partial enforcement               |
 | **Persistence & Storage**         | IndexedDB + MAC + crypto all functional offline                                          | `StorageLoader.js`                                         | ✅ Stable                            |
 | **i18n/i10n**                     | Language switch works and strings are cached                                             | Translation JSON + service registry                        | ⚠️ Partial                          |
@@ -69,14 +69,14 @@ Your base stack should do the following **without external frameworks**:
   ```
 * ✅ Test by binding a simple counter or task title and ensuring DOM auto-updates.
 
-#### 3. ⚙️ Hook in AsyncHelper
+#### 3. ⚙️ Hook in AsyncOrchestrationService
 
 **Goal:** Allow async tasks (like network or DB calls) to show progress states in the UI.
 
-* Create `/core/utils/AsyncHelper.js`:
+* Create `/core/utils/AsyncOrchestrationService.js`:
 
   ```js
-  export class AsyncHelper {
+  export class AsyncOrchestrationService {
     static async wrap(promise, label) {
       StateUIBridge.emit("async:start", label);
       try { return await promise; }
@@ -87,7 +87,7 @@ Your base stack should do the following **without external frameworks**:
 * Integrate with the grid’s async ops (saving layout, loading blocks, etc.):
 
   ```js
-  await AsyncHelper.wrap(storage.save(entity), "SaveLayout");
+  await AsyncOrchestrationService.wrap(storage.save(entity), "SaveLayout");
   ```
 
 #### 4. 🔐 Ensure Security Hooks Work
@@ -137,7 +137,7 @@ UI binding skeleton	✅ Initialized	main.js instantiates BindEngine and ActionDi
 Area	Issue	Action Needed
 Grid Interactivity (drag, resize, snap)	CompleteGridSystem and EnhancedGridRenderer have no attached drag/resize handlers. No binding to DOM events found.	Implement mouse event listeners and transform updates (use requestAnimationFrame for performance). Emit grid:layoutChange to state manager.
 BindEngine Integration	Exists but not fully wired to the state event bus. StateUIBridge handles updates from the state manager to the grid, but not general DOM bindings.	Extend BindEngine to register [data-bind] elements and subscribe to stateManager.on("state:changed").
-AsyncHelper Integration	Missing entirely; async ops (like saving layouts) are synchronous.	Add AsyncHelper.wrap() calls around async storage and grid updates to emit "async:start" / "async:end" events.
+AsyncOrchestrationService Integration	Missing entirely; async ops (like saving layouts) are synchronous.	Add AsyncOrchestrationService.wrap() calls around async storage and grid updates to emit "async:start" / "async:end" events.
 State–UI feedback loop	StateUIBridge connects events to the grid, but not the other way around (grid → state).	Add StateUIBridge.emit() or equivalent callback hooks to propagate UI actions back to the state layer.
 ComponentRegistry / default components	Exists but no registered default UI components.	Add simple base component types (text, html, button, input) to validate ComponentRegistry behavior.
 JSDoc coverage (copilotGuard)	Incomplete — many methods have TODO placeholders (especially in CompleteGridSystem.js, StateUIBridge.js, ComponentRegistry.js).	Fill all missing JSDoc comments with descriptions, params, and forensic envelope annotations to satisfy linting rules.
@@ -180,11 +180,11 @@ stateManager.on('state:changed', (key, value) => bindEngine.updateBindings(key, 
 
 Add [data-bind="task.name"] support in the DOM.
 
-Integrate AsyncHelper
+Integrate AsyncOrchestrationService
 
-Create AsyncHelper.js and wrap async methods:
+Create AsyncOrchestrationService.js and wrap async methods:
 
-await AsyncHelper.wrap(storage.save(entity), "grid:layoutSave");
+await AsyncOrchestrationService.wrap(storage.save(entity), "grid:layoutSave");
 
 
 Populate ComponentRegistry
@@ -226,7 +226,7 @@ You can confidently move to the next phase (WASM integration, SLSA CI, and certi
 Criteria	Verification
 Grid drag/resize works smoothly	You can drag blocks and reload to see positions persist
 BindEngine updates UI on state change	[data-bind] text reflects live changes
-AsyncHelper events visible	Console shows "async:start" and "async:end" logs
+AsyncOrchestrationService events visible	Console shows "async:start" and "async:end" logs
 Forensic events fire	Every user action triggers an envelope in the ForensicLogger
 Layout and policies persist	Refreshing the page restores prior layout
 ESLint passes with 0 errors	npm run lint exits code 0

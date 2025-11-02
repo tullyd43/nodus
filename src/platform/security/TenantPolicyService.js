@@ -3,6 +3,20 @@
  * @description Manages per-tenant policy overrides layered on top of SystemPolicies.
  */
 
+import {
+	CORE_GRID_POLICY_DEFINITIONS,
+} from "@platform/security/policies/grid/CoreGridPolicy.js";
+import {
+	NESTING_POLICY_DEFINITIONS,
+} from "@platform/security/policies/grid/NestingPolicy.js";
+
+const CORE_GRID_POLICY_KEYS = Object.keys(
+	CORE_GRID_POLICY_DEFINITIONS
+).map((path) => path.split("."));
+const NESTING_POLICY_KEYS = Object.keys(NESTING_POLICY_DEFINITIONS).map(
+	(path) => path.split(".")
+);
+
 export class TenantPolicyService {
 	#stateManager;
 	#cache;

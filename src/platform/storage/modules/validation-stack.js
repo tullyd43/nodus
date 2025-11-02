@@ -1,4 +1,4 @@
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
+import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 // modules/validation-stack.js
 // Validation stack for composable data validation
 

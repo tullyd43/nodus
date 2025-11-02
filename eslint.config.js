@@ -1,22 +1,29 @@
 /* eslint-env node */
 // eslint.config.js  — ESLint v9+  (Vanilla JS | Node 22 | ESM)
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import js from "@eslint/js";
 import pluginImport from "eslint-plugin-import";
 import pluginPromise from "eslint-plugin-promise";
 import pluginSecurity from "eslint-plugin-security";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
 
-import nodusPlugin from "./eslint-plugin-nodus/index.js";
-// Load override JSON in a way compatible with ESLint's loader (avoid import assertions runtime issue)
-const overrideCI = JSON.parse(
-	await (
-		await import("fs")
-	).promises.readFile(
-		new URL("./.eslint-override.ci.json", import.meta.url),
-		"utf8"
-	)
+import nodusPlugin from "#tools/eslint/eslint-plugin-nodus/index.js";
+
+// V8.0 Parity: Correctly resolve paths relative to this config file's location.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const overrideCIPath = path.resolve(
+	__dirname,
+	"tools/eslint/.eslint-override.ci.json"
 );
+const overrideCI = JSON.parse(fs.readFileSync(overrideCIPath, "utf8"));
+
+// Dynamically import the exception file from the correct relative path.
+const exceptions = (await import("#tools/eslint/.eslint.config.exception.js"))
+	.default;
 
 // Force modern parser
 process.env.ESLINT_USE_FLAT_CONFIG = "true";
@@ -113,8 +120,12 @@ export default [
 			"unused-imports": pluginUnusedImports,
 			// Register the local 'nodus' plugin (tools/eslint-plugin-nodus)
 			nodus: nodusPlugin,
+			// Backwards-compatible alias: some configs/tests reference 'nodus-rules/*'
+			"nodus-rules": nodusPlugin,
 			copilotGuard: (
-				await import("./eslint-plugin-copilot-guard/index.js")
+				await import(
+					"#tools/eslint/eslint-plugin-copilot-guard/index.js"
+				)
 			).default,
 		},
 		rules: {
@@ -174,11 +185,12 @@ export default [
 			"no-control-regex": "off",
 			"no-empty": "warn",
 
-			// --- Custom Project Rules ---
-			"nodus/no-direct-core-instantiation": "error",
-			// Enforce new orchestration model
-			"nodus/require-async-orchestration": "error",
-			"nodus/no-manual-forensics": "error",
+		// --- Custom Project Rules ---
+		"nodus/no-direct-core-instantiation": "error",
+		// Enforce new orchestration model
+		"nodus/require-async-orchestration": "error",
+		"nodus/no-manual-forensics": "error",
+		"nodus/prefer-alias-imports": "error",
 
 			// --- Copilot Rules ---
 			"copilotGuard/no-insecure-api": "error",
@@ -187,5 +199,6 @@ export default [
 			"copilotGuard/no-runtime-dependencies": "error",
 		},
 	},
+	exceptions, // Apply exception overrides as a separate config object
 	process.env.ESLINT_MODE === "tolerant" ? overrideCI : {},
 ];

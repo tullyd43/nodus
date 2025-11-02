@@ -1,6 +1,6 @@
+import SecurityManager from "@core/security/SecurityManager.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import SecurityManager from "@core/security/SecurityManager.js";
 
 describe("SecurityManager (unit)", () => {
 	let mockStateManager;
@@ -25,7 +25,7 @@ describe("SecurityManager (unit)", () => {
 			metricsRegistry: { namespace: () => ({ increment: vi.fn() }) },
 		};
 
-		// eslint-disable-next-line nodus-rules/no-direct-core-instantiation
+		 
 		sm = new SecurityManager({ stateManager: mockStateManager });
 	});
 

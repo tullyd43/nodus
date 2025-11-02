@@ -1,7 +1,6 @@
 // modules/batch-sync.js
 // Batch synchronization module for efficient bulk operations
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
-
+import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 import { StorageError } from "@utils/ErrorHelpers.js";
 
 /**

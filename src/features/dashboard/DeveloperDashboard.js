@@ -1,8 +1,6 @@
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
-
-import { BoundedStack } from "../../utils/BoundedStack.js";
-import { DateCore } from "../../utils/DateUtils.js";
-
+import { BoundedStack } from "@utils/BoundedStack.js";
+import { DateCore } from "@utils/DateUtils.js";
 // Policies that are readonly in production (UI disabled)
 const PROD_BLOCKED_POLICIES = new Set(["security.expose_global_namespace"]);
 

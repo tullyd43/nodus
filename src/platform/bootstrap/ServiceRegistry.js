@@ -19,15 +19,15 @@ import { ManifestPluginSystem } from "@platform/extensions/ManifestPluginSystem.
 import { DatabaseOptimizer } from "@platform/optimization/DatabaseOptimizer.js";
 import { OptimizationAccessControl } from "@platform/optimization/OptimizationAccessControl.js";
 import { ConditionRegistry } from "@platform/rules/ConditionRegistry.js";
-import { AsyncOrchestrationService } from "@platform/services/AsyncOrchestrationService.js";
 import { CrossDomainSolution } from "@platform/security/CDS.js";
 import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 import { InMemoryKeyring } from "@platform/security/keyring/Keyring.js";
 import { NonRepudiation } from "@platform/security/NonRepudiation.js";
 import { SystemPolicies } from "@platform/security/policies/SystemPoliciesCached.js";
-import { SecurityManager } from "@platform/security/SecurityManager.js";
 import Sanitizer from "@platform/security/Sanitizer.js";
+import { SecurityManager } from "@platform/security/SecurityManager.js";
 import { TenantPolicyService } from "@platform/security/TenantPolicyService.js";
+import { AsyncOrchestrationService } from "@platform/services/AsyncOrchestrationService.js";
 import { CacheManager } from "@platform/services/cache/CacheManager.js";
 import { EmbeddingManager } from "@platform/services/EmbeddingManager.js";
 import { IdManager } from "@platform/services/id/IdManager.js";

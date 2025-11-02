@@ -1,6 +1,7 @@
 /**
- * @file policies/core.js
- * @description Core grid policy definitions, validators and presets.
+ * @file CoreGridPolicy.js
+ * @description Canonical grid policy definitions, validators, and presets. Hosted in the platform security kernel
+ * to ensure all features reference a single source of truth.
  */
 
 export const CORE_GRID_POLICY_DEFINITIONS = {
@@ -8,7 +9,8 @@ export const CORE_GRID_POLICY_DEFINITIONS = {
 		type: "boolean",
 		default: null,
 		domain: "system",
-		description: "Force grid performance mode on/off (null = auto based on FPS)",
+		description:
+			"Force grid performance mode on/off (null = auto based on FPS)",
 		category: "performance",
 	},
 	"system.grid_auto_save_layouts": {
@@ -32,8 +34,6 @@ export const CORE_GRID_POLICY_DEFINITIONS = {
 		description: "Enable AI-powered layout suggestions (future feature)",
 		category: "ai_assistance",
 	},
-
-	// Grid defaults used by the renderer/system
 	"grid.default_columns": {
 		type: "number",
 		default: 24,
@@ -73,11 +73,10 @@ export const CORE_GRID_POLICY_DEFINITIONS = {
 		type: "array",
 		default: [],
 		domain: "grid",
-		description: "Whitelist of allowed component types to render in grid blocks",
+		description:
+			"Whitelist of allowed component types to render in grid blocks",
 		category: "security",
 	},
-
-	// Expand/reflow configuration
 	"grid.expand_enabled": {
 		type: "boolean",
 		default: true,
@@ -96,67 +95,72 @@ export const CORE_GRID_POLICY_DEFINITIONS = {
 		type: "number",
 		default: 8,
 		domain: "grid",
-		description: "Target height (rows) when expanded in reflow mode",
+		description:
+			"Target height (rows) when expanded in reflow mode",
 		category: "interaction",
 	},
 	"grid.expand_target_full_width": {
 		type: "boolean",
 		default: true,
 		domain: "grid",
-		description: "Expanded block should span full grid width in reflow mode",
+		description:
+			"Expanded block should span full grid width in reflow mode",
 		category: "interaction",
 	},
-
-	// Drag reflow configuration
 	"grid.reflow_on_drag_enabled": {
 		type: "boolean",
 		default: true,
 		domain: "grid",
-		description: "When enabled, other blocks reflow on drop to avoid overlaps",
+		description:
+			"When enabled, other blocks reflow on drop to avoid overlaps",
 		category: "interaction",
 	},
 	"grid.reflow_strategy": {
 		type: "string",
 		default: "push_down",
 		domain: "grid",
-		description: "Reflow strategy to resolve overlaps after drag",
+		description:
+			"Reflow strategy to resolve overlaps after drag",
 		category: "interaction",
 	},
 	"grid.reflow_live_preview": {
 		type: "boolean",
 		default: false,
 		domain: "grid",
-		description: "When enabled, reflow is previewed live during drag (DOM only)",
+		description:
+			"When enabled, reflow is previewed live during drag (DOM only)",
 		category: "interaction",
 	},
-
-	// Nudging / overlap prevention UX (non-critical, tenant-overridable)
 	"grid.nudging_enabled": {
 		type: "boolean",
 		default: true,
 		domain: "grid",
-		description: "Enable gentle nudging when a drop would overlap another block",
+		description:
+			"Enable gentle nudging when a drop would overlap another block",
 		category: "user_experience",
 	},
 	"grid.nudging_max_radius": {
 		type: "number",
 		default: 3,
 		domain: "grid",
-		description: "Maximum Manhattan radius (in cells) to search for a nearby available placement",
+		description:
+			"Maximum Manhattan radius (in cells) to search for a nearby available placement",
 		category: "user_experience",
 	},
 	"grid.nudging_prefer": {
 		type: "array",
 		default: ["right", "down", "left", "up"],
 		domain: "grid",
-		description: "Preferred directions when searching for a nearby available placement",
+		description:
+			"Preferred directions when searching for a nearby available placement",
 		category: "user_experience",
 	},
 	"grid.nudging_tooltip_enabled": {
 		type: "boolean",
 		default: true,
 		domain: "grid",
-		description: "Show a small tooltip when the block is nudged to a nearby cell",
+		description:
+			"Show a small tooltip when the block is nudged to a nearby cell",
 		category: "user_experience",
 	},
 	"grid.nudging_tooltip_duration": {
@@ -170,7 +174,8 @@ export const CORE_GRID_POLICY_DEFINITIONS = {
 		type: "boolean",
 		default: false,
 		domain: "grid",
-		description: "Allow power-users to search a wider radius for available placements",
+		description:
+			"Allow power-users to search a wider radius for available placements",
 		category: "user_experience",
 	},
 	"grid.nudging_power_max_radius": {
@@ -180,8 +185,6 @@ export const CORE_GRID_POLICY_DEFINITIONS = {
 		description: "Maximum radius used when power mode is enabled",
 		category: "user_experience",
 	},
-
-	// System-level extras referenced by CompleteGridSystem
 	"system.grid_auto_save_layout_id": {
 		type: "string",
 		default: "default",
@@ -202,7 +205,7 @@ export const CORE_GRID_POLICY_PRESETS = {
 	personal: {
 		"grid.nudging_enabled": true,
 		"grid.nudging_max_radius": 4,
-		"grid.nudging_prefer": ["right","down","left","up"],
+		"grid.nudging_prefer": ["right", "down", "left", "up"],
 		"grid.nudging_tooltip_enabled": true,
 		"grid.nudging_tooltip_duration": 1200,
 		"grid.nudging_power_mode": false,
@@ -211,7 +214,7 @@ export const CORE_GRID_POLICY_PRESETS = {
 	tenant_default: {
 		"grid.nudging_enabled": true,
 		"grid.nudging_max_radius": 3,
-		"grid.nudging_prefer": ["right","down","left","up"],
+		"grid.nudging_prefer": ["right", "down", "left", "up"],
 		"grid.nudging_tooltip_enabled": true,
 		"grid.nudging_tooltip_duration": 1200,
 		"grid.nudging_power_mode": false,
@@ -220,72 +223,123 @@ export const CORE_GRID_POLICY_PRESETS = {
 	enterprise: {
 		"grid.nudging_enabled": true,
 		"grid.nudging_max_radius": 2,
-		"grid.nudging_prefer": ["right","down","left","up"],
+		"grid.nudging_prefer": ["right", "down", "left", "up"],
 		"grid.nudging_tooltip_enabled": false,
 		"grid.nudging_tooltip_duration": 800,
 		"grid.nudging_power_mode": false,
 		"grid.nudging_power_max_radius": 6,
-	}
+	},
 };
 
 export const CORE_GRID_POLICY_VALIDATORS = {
 	"system.grid_performance_mode": (value) => {
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
-				if (value !== null && typeof value !== "boolean") {
-			return { valid: false, message: "Grid performance mode must be null, true, or false" };
+		if (value !== null && typeof value !== "boolean") {
+			return {
+				valid: false,
+				message:
+					"Grid performance mode must be null, true, or false",
+			};
 		}
 		return { valid: true };
 	},
-	"system.grid_auto_save_layouts": (value) => ({ valid: typeof value === "boolean" }),
-	"system.grid_save_feedback": (value) => ({ valid: typeof value === "boolean" }),
-	"system.grid_ai_suggestions": (value) => ({ valid: typeof value === "boolean" }),
-
+	"system.grid_auto_save_layouts": (value) => ({
+		valid: typeof value === "boolean",
+	}),
+	"system.grid_save_feedback": (value) => ({
+		valid: typeof value === "boolean",
+	}),
+	"system.grid_ai_suggestions": (value) => ({
+		valid: typeof value === "boolean",
+	}),
 	"grid.default_columns": (value) => {
 		const ok = Number.isInteger(value) && value > 0 && value <= 96;
-		return ok ? { valid: true } : { valid: false, message: "default_columns must be 1..96" };
+		return ok
+			? { valid: true }
+			: { valid: false, message: "default_columns must be 1..96" };
 	},
 	"grid.default_min_w": (value) => {
 		const ok = Number.isInteger(value) && value > 0;
-		return ok ? { valid: true } : { valid: false, message: "default_min_w must be >= 1" };
+		return ok
+			? { valid: true }
+			: { valid: false, message: "default_min_w must be >= 1" };
 	},
 	"grid.default_min_h": (value) => {
 		const ok = Number.isInteger(value) && value > 0;
-		return ok ? { valid: true } : { valid: false, message: "default_min_h must be >= 1" };
+		return ok
+			? { valid: true }
+			: { valid: false, message: "default_min_h must be >= 1" };
 	},
 	"grid.default_max_w": (value) => {
 		const ok = Number.isInteger(value) && value >= 1;
-		return ok ? { valid: true } : { valid: false, message: "default_max_w must be >= 1" };
+		return ok
+			? { valid: true }
+			: { valid: false, message: "default_max_w must be >= 1" };
 	},
 	"grid.default_max_h": (value) => {
 		const ok = Number.isInteger(value) && value >= 1;
-		return ok ? { valid: true } : { valid: false, message: "default_max_h must be >= 1" };
+		return ok
+			? { valid: true }
+			: { valid: false, message: "default_max_h must be >= 1" };
 	},
 	"grid.allowed_component_types": (value) => {
-		if (!Array.isArray(value)) return { valid: false, message: "allowed_component_types must be array" };
-		if (!value.every((v) => typeof v === "string")) return { valid: false, message: "allowed_component_types items must be strings" };
+		if (!Array.isArray(value)) {
+			return {
+				valid: false,
+				message: "allowed_component_types must be array",
+			};
+		}
+		if (!value.every((v) => typeof v === "string")) {
+			return {
+				valid: false,
+				message:
+					"allowed_component_types items must be strings",
+			};
+		}
 		return { valid: true };
 	},
-	"grid.expand_enabled": (v) => ({ valid: typeof v === "boolean" }),
-	"grid.expand_mode": (v) => ({ valid: v === "reflow" || v === "overlay", message: "expand_mode must be reflow or overlay" }),
-	"grid.expand_target_rows": (v) => ({ valid: Number.isInteger(v) && v >= 1 && v <= 100, message: "expand_target_rows must be 1..100" }),
-	"grid.expand_target_full_width": (v) => ({ valid: typeof v === "boolean" }),
-	"grid.reflow_on_drag_enabled": (v) => ({ valid: typeof v === "boolean" }),
-	"grid.reflow_strategy": (v) => ({ valid: v === "push_down", message: "reflow_strategy must be push_down" }),
-	"grid.reflow_live_preview": (v) => ({ valid: typeof v === "boolean" }),
+	"grid.expand_enabled": (value) => ({
+		valid: typeof value === "boolean",
+	}),
+	"grid.expand_mode": (value) => ({
+		valid: value === "reflow" || value === "overlay",
+		message: "expand_mode must be reflow or overlay",
+	}),
+	"grid.expand_target_rows": (value) => ({
+		valid: Number.isInteger(value) && value >= 1 && value <= 100,
+		message: "expand_target_rows must be 1..100",
+	}),
+	"grid.expand_target_full_width": (value) => ({
+		valid: typeof value === "boolean",
+	}),
+	"grid.reflow_on_drag_enabled": (value) => ({
+		valid: typeof value === "boolean",
+	}),
+	"grid.reflow_strategy": (value) => ({
+		valid: value === "push_down",
+		message: "reflow_strategy must be push_down",
+	}),
+	"grid.reflow_live_preview": (value) => ({
+		valid: typeof value === "boolean",
+	}),
 	"system.grid_auto_save_layout_id": (value) => {
-		if (typeof value !== "string" || !value.trim()) return { valid: false, message: "grid_auto_save_layout_id must be non-empty string" };
+		if (typeof value !== "string" || !value.trim()) {
+			return {
+				valid: false,
+				message: "grid_auto_save_layout_id must be non-empty string",
+			};
+		}
 		return { valid: true };
 	},
 	"system.grid_auto_save_layout_scope": (value) => {
-		const ok = value === "user" || value === "tenant" || value === "global";
-		return ok ? { valid: true } : { valid: false, message: "grid_auto_save_layout_scope must be one of user|tenant|global" };
+		const ok =
+			value === "user" || value === "tenant" || value === "global";
+		return ok
+			? { valid: true }
+			: {
+					valid: false,
+					message:
+						"grid_auto_save_layout_scope must be one of user|tenant|global",
+			  };
 	},
 };
 
@@ -294,3 +348,4 @@ export default {
 	CORE_GRID_POLICY_VALIDATORS,
 	CORE_GRID_POLICY_PRESETS,
 };
+

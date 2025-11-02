@@ -25,11 +25,15 @@
 		"mandatory_rules": [
 			"All functions must include JSDoc with parameter and return type annotations.",
 			"All state mutations must be wrapped in forensic envelopes via ForensicLogger.",
+			"All async operations must be executed through AsyncOrchestrationService.createRunner (or an injected orchestrator.wrap/run) rather than raw async functions.",
+			"Imports must use canonical aliases (e.g. '@shared/...') or explicit file paths with extensions; no index barrels or legacy shims.",
 			"All network calls must use SecureFetch wrapper (never raw fetch).",
 			"All data-bound DOM updates must pass through BindEngine or StateUIBridge.",
 			"No usage of innerHTML, eval, Function(), or unescaped template literals."
 		],
 		"lint_integrations": [
+			"nodus/prefer-alias-imports",
+			"nodus/require-async-orchestration",
 			"copilotGuard/require-jsdoc-and-tests",
 			"copilotGuard/require-forensic-envelope",
 			"copilotGuard/no-insecure-api"
@@ -41,6 +45,8 @@
 			"StorageLoader.js": "Promote modular, data-driven loading; never hardcode module lists.",
 			"HybridStateManager.js": "Preserve reactive, event-driven sync between domains.",
 			"ComposableSecurity.js": "Always call MAC.enforceNoWriteDown() and MAC.enforceNoReadUp() before writes/reads.",
+			"AsyncOrchestrationService.js": "Generate runners with AsyncOrchestrationService.createRunner for any orchestration-aware helpers; ensure metadata includes label prefixes and actor IDs.",
+			"Project Imports": "Prefer '@' aliases with explicit filenames (e.g. '@shared/lib/SafeDOM.js'); fallback to relative paths only when pointing at a concrete file.",
 			"ForensicLogger.js": "Every audit trail must include a classification label and cryptographic signature placeholder.",
 			"BindEngine_v2.js": "Respect forensic logging for every DOM change; avoid direct state mutations."
 		},

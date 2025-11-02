@@ -20,7 +20,7 @@ const DEFAULT_ACTOR = "async.service";
  */
 export class AsyncOrchestrationService {
 	/**
-	 * @param {{ stateManager: import("../state/HybridStateManager.js").default }} context
+	 * @param {{ stateManager: import("../../../platform/state/HybridStateManager.js").default }} context
 	 */
 	constructor(context) {
 		if (!context?.stateManager) {
@@ -80,6 +80,102 @@ export class AsyncOrchestrationService {
 	}
 
 	/**
+	 * Convenience wrapper around {@link AsyncOrchestrationService.run} that accepts a promise or callable.
+	 * @template T
+	 * @param {Promise<T>|(() => Promise<T>|T)} operation
+	 * @param {import("@shared/lib/async/AsyncOrchestrator.js").AsyncRunOptions} [options]
+	 * @returns {Promise<T>}
+	 */
+	wrap(operation, options = {}) {
+		const callable =
+			typeof operation === "function" ? operation : () => operation;
+		return this.run(callable, options);
+	}
+
+	/**
+	 * Creates a pre-configured async runner that automatically forwards calls to {@link AsyncOrchestrationService.run}.
+	 * Provides the runner behaviour that previously lived in `AsyncHelper.createRunner`, keeping orchestration logic centralized.
+	 * @param {object} [defaults={}] Shared options applied to every run.
+	 * @param {string} [defaults.label] Static label applied to every operation (overrides labelPrefix).
+	 * @param {string} [defaults.labelPrefix] Prefix used to derive labels when no explicit label is supplied.
+	 * @param {string} [defaults.actorId] Default actor identifier.
+	 * @param {string} [defaults.eventType] Default event type.
+	 * @param {object} [defaults.meta] Default metadata merged with per-call metadata.
+	 * @param {object} [defaults.classification] Default classification payload.
+	 * @param {import("../../../platform/state/HybridStateManager.js").default} [defaults.stateManager]
+	 * Shared state manager reference (falls back to the service's state manager when omitted).
+	 * @returns {(operation: Promise<any>|(() => Promise<any>|any), overrides?:object) => Promise<any>}
+	 */
+	createRunner(defaults = {}) {
+		if (defaults === null || typeof defaults !== "object") {
+			throw new TypeError(
+				"AsyncOrchestrationService.createRunner requires an options object."
+			);
+		}
+
+		const {
+			label: baseLabel,
+			labelPrefix = "",
+			meta: baseMeta,
+			classification: baseClassification,
+			stateManager: baseStateManager,
+			...baseRest
+		} = defaults;
+
+		const sanitizedBaseMeta =
+			baseMeta && typeof baseMeta === "object" ? { ...baseMeta } : null;
+		const resolvedStateManager = baseStateManager || this.#stateManager;
+
+		return async (operation, overrides = {}) => {
+			const callable =
+				typeof operation === "function" ? operation : () => operation;
+
+			const {
+				label: overrideLabel,
+				labelSuffix,
+				meta: overrideMeta,
+				classification: overrideClassification,
+				stateManager: overrideStateManager,
+				...overrideRest
+			} = overrides || {};
+
+			const derivedLabelFromPrefix =
+				labelPrefix && labelPrefix.length > 0
+					? `${labelPrefix}${
+							labelSuffix ? `.${labelSuffix}` : ""
+					  }`
+					: undefined;
+
+			const label =
+				overrideLabel ||
+				baseLabel ||
+				derivedLabelFromPrefix ||
+				"async.operation";
+
+			const metaSegments = [];
+			if (sanitizedBaseMeta) metaSegments.push(sanitizedBaseMeta);
+			if (overrideMeta && typeof overrideMeta === "object") {
+				metaSegments.push(overrideMeta);
+			}
+			const mergedMeta =
+				metaSegments.length > 0
+					? Object.assign({}, ...metaSegments)
+					: undefined;
+
+			const options = {
+				...baseRest,
+				...overrideRest,
+				label,
+				meta: mergedMeta,
+				classification: overrideClassification || baseClassification,
+				stateManager: overrideStateManager || resolvedStateManager,
+			};
+
+			return this.run(callable, options);
+		};
+	}
+
+	/**
 	 * Registers an additional orchestrator plugin.
 	 * @param {AsyncOrchestratorPlugin} plugin
 	 * @returns {() => void}
@@ -123,9 +219,7 @@ export class AsyncOrchestrationService {
 			this.#stateManager.managers?.forensicLogger ??
 			this.#stateManager.forensicLogger;
 		if (forensicLogger) {
-			orchestrator.registerPlugin(
-				new ForensicPlugin({ forensicLogger })
-			);
+			orchestrator.registerPlugin(new ForensicPlugin({ forensicLogger }));
 		}
 
 		const metricsRegistry = this.#resolveMetricsRegistry();

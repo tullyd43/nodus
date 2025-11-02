@@ -1,4 +1,9 @@
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
+import { ForensicLogger } from "@platform/security/ForensicLogger.js";
+
+import {
+	CanonicalResolver,
+	DEFAULT_LEGACY_MAP,
+} from "../security/CanonicalResolver.js";
 // src/core/storage/StorageLoader.js
 // ============================================================================
 // Minimal Map-based cache wrapper used for demo/test contexts when a full CacheManager
@@ -68,6 +73,7 @@ class MapWrapper {
 		return { size: this._map.size };
 	}
 }
+
 /**
  * @file StorageLoader.js
  * @description Provides dynamic, data-driven storage module orchestration.
@@ -147,6 +153,10 @@ export class StorageLoader {
 	#ready = false;
 	/** @private @type {import('../HybridStateManager.js').default} */
 	#stateManager;
+	/** @private @type {import('../../shared/lib/MetricsRegistry.js').MetricsRegistry|null} */
+	#metrics = null;
+	/** @private @type {CanonicalResolver|null} */
+	#resolver = null;
 
 	/**
 	 * Creates an instance of StorageLoader.
@@ -206,6 +216,42 @@ export class StorageLoader {
 			},
 			...options,
 		};
+		this.#metrics =
+			this.#stateManager?.managers?.metricsRegistry ??
+			this.#stateManager?.metricsRegistry ??
+			null;
+		const resolverOwner = this;
+		this.#resolver = new CanonicalResolver({
+			searchPaths: [
+				"/src/platform/security/encryption",
+				"/src/platform/security",
+				"/src/platform/storage/validation",
+				"/src/platform/storage/sync",
+				"/src/platform/storage/adapters",
+				"/src/platform/storage",
+			],
+			legacyMap: new Map(Object.entries(DEFAULT_LEGACY_MAP)),
+			baseURL: this.#config.baseURL,
+			metrics: this.#metrics,
+			forensic:
+				this.#stateManager?.managers?.forensicLogger ??
+				this.#stateManager?.forensicLogger ??
+				null,
+			policy: {
+				get enforceCanonicalOnly() {
+					try {
+						return (
+							resolverOwner.#stateManager?.managers?.policies?.getPolicy?.(
+								"storage",
+								"enforce_canonical_only"
+							) === true
+						);
+					} catch {
+						return false;
+					}
+				},
+			},
+		});
 
 		this.#audit("STORAGE_LOADER_CREATED", {
 			demoMode: this.#config.demoMode,
@@ -617,49 +663,42 @@ export class StorageLoader {
 		}
 
 		console.log("[StorageLoader] Loading module:", moduleName);
-
-		// Try canonical platform/security locations only — historical storage
-		// fallbacks have been removed to enforce canonical module layout.
-		// We still allow callers to provide an explicit path (absolute/relative
-		// ending with .js) if they need to load a non-standard location.
-		const candidates = [
-			`/src/platform/security/encryption/${moduleName}.js`,
-			`/src/platform/security/${moduleName}.js`,
-			`/src/platform/storage/${moduleName}.js`,
-			// allow explicit absolute/relative path if caller provided one
-			moduleName.endsWith(".js") ? moduleName : `${moduleName}.js`,
-		];
-
-		let lastError = null;
-		for (const url of candidates) {
-			try {
-				console.debug("[StorageLoader] Attempting import:", url);
-				const mod = await import(/* @vite-ignore */ url);
-				const Klass =
-					mod.default || mod[this.#toPascalCase(moduleName)];
-				if (!Klass) throw new Error("No default or named export found");
-				if (this.#config.cacheModules)
-					this.#loadedModules.set(moduleName, Klass);
-				return Klass;
-			} catch (e) {
-				// record and try next candidate
-				lastError = e;
+		const result = await this.#resolver.import(moduleName);
+		const mod = result.module;
+		const Klass =
+			mod.default || mod[this.#toPascalCase(moduleName)];
+		if (!Klass) throw new Error("No default or named export found");
+		if (this.#config.cacheModules)
+			this.#loadedModules.set(moduleName, Klass);
+		if (result.fromLegacy) {
+			this.#metrics?.increment?.("storage.resolve.fallback_used", 1);
+			if (this.#shouldWarnOnLegacy()) {
 				console.warn(
-					"[StorageLoader] import attempt failed for",
-					url,
-					e.message || e
+					`[StorageLoader] Legacy module path used for '${moduleName}'`
 				);
 			}
 		}
-
-		console.error(
-			"[StorageLoader] Failed to load module",
-			moduleName,
-			lastError
-		);
-		throw new Error(`Module loading failed: ${moduleName}`);
+		return Klass;
 	}
 
+	/**
+	 * Determines if a warning should be logged when a legacy module path is used.
+	 * This is based on the `warn_on_legacy_resolve` policy.
+	 * @private
+	 * @returns {boolean}
+	 */
+	#shouldWarnOnLegacy() {
+		try {
+			return (
+				this.#stateManager?.managers?.policies?.getPolicy?.(
+					"storage",
+					"warn_on_legacy_resolve"
+				) === true
+			);
+		} catch {
+			return false;
+		}
+	}
 	// ---------------------------------------------------------------------------
 	// Minimal core validation (always present immediately)
 	/**

@@ -26,7 +26,7 @@ This creates a **defense-grade, composable runtime** that’s predictable, measu
 
 ### Replace:
 
-* `AsyncHelper` (monolithic version with all logic inline)
+* `AsyncOrchestrationService` (monolithic version with all logic inline)
 * Any ad-hoc `try { await ...; forensicLogger.log... }` sequences
 
 ### With:
@@ -182,7 +182,7 @@ Keeps visibility on what’s instrumented and what’s not.
 
 Remove or deprecate:
 
-* `AsyncHelper.createAsyncHelper`
+* `AsyncOrchestrationService.createAsyncOrchestrationService`
 * Standalone metrics counters
 * Duplicated forensic/embedding snippets
 * Old manual i18n or metrics registries
@@ -191,7 +191,7 @@ Remove or deprecate:
 Replace imports system-wide:
 
 ```diff
--import { AsyncHelper } from "../core/AsyncHelper.js";
+-import { AsyncOrchestrationService } from "../core/AsyncOrchestrationService.js";
 +import { AsyncOrchestrator } from "../core/async/AsyncOrchestrator.js";
 ```
 
@@ -253,7 +253,7 @@ Replace imports system-wide:
 
 ### 🚀 TL;DR
 
-1. **Refactor AsyncHelper → AsyncOrchestrator + plugins.**
+1. **Refactor AsyncOrchestrationService → AsyncOrchestrator + plugins.**
 2. **Move all auditing & embeddings into plugins; keep only boot/security manual.**
 3. **Add observability policies for depth, sampling, languages.**
 4. **Add localization, metrics, and embedding lineage integration.**
@@ -296,7 +296,7 @@ Essentially, it’s the “reactive UI plugin” for your async orchestration mo
 | **Security enforcement**       | `SecurityManager` or MAC engine             | Used in `#safeRender()` constant-time read checks.                                                       |
 | **Forensic logging**           | `ForensicLogger`                            | Already fully integrated (`createEnvelope`, `commitEnvelope`).                                           |
 | **Metrics**                    | `MetricsRegistry`                           | Already integrated (increment + record calls).                                                           |
-| **Orchestration**              | `AsyncHelper` / `AsyncOrchestrator`         | Wraps `BindEngine` start, updateBinding, and bootstrap events for global observability.                  |
+| **Orchestration**              | `AsyncOrchestrationService` / `AsyncOrchestrator`         | Wraps `BindEngine` start, updateBinding, and bootstrap events for global observability.                  |
 
 ✅ You don’t need to modify the engine’s internal structure — it’s already policy-compliant and security-hardened.
 You just need to **register it as a plugin participant** in your orchestration lifecycle.
@@ -441,7 +441,7 @@ if (this.#deps.embeddingManager && this.#deps.observability?.embedding_depth !==
 
 ---
 
-## 🧩 7. Relationship to AsyncHelper / AsyncOrchestrator
+## 🧩 7. Relationship to AsyncOrchestrationService / AsyncOrchestrator
 
 Think of `BindEngine` as a **specialized async participant**, not a replacement.
 
@@ -464,7 +464,7 @@ Both share the same forensic, metric, and policy infrastructure.
 | ----------------------------------- | -------------------------------------------- | ------------ |
 | Direct DOM updates                  | BindEngine-managed rendering                 | ✅ done       |
 | Manual forensic UI logs             | Automatic envelopes via BindEngine           | ✅ done       |
-| AsyncHelper wrappers for UI updates | AsyncOrchestrator (system) + BindEngine (UI) | ✅ integrated |
+| AsyncOrchestrationService wrappers for UI updates | AsyncOrchestrator (system) + BindEngine (UI) | ✅ integrated |
 | Standalone security checks          | Constant-time `canRead` (BindEngine)         | ✅ integrated |
 | UI metrics scattered                | Centralized in MetricsRegistry               | ✅ integrated |
 
@@ -527,7 +527,7 @@ Detects async functions not wrapped in the orchestration framework.
 export default {
   meta: {
     type: "problem",
-    docs: { description: "All async functions must use AsyncOrchestrator/AsyncHelper" },
+    docs: { description: "All async functions must use AsyncOrchestrator/AsyncOrchestrationService" },
     schema: [{ type: "object", properties: { allowIn: { type: "array" } } }]
   },
   create(context) {
@@ -539,11 +539,11 @@ export default {
         if (allowIn.some((dir) => filename.includes(dir))) return;
 
         const src = context.getSourceCode().getText(node);
-        const ok = /\bAsyncOrchestrator\b|\bAsyncHelper\b/.test(src);
+        const ok = /\bAsyncOrchestrator\b|\bAsyncOrchestrationService\b/.test(src);
         if (!ok)
           context.report({
             node,
-            message: "Async function not orchestrated. Wrap in AsyncOrchestrator or AsyncHelper."
+            message: "Async function not orchestrated. Wrap in AsyncOrchestrator or AsyncOrchestrationService."
           });
       }
     };
@@ -716,7 +716,7 @@ Example gate:
 * **VSCode integration:** add ESLint + status bar indicator
 * **Pre-commit hints:** short message, e.g.,
   “⚠️ Async function detected without orchestration — wrap it or disable rule locally.”
-* **Auto-fix suggestions:** optionally wrap simple async calls in `AsyncHelper.wrap()`.
+* **Auto-fix suggestions:** optionally wrap simple async calls in `AsyncOrchestrationService.wrap()`.
 
 ---
 

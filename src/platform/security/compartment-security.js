@@ -25,7 +25,7 @@ export default class CompartmentSecurity {
 	#inheritanceGraph = null;
 	/** @private @type {object} */
 	#options;
-	/** @private @type {import('../../security/SecurityManager.js').default|null} */
+	/** @private @type {import('./SecurityManager.js').default|null} */
 	#securityManager = null;
 	/** @private @type {import('../../ForensicLogger.js').default|null} */
 	#forensicLogger = null;

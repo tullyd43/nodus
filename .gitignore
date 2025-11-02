@@ -58,3 +58,14 @@ temp/
 
 # PM2 process files
 .pm2/
+
+# Repository directories (local only)
+__DEPRECATED__/
+deprecated/
+.copilot/
+db/
+public/
+scripts/
+server/
+tests/
+tools/

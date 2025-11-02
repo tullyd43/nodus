@@ -12,14 +12,13 @@
  * all managed grid services like policy management, toast notifications, and the AI layout assistant.
  * @privateFields {#stateManager, #options, #gridEnhancer, #toastManager, #aiAssistant, #initialized, #unsubscribeFunctions}
  * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #initialized, #unsubscribeFunctions}
- * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #gridPolicyService, #initialized, #unsubscribeFunctions}
+ * @privateFields {#stateManager, #appViewModel, #options, #gridEnhancer, #toastManager, #aiAssistant, #gridPolicyService, #initialized, #unsubscribeFunctions, #asyncService}
  */
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
 import { GridHistoryInspector } from "@grid/GridHistoryInspector.js";
 import { componentRegistry } from "@grid/runtime/ComponentRegistry.js";
 import { normalizeConfig } from "@grid/runtime/GridRuntimeConfig.js";
 import { LayoutStore } from "@grid/runtime/LayoutStore.js";
-import { AsyncHelper } from "@utils/AsyncHelper.js";
 
 export class CompleteGridSystem {
 	/** @private @type {import('../core/HybridStateManager.js').default} */
@@ -46,6 +45,7 @@ export class CompleteGridSystem {
 	#runtimeConfig = null;
 	#nestedGridManager = null;
 	#historyInspector = null;
+	#asyncService = null;
 
 	/**
 	 * Creates an instance of CompleteGridSystem.
@@ -71,6 +71,13 @@ export class CompleteGridSystem {
 		// V8.0 Parity: Accept appViewModel in constructor.
 		this.#stateManager = stateManager;
 		this.#appViewModel = appViewModel || {}; // V8.0 Parity: Assign appViewModel.
+		this.#asyncService =
+			this.#stateManager?.managers?.asyncOrchestrator ?? null;
+		if (!this.#asyncService) {
+			throw new Error(
+				"CompleteGridSystem requires AsyncOrchestrationService on the state manager."
+			);
+		}
 
 		// V8.0 Parity: Acquire all dependencies from the state manager.
 		this.#toastManager = this.#stateManager.managers.toastManager;
@@ -845,9 +852,10 @@ export class CompleteGridSystem {
 					} else throw err;
 				}
 			};
-			await AsyncHelper.wrap(runPersist(), {
+			await this.#asyncService.wrap(runPersist, {
 				stateManager: this.#stateManager,
 				label: "grid:layoutSave",
+				meta: { source: "CompleteGridSystem.saveRuntimeLayout" },
 			});
 		} catch (err) {
 			console.warn("[Grid] saveRuntimeLayout failed:", err);

@@ -16,7 +16,7 @@ export default class EnterpriseSecurity {
 	#accessCache = null;
 	/** @private @type {import('../../HybridStateManager.js').default} */
 	#stateManager = null;
-	/** @private @type {import('../../security/SecurityManager.js').default|null} */
+	/** @private @type {import('./SecurityManager.js').default|null} */
 	#securityManager = null;
 	/** @private @type {import('../../ForensicLogger.js').default|null} */
 	#forensicLogger = null;

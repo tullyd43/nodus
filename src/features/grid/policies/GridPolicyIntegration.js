@@ -81,7 +81,9 @@ export class GridPolicyService {
 		try {
 			// Prefer the cleaned policy module if present (safe migration path)
 			// Use the canonical core policy module
-			const core = await import("./CoreGridPolicy.js");
+			const core = await import(
+				"@platform/security/policies/grid/CoreGridPolicy.js"
+			);
 			this.#policyManager.registerPolicyDefinitions({
 				...core.CORE_GRID_POLICY_DEFINITIONS,
 			});
@@ -119,7 +121,9 @@ export class GridPolicyService {
 			 */
 
 			if (options.includeNesting) {
-				const nesting = await import("./NestingPolicy.js");
+				const nesting = await import(
+					"@platform/security/policies/grid/NestingPolicy.js"
+				);
 				this.#policyManager.registerPolicyDefinitions({
 					...nesting.NESTING_POLICY_DEFINITIONS,
 				});
@@ -178,6 +182,16 @@ export class GridPolicyService {
 				["grid", "nudging_power_mode"],
 				["grid", "nudging_power_max_radius"],
 			];
+			const canonicalKeys = Object.keys(
+				CORE_GRID_POLICY_DEFINITIONS
+			)
+				.filter((path) => path.includes("grid."))
+				.map((path) => path.split("."));
+			for (const pair of canonicalKeys) {
+				if (!keys.some(([d, k]) => d === pair[0] && k === pair[1])) {
+					keys.push(pair);
+				}
+			}
 			/**
 
 			 * TODO: Add JSDoc for method if
@@ -193,6 +207,13 @@ export class GridPolicyService {
 					["grid", "nesting_max_blocks_per_grid"],
 					["grid", "nesting_max_total_blocks"]
 				);
+				for (const pair of Object.keys(NESTING_POLICY_DEFINITIONS).map((path) =>
+					path.split(".")
+				)) {
+					if (!keys.some(([d, k]) => d === pair[0] && k === pair[1])) {
+						keys.push(pair);
+					}
+				}
 			}
 			/**
 

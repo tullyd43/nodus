@@ -32,9 +32,7 @@ function isPlainObject(value) {
  */
 function cleanse(input, schema) {
 	const visited = new WeakSet();
-	return /** @type {T} */ (
-		cloneAndCleanse(input, schema, visited, 0)
-	);
+	return /** @type {T} */ (cloneAndCleanse(input, schema, visited, 0));
 }
 
 /**
@@ -65,9 +63,7 @@ function cloneAndCleanse(value, schema, visited, depth) {
 	}
 
 	if (value instanceof Date) {
-		return Number.isFinite(value.getTime())
-			? value.toISOString()
-			: null;
+		return Number.isFinite(value.getTime()) ? value.toISOString() : null;
 	}
 
 	if (Array.isArray(value)) {
@@ -115,8 +111,7 @@ function cloneAndCleanse(value, schema, visited, depth) {
 			// Reject prototype pollution vectors
 			if (key === "__proto__" || key === "constructor") continue;
 
-			const propertySchema =
-				schema?.properties && schema.properties[key];
+			const propertySchema = schema?.properties && schema.properties[key];
 			const cleanedValue = cloneAndCleanse(
 				value[key],
 				propertySchema,
@@ -246,6 +241,8 @@ function stableSerialize(value) {
  * @param {string} input
  * @returns {Promise<string>}
  */
+let basicCryptoInstancePromise = null;
+
 async function hashString(input) {
 	const encoder = new TextEncoder();
 	const data = encoder.encode(input);
@@ -257,8 +254,7 @@ async function hashString(input) {
 	}
 
 	try {
-		const { createHash } = await import("node:crypto");
-		return createHash("sha256").update(input).digest("hex");
+		return await hashWithBasicCrypto(input);
 	} catch {
 		// Extremely unlikely: fall back to poor man's hash (not cryptographic).
 		let hash = 0;
@@ -280,6 +276,28 @@ function bufferToHex(buffer) {
 		.join("");
 }
 
+async function hashWithBasicCrypto(input) {
+	if (!basicCryptoInstancePromise) {
+		basicCryptoInstancePromise = (async () => {
+			const { default: BasicCrypto } = await import(
+				"@platform/security/encryption/basic-crypto.js"
+			);
+			const instance = new BasicCrypto({
+				stateManager: {
+					metricsRegistry: null,
+					managers: { errorHelpers: null },
+				},
+			});
+			if (typeof instance.init === "function") {
+				await instance.init();
+			}
+			return instance;
+		})();
+	}
+	const instance = await basicCryptoInstancePromise;
+	return instance.hash(input);
+}
+
 export const Sanitizer = Object.freeze({
 	cleanse,
 	cleanseText,
@@ -287,4 +305,3 @@ export const Sanitizer = Object.freeze({
 });
 
 export default Sanitizer;
-

@@ -1,9 +1,9 @@
 /**
  * @vitest-environment jsdom
  */
+import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
 import { describe, it, beforeEach, expect, vi } from "vitest";
 
-import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
 
 function makeMockStateManager() {
 	const listeners = new Map();

@@ -50,21 +50,27 @@ All violations trigger ESLint `copilotGuard/no-insecure-api`.
    `ForensicLogger.createEnvelope()` prior to state mutation.  
    *Verified by:* `copilotGuard/require-forensic-envelope`.
 
-2. **JSDoc + Test Coverage (D-02)**  
+2. **Async Orchestration Rule (A-02)**  
+   All asynchronous workflows must be executed through the centralized `AsyncOrchestrator`.  
+   Production code must wrap async operations with the service runner (`stateManager.managers.asyncOrchestrator.createRunner(...)`)  
+   or call `asyncOrchestrator.wrap(...)` directly — raw `async` functions are prohibited in shipping code.  
+   *Verified by:* `nodus/require-async-orchestration`.
+
+3. **JSDoc + Test Coverage (D-03)**  
    Every exported function or public class method must include a JSDoc header  
    and be covered by a corresponding unit test.  
    *Verified by:* `copilotGuard/require-jsdoc-and-tests`.
 
-3. **No Runtime Dependencies (S-03)**  
+4. **No Runtime Dependencies (S-04)**  
    Only `@core/*` imports and native Web APIs are allowed at runtime.  
    Dev tools may use `vitest`, `playwright`, and `eslint`.  
    *Verified by:* `copilotGuard/no-runtime-dependencies`.
 
-4. **Constant-Time Cryptographic Behavior (C-04)**  
+5. **Constant-Time Cryptographic Behavior (C-05)**  
    All MAC and classification comparisons must be padded using `constantTimeCheck`.  
    *Verified by:* Security integration tests.
 
-5. **Audit Integrity (A-05)**  
+6. **Audit Integrity (A-06)**  
    Audit logs must use append-only, signed, hash-chained envelopes.  
    *Verified by:* `ForensicLogger` and `NonRepudiation` modules.
 
@@ -92,6 +98,7 @@ All violations trigger ESLint `copilotGuard/no-insecure-api`.
 ## 7. Developer Responsibilities
 
 - Review this document before any code change.
+- Honor the Async Orchestration Rule (A-02) by routing all async work through the shared runner.
 - Ensure each commit passes ESLint, CI scan, and pre-commit hooks.
 - Immediately remediate violations.
 - Report suspected tampering or CI bypass to the security maintainer.
@@ -103,6 +110,7 @@ All violations trigger ESLint `copilotGuard/no-insecure-api`.
 - Copilot (and other AI tools) must operate in “compliance-first” mode as defined by `.copilot/agent.json`.
 - Must cite the relevant mandate section in code comments when generating security-sensitive logic.
 - Must never suggest third-party packages, unverified network calls, or direct DOM manipulation.
+- Must wrap async operations with the project runner (`stateManager.managers.asyncOrchestrator.createRunner(...)`) or an injected `asyncOrchestrator.wrap` call; raw `async` functions are prohibited.
 - Must respect all constraints in Section 3.
 
 ---

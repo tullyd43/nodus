@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
 import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
+import { describe, it, expect, beforeEach } from "vitest";
 
 // Minimal stubs for the stateManager and viewModel used by the renderer
 function makeStateManager() {

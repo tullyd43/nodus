@@ -12,6 +12,11 @@ import { HybridStateManager } from "@core/state/HybridStateManager.js";
 import { createBindEngineService } from "@features/ui/BindEngine.js";
 import { DateCore } from "@shared/lib/DateUtils.js";
 
+import {
+	CanonicalResolver,
+	DEFAULT_LEGACY_MAP,
+} from "@platform/security/CanonicalResolver.js";
+
 
 /**
  * @privateFields {#config, #stateManager, #metrics, #forensicLogger}
@@ -31,6 +36,8 @@ export class SystemBootstrap {
 	#metrics = null;
 	/** @private @type {import('./ForensicLogger.js').ForensicLogger|null} */
 	#forensicLogger = null;
+	/** @private @type {CanonicalResolver|null} */
+	#canonicalResolver = null;
 	/**
 	 * @param {object} config - The main application configuration.
 	 */
@@ -183,6 +190,38 @@ export class SystemBootstrap {
 		// V8.0 Parity: After core services are up, assign them for instrumentation.
 		this.#metrics = this.#stateManager.metricsRegistry;
 		this.#forensicLogger = this.#stateManager.managers.forensicLogger;
+		if (!this.#canonicalResolver) {
+			const bootstrap = this;
+			this.#canonicalResolver = new CanonicalResolver({
+				searchPaths: [
+					"/src/platform/security/encryption",
+					"/src/platform/security",
+					"/src/platform/storage/validation",
+					"/src/platform/storage/sync",
+					"/src/platform/storage/adapters",
+					"/src/platform/storage",
+				],
+				legacyMap: new Map(Object.entries(DEFAULT_LEGACY_MAP)),
+				baseURL: "/src/platform/storage/modules/",
+				metrics: this.#metrics,
+				forensic: this.#forensicLogger,
+				policy: {
+					get enforceCanonicalOnly() {
+						try {
+							return (
+								bootstrap.#stateManager?.managers?.policies?.getPolicy?.(
+									"storage",
+									"enforce_canonical_only"
+								) === true
+							);
+						} catch {
+							return false;
+						}
+					},
+				},
+			});
+			this.#stateManager.canonicalResolver = this.#canonicalResolver;
+		}
 
 		const coreInfraDuration = performance.now() - startTime;
 		this.#metrics?.timer(

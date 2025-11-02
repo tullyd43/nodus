@@ -8,7 +8,6 @@
 
 import { ServiceRegistry } from "@core/bootstrap/ServiceRegistry.js";
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
-
 import { BoundedStack } from "@utils/BoundedStack.js";
 
 /**
@@ -650,7 +649,7 @@ export class HybridStateManager {
 		 *   actionHandler: import('./ActionHandlerRegistry.js').ActionHandlerRegistry,
 		 *   componentRegistry: import('./ComponentDefinition.js').ComponentDefinitionRegistry,
 		 *   eventFlowEngine: import('./EventFlowEngine.js').EventFlowEngine,
-		 *   asyncOrchestrator: import('../services/AsyncOrchestrationService.js').AsyncOrchestrationService,
+		 *   asyncOrchestrator: import('../../shared/lib/async/AsyncOrchestrationService.js').AsyncOrchestrationService,
 		 *   validationLayer: import('./storage/ValidationLayer.js').ValidationLayer,
 		 *   plugin: import('./ManifestPluginSystem.js').ManifestPluginSystem,
 		 *   embeddingManager: import('../state/EmbeddingManager.js').EmbeddingManager,

@@ -1,10 +1,9 @@
-import { AsyncHelper } from "@shared/lib/AsyncHelper.js";
 import { SafeDOM } from "@shared/lib/SafeDOM.js";
 
 /**
  * @class StateUIBridge
  * @description Bridges HybridStateManager events with vanilla UI helpers so the grid, BindEngine, and DOM bindings stay in sync.
- * @privateFields {#stateManager, #logger, #gridSubscriptions, #domBridgeUnsubscribe, #bindEngine}
+ * @privateFields {#stateManager, #logger, #gridSubscriptions, #domBridgeUnsubscribe, #bindEngine, #asyncService}
  */
 export class StateUIBridge {
 	/**
@@ -15,6 +14,13 @@ export class StateUIBridge {
 		if (!stateManager) throw new Error("StateUIBridge requires a stateManager instance.");
 		this.#stateManager = stateManager;
 		this.#logger = stateManager?.forensicLogger ?? null;
+		this.#asyncService =
+			stateManager?.managers?.asyncOrchestrator ?? null;
+		if (!this.#asyncService) {
+			throw new Error(
+				"StateUIBridge requires AsyncOrchestrationService on the state manager."
+			);
+		}
 	}
 
 	/**
@@ -128,7 +134,7 @@ export class StateUIBridge {
 	 * @param {string} [options.actorId="ui.bridge"]
 	 * @returns {Promise<any>}
 	 */
-	async updateState(
+	updateState(
 		path,
 		value,
 		{ eventType = "UI_STATE_CHANGE", actorId = "ui.bridge" } = {}
@@ -139,7 +145,7 @@ export class StateUIBridge {
 			return undefined;
 		}
 
-		return AsyncHelper.wrap(
+		return this.#asyncService.wrap(
 			() => setter.call(this.#stateManager, path, value),
 			{
 				stateManager: this.#stateManager,
@@ -192,6 +198,7 @@ export class StateUIBridge {
 	#gridSubscriptions = new Set();
 	#domBridgeUnsubscribe = null;
 	#bindEngine = null;
+	#asyncService = null;
 }
 
 export default StateUIBridge;
