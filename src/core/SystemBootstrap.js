@@ -122,6 +122,13 @@ export class SystemBootstrap {
 		// This enforces Mandate 1.3: Service Registry Enforcement.
 		await this.#stateManager.serviceRegistry.initializeAll();
 
+		// Ensure the secure storage stack is online before any downstream service
+		// attempts to query it (plugins, grid, forensic logging, etc.).
+		await this.#stateManager.initializeStorageSystem(
+			authContext,
+			this.#stateManager
+		);
+
 		// Ensure CDS transport is wired early so services that perform network calls
 		// via CDS.fetch have a platform-provided transport available.
 		try {

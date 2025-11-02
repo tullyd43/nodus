@@ -1011,9 +1011,11 @@ export class EnhancedGridRenderer {
 		const blockId = blockEl.dataset.blockId;
 		if (!blockId) return null;
 
-		const currentLayout =
-			this.#appViewModel.gridLayoutViewModel.getCurrentLayout();
-		return currentLayout?.blocks.find((b) => b.blockId === blockId);
+		// Use renderer's getCurrentLayout which returns a deep clone to avoid
+		// returning references into the authoritative view model. This prevents
+		// transient drag preview mutations from contaminating the stored layout.
+		const currentLayout = this.getCurrentLayout();
+		return currentLayout?.blocks.find((b) => b.blockId === blockId) || null;
 	}
 
 	/**
@@ -1735,13 +1737,18 @@ export class EnhancedGridRenderer {
 					y: final.y,
 				});
 			}
-			// Commit preview position using final coords
+			// Commit preview position using final coords (do NOT mutate authoritative
+			// view-model here — store preview on the currentDragItem so the
+			// transaction can snapshot the true view-model and the final commit
+			// will persist authoritative changes).
 			element.style.gridColumnStart = final.x + 1;
 			element.style.gridRowStart = final.y + 1;
-			data.position.x = final.x;
-			data.position.y = final.y;
-			data.position.w = final.w;
-			data.position.h = final.h;
+			this.#currentDragItem.preview = {
+				x: final.x,
+				y: final.y,
+				w: final.w,
+				h: final.h,
+			};
 
 			// If live reflow preview is enabled, compute and apply a DOM-only preview
 			// that shows how other blocks would be pushed down by this move.
@@ -1888,32 +1895,35 @@ export class EnhancedGridRenderer {
 		element.style.zIndex = "";
 		element.style.transition = "";
 
+		// Determine final position (prefer preview coords recorded during drag)
+		const finalPos = this.#currentDragItem.preview || data.position;
+
 		// Validate final position; revert if invalid
 		if (
 			!this.#canPlace(
 				data.blockId,
-				data.position.x,
-				data.position.y,
-				data.position.w,
-				data.position.h
+				finalPos.x,
+				finalPos.y,
+				finalPos.w,
+				finalPos.h
 			) &&
 			this.#currentDragItem?.orig
 		) {
-			data.position.x = this.#currentDragItem.orig.x;
-			data.position.y = this.#currentDragItem.orig.y;
-			// snap element back
-			element.style.gridColumnStart = data.position.x + 1;
-			element.style.gridRowStart = data.position.y + 1;
+			// Snap element back to original position (do not mutate VM here)
+			element.style.gridColumnStart = this.#currentDragItem.orig.x + 1;
+			element.style.gridRowStart = this.#currentDragItem.orig.y + 1;
+			// Clear preview
+			this.#currentDragItem.preview = null;
 		}
 		// Save position using the canonical state + forensic flow.
 		// Build an updates array and perform the mutation inside a transaction when available.
 		const updates = [
 			{
 				blockId: data.blockId,
-				x: data.position.x,
-				y: data.position.y,
-				w: data.position.w,
-				h: data.position.h,
+				x: finalPos.x,
+				y: finalPos.y,
+				w: finalPos.w,
+				h: finalPos.h,
 			},
 		];
 
@@ -1941,8 +1951,32 @@ export class EnhancedGridRenderer {
 				/* noop */
 			}
 
-			// Perform the authoritative state mutation inside the transaction if available.
+			// Instead of relying on the state manager's transaction-captured
+			// snapshot (which can be contaminated by preview mutations in some
+			// environments), compute a precise before/after pair and record it
+			// explicitly. This avoids the undo/redo snapshot becoming equal to the
+			// 'after' state.
 			try {
+				// Compute a before snapshot based on the renderer's current layout
+				// but force the moving block back to its original coordinates so
+				// we capture the true "before" state.
+				const cur = this.getCurrentLayout();
+				const beforeSnap = cur ? JSON.parse(JSON.stringify(cur)) : null;
+				if (beforeSnap && beforeSnap.blocks) {
+					const b = beforeSnap.blocks.find(
+						(x) => x.blockId === data.blockId
+					);
+					if (b) {
+						b.position = {
+							x: this.#currentDragItem.orig.x,
+							y: this.#currentDragItem.orig.y,
+							w: this.#currentDragItem.orig.w,
+							h: this.#currentDragItem.orig.h,
+						};
+					}
+				}
+
+				// Apply the authoritative mutation (prefer transaction for atomicity)
 				if (typeof this.#stateManager?.transaction === "function") {
 					this.#stateManager.transaction(() => {
 						this.#appViewModel.gridLayoutViewModel.updatePositions(
@@ -1957,13 +1991,6 @@ export class EnhancedGridRenderer {
 										this.#stateManager?.managers?.securityManager?.getSubject?.(),
 								}
 							);
-						} catch {
-							/* noop */
-						}
-						// Ensure persistence/analytics hooks run within the transaction so the
-						// state manager can capture before/after snapshots for history.
-						try {
-							this.#triggerLayoutPersistence("drag", data);
 						} catch {
 							/* noop */
 						}
@@ -1985,16 +2012,54 @@ export class EnhancedGridRenderer {
 						/* noop */
 					}
 				}
-			} catch (e) {
-				// If the mutation fails, surface via error helpers but do not throw here.
+
+				// Compute after snapshot and record the operation with explicit snapshots
+				const afterSnap = this.getCurrentLayout();
 				try {
-					this.#errorHelpers?.handleError(e, {
-						component: "EnhancedGridRenderer",
-						operation: "applyGridPosition",
-					});
+					// Emit change event for persistence/analytics listeners
+					const layoutChangeEvent = {
+						type: "layout_change",
+						changeType: "drag",
+						blockId: data.blockId,
+						position: {
+							...(this.#currentDragItem.preview || data.position),
+						},
+						timestamp: DateCore.timestamp(),
+						userId: this.#appViewModel?.getCurrentUser?.()?.id,
+					};
+					this.#eventFlowEngine?.emit(
+						"layoutChanged",
+						layoutChangeEvent
+					);
+					if (this.#options?.onLayoutChange)
+						this.#options.onLayoutChange(layoutChangeEvent);
 				} catch {
 					/* noop */
 				}
+
+				try {
+					if (
+						typeof this.#stateManager
+							?.recordOperationWithSnapshots === "function"
+					) {
+						this.#stateManager.recordOperationWithSnapshots({
+							type: "grid_layout_change",
+							before: beforeSnap,
+							after: afterSnap,
+							meta: { source: "drag", updates },
+						});
+					} else {
+						// Fallback: use normal recordOperation which will attempt to derive snapshots
+						this.#stateManager?.recordOperation?.({
+							type: "grid_layout_change",
+							data: { source: "drag", updates },
+						});
+					}
+				} catch {
+					/* noop */
+				}
+			} catch {
+				/* noop - best-effort */
 			}
 		};
 
@@ -2058,7 +2123,12 @@ export class EnhancedGridRenderer {
 		// persist the layout change so history/undo receives an entry.
 		if (!__usedTransaction) {
 			try {
-				this.#triggerLayoutPersistence("drag", data);
+				this.#triggerLayoutPersistence("drag", {
+					blockId: data.blockId,
+					position: finalPos,
+				});
+				// clear preview after commit
+				this.#currentDragItem.preview = null;
 			} catch {
 				/* noop */
 			}
@@ -2764,9 +2834,13 @@ export class EnhancedGridRenderer {
 	 */
 
 	getCurrentLayout() {
-		return (
-			this.#appViewModel?.gridLayoutViewModel.getCurrentLayout() ?? null
-		);
+		try {
+			const layout =
+				this.#appViewModel?.gridLayoutViewModel.getCurrentLayout?.();
+			return layout ? JSON.parse(JSON.stringify(layout)) : null;
+		} catch {
+			return null;
+		}
 	}
 
 	// -------------------------

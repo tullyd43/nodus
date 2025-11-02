@@ -100,6 +100,10 @@ export class HybridStateManager {
 			{ demoMode: Boolean(this.#config?.storageConfig?.demoMode) }
 		);
 		this.#storage.ready = true;
+		this.emit("storageReady", {
+			loader: this.#storage.loader,
+			instance: this.#storage.instance,
+		});
 	}
 	get clientState() {
 		return this.#clientState;
@@ -158,17 +162,7 @@ export class HybridStateManager {
 					? JSON.parse(JSON.stringify(this.#lastLayoutSnapshot))
 					: null;
 
-				// DEBUG: log snapshots for test troubleshooting
-				try {
-					console.log(
-						"[HSM] recordOperation grid_layout_change before:",
-						before,
-						"after:",
-						after
-					);
-				} catch {
-					/* noop */
-				}
+				// (no debug logging here in normal runs)
 
 				this.#clientState.undoStack.push({
 					type: op.type,
@@ -188,6 +182,31 @@ export class HybridStateManager {
 			this.emit("operationRecorded", { type: op.type });
 		} catch (err) {
 			console.warn("[HybridStateManager] recordOperation failed:", err);
+		}
+	}
+
+	/**
+	 * Directly record an operation with explicit before/after snapshots. This
+	 * is used when callers (like renderers) have access to precise snapshots
+	 * and want to avoid relying on the transaction-captured snapshot logic.
+	 * @param {{type:string,before:object,after:object,meta?:object}} args
+	 */
+	recordOperationWithSnapshots({ type, before, after, meta } = {}) {
+		try {
+			if (!type) return;
+			this.#clientState.undoStack.push({
+				type,
+				before: before ? JSON.parse(JSON.stringify(before)) : null,
+				after: after ? JSON.parse(JSON.stringify(after)) : null,
+				meta: meta || null,
+			});
+			this.#clientState.redoStack.clear();
+			this.emit("operationRecorded", { type });
+		} catch (err) {
+			console.warn(
+				"[HybridStateManager] recordOperationWithSnapshots failed:",
+				err
+			);
 		}
 	}
 
@@ -218,14 +237,7 @@ export class HybridStateManager {
 				this.#txBeforeSnapshot = cur
 					? JSON.parse(JSON.stringify(cur))
 					: null;
-				try {
-					console.log(
-						"[HSM] transaction captured txBeforeSnapshot:",
-						this.#txBeforeSnapshot
-					);
-				} catch {
-					/* noop */
-				}
+				// transaction captured txBeforeSnapshot (no debug log)
 			} catch {
 				this.#txBeforeSnapshot = null;
 			}
@@ -276,6 +288,7 @@ export class HybridStateManager {
 					const beforeSnap = this.#txBeforeSnapshot
 						? JSON.parse(JSON.stringify(this.#txBeforeSnapshot))
 						: null;
+					// transaction commit: beforeSnap/afterSnap computed
 					this.#clientState.undoStack.push({
 						type: op.type,
 						before: beforeSnap,
@@ -470,6 +483,7 @@ export class HybridStateManager {
 	#applyLayoutSnapshot(snapshot) {
 		try {
 			const renderer = this.managers?.enhancedGridRenderer;
+			// applyLayoutSnapshot invoked
 			if (!renderer || typeof renderer.updateBlockPosition !== "function")
 				return;
 			const blocks = Array.isArray(snapshot?.blocks)
@@ -489,6 +503,7 @@ export class HybridStateManager {
 				const w = b.position?.w ?? b.w;
 				const h = b.position?.h ?? b.h;
 				if ([x, y, w, h].every((n) => Number.isFinite(n))) {
+					// applying block
 					renderer.updateBlockPosition(b.blockId, x, y, w, h);
 				}
 			}
@@ -637,7 +652,7 @@ export class HybridStateManager {
 		 *   adaptiveRenderer: import('./AdaptiveRenderer.js').AdaptiveRenderer,
 		 *   buildingBlockRenderer: import('./BuildingBlockRenderer.js').BuildingBlockRenderer,
 		 *   databaseOptimizer: import('./DatabaseOptimizer.js').DatabaseOptimizer,
-		 *   cds: import('./security/cds.js').CrossDomainSolution,
+		 *   cds: import('./security/CDS.js').CrossDomainSolution,
 		 *   optimizationAccessControl: import('./OptimizationAccessControl.js').OptimizationAccessControl,
 		 *   metricsReporter: import('../utils/MetricsReporter.js').MetricsReporter,
 		 *   extensionManager: import('./ExtensionManager.js').ExtensionManager
@@ -841,6 +856,10 @@ export class HybridStateManager {
 		);
 
 		this.storage.ready = true;
+		this.emit("storageReady", {
+			loader: this.#storage.loader,
+			instance: this.#storage.instance,
+		});
 	}
 
 	/**

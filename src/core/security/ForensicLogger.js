@@ -40,6 +40,8 @@ export class ForensicLogger {
 	#bufferFlushInterval = null;
 	/** @private @type {string|null} */
 	#lastLogHash = null;
+	/** @private @type {Function|null} */
+	#storageReadyUnsubscribe = null;
 
 	/** @private @type {boolean} */
 	#warnedUnsigned = false;
@@ -72,6 +74,43 @@ export class ForensicLogger {
 					window.location?.hostname === "localhost")
 			);
 		}
+	}
+
+	#attachStorage(instance) {
+		if (!instance || this.#db === instance) return;
+		this.#db = instance;
+		if (!this.#bufferFlushInterval) {
+			this.#bufferFlushInterval = setInterval(
+				() => this.#flushBuffer(),
+				this.#config.flushInterval
+			);
+		}
+		this.#ready = true;
+		console.log("[ForensicLogger] Initialized and ready for audit events.");
+		this.#flushBuffer().catch(() => {});
+		if (this.#storageReadyUnsubscribe) {
+			this.#storageReadyUnsubscribe();
+			this.#storageReadyUnsubscribe = null;
+		}
+	}
+
+	#registerStorageReadyListener() {
+		if (
+			this.#storageReadyUnsubscribe ||
+			typeof this.#stateManager?.on !== "function"
+		) {
+			return;
+		}
+		this.#storageReadyUnsubscribe = this.#stateManager.on(
+			"storageReady",
+			(payload) => {
+				const instance =
+					payload?.instance || this.#stateManager?.storage?.instance;
+				if (instance) {
+					this.#attachStorage(instance);
+				}
+			}
+		);
 	}
 
 	/**
@@ -120,8 +159,7 @@ export class ForensicLogger {
 	async initialize() {
 		if (this.#ready) return this;
 		// V8.0 Parity: Use the shared storage instance from HybridStateManager.
-		// Let errors propagate to the bootstrap process if storage is missing.
-		this.#db = this.#stateManager.storage.instance;
+		const storageInstance = this.#stateManager?.storage?.instance;
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -130,15 +168,15 @@ export class ForensicLogger {
 
 		 */
 
-		if (!this.#db) {
-			throw new Error("Storage instance not available in stateManager.");
+		if (storageInstance) {
+			this.#attachStorage(storageInstance);
+			return this;
 		}
-		this.#bufferFlushInterval = setInterval(
-			() => this.#flushBuffer(),
-			this.#config.flushInterval
+
+		this.#registerStorageReadyListener();
+		console.warn(
+			"[ForensicLogger] Storage not ready; buffering audit events until storageReady."
 		);
-		this.#ready = true;
-		console.log("[ForensicLogger] Initialized and ready for audit events.");
 		return this;
 	}
 
@@ -543,6 +581,118 @@ export class ForensicLogger {
 		}
 	}
 
+	// ---------------------------------------------------------------------
+	// Public instance wrapper: expose createEnvelope for external call sites
+	// Many modules call ForensicLogger.createEnvelope(...) as a static helper.
+	// Provide an instance-level async wrapper that delegates to the private
+	// #createEnvelope implementation.
+	// ---------------------------------------------------------------------
+
+	/**
+	 * Public wrapper around the internal envelope creator.
+	 * @param {string} type
+	 * @param {object} payload
+	 * @param {object} [context={}]
+	 * @returns {Promise<object>} envelope
+	 */
+	/* eslint-disable copilotGuard/require-forensic-envelope -- wrapper that delegates to the internal envelope creator */
+	async createEnvelope(type, payload, context = {}) {
+		return this.#createEnvelope(type, payload, context);
+	}
+	/* eslint-enable copilotGuard/require-forensic-envelope */
+
+	/**
+	 * Persists a previously created forensic envelope. Accepts envelopes from
+	 * either instance or static `createEnvelope` calls.
+	 * @param {object} envelope
+	 * @returns {Promise<object|null>}
+	 */
+	async commitEnvelope(envelope) {
+		if (!envelope || typeof envelope !== "object") {
+			return null;
+		}
+		await this.#logEvent(envelope);
+		return envelope;
+	}
+
+	/**
+	 * Register a global/default ForensicLogger instance that static helpers
+	 * can delegate to. This supports legacy code that calls the static
+	 * ForensicLogger.createEnvelope(...) helper.
+	 * @param {ForensicLogger} instance
+	 */
+	static registerGlobal(instance) {
+		ForensicLogger._globalInstance = instance;
+	}
+
+	/**
+	 * Static helper used by many code paths for fire-and-forget envelope
+	 * creation. If a global instance is registered it will delegate to it.
+	 * Otherwise it returns a minimal unsigned envelope resolved immediately.
+	 * @param {string} type
+	 * @param {object} payload
+	 * @param {object} [context={}]
+	 * @returns {Promise<object>}
+	 */
+	/* eslint-disable copilotGuard/require-forensic-envelope -- static helper delegates to registered instance or returns fallback envelope */
+	static async createEnvelope(type, payload, context = {}) {
+		if (
+			ForensicLogger._globalInstance &&
+			typeof ForensicLogger._globalInstance.createEnvelope === "function"
+		) {
+			return ForensicLogger._globalInstance.createEnvelope(
+				type,
+				payload,
+				context
+			);
+		}
+
+		// Fallback: return a minimal unsigned envelope so callers can continue
+		// to call .then/.catch on the result without runtime failures.
+		try {
+			const envelopeData = {
+				id:
+					typeof crypto !== "undefined" && crypto.randomUUID
+						? crypto.randomUUID()
+						: `fallback-${Date.now()}`,
+				type,
+				timestamp: DateCore.now
+					? DateCore.now()
+					: new Date().toISOString(),
+				previousHash: null,
+				userContext: {},
+				payload,
+			};
+			return {
+				...envelopeData,
+				signature: {
+					signature: null,
+					algorithm: "unsigned",
+					publicKey: null,
+				},
+				hash: null,
+			};
+		} catch {
+			return Promise.resolve({ type, payload });
+		}
+	}
+	/* eslint-enable copilotGuard/require-forensic-envelope */
+
+	/**
+	 * Static helper to commit an envelope when only the global instance is available.
+	 * @param {object} envelope
+	 * @returns {Promise<object|undefined>}
+	 */
+	static async commitEnvelope(envelope) {
+		if (
+			ForensicLogger._globalInstance &&
+			typeof ForensicLogger._globalInstance.commitEnvelope === "function"
+		) {
+			return ForensicLogger._globalInstance.commitEnvelope(envelope);
+		}
+		return undefined;
+	}
+
 	/**
 	 * Helper to filter an array of events based on query options.
 	 * @private
@@ -737,6 +887,10 @@ export class ForensicLogger {
 		if (this.#bufferFlushInterval) {
 			clearInterval(this.#bufferFlushInterval);
 			this.#bufferFlushInterval = null;
+		}
+		if (this.#storageReadyUnsubscribe) {
+			this.#storageReadyUnsubscribe();
+			this.#storageReadyUnsubscribe = null;
 		}
 		await this.#flushBuffer(); // Flush any remaining events
 		/**

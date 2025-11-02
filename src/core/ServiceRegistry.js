@@ -16,7 +16,7 @@ import { EventFlowEngine } from "./EventFlowEngine.js";
 import { ExtensionManager } from "./ExtensionManager.js";
 import { ManifestPluginSystem } from "./ManifestPluginSystem.js";
 import { OptimizationAccessControl } from "./OptimizationAccessControl.js";
-import { CrossDomainSolution } from "./security/cds.js";
+import { CrossDomainSolution } from "./security/CDS.js";
 import { ForensicLogger } from "./security/ForensicLogger.js";
 import { InMemoryKeyring } from "./security/Keyring.js";
 import { NonRepudiation } from "./security/NonRepudiation.js";
@@ -167,15 +167,17 @@ export class ServiceRegistry {
 			"securityManager",
 			"keyring",
 			"nonRepudiation",
-			// 2. Core Logic: Depends on foundational services.
+			// 2. Storage Layer: Must be available for services that log or validate.
+			"storageLoader",
+			// 3. Core Logic: Depends on foundational services and storage.
 			"forensicLogger",
 			"conditionRegistry",
 			"actionHandler",
 			"componentRegistry",
-			"eventFlowEngine",
 			"policies", // Policies can depend on other core services for validation context.
 			"validationLayer",
-			// 3. Application Services: Depends on core logic.
+			"eventFlowEngine", // Depends on registries being available.
+			// 4. Application Services: Depends on core logic.
 			"buildingBlockRenderer",
 			"adaptiveRenderer",
 			"extensionManager",
@@ -302,6 +304,17 @@ export class ServiceRegistry {
 			// Assign the instance to the stateManager's managers object.
 			this.#stateManager.managers[serviceName] = instance;
 
+			// If this is the forensicLogger service, register it as the global
+			// delegate so legacy static calls (ForensicLogger.createEnvelope)
+			// work as expected across the codebase.
+			if (serviceName === "forensicLogger") {
+				try {
+					ForensicLogger.registerGlobal(instance);
+				} catch {
+					/* swallow: registration is best-effort */
+				}
+			}
+
 			// Debug: log instance shape for securityManager during test runs
 			/**
 
@@ -334,7 +347,12 @@ export class ServiceRegistry {
 			 */
 
 			if (typeof instance.initialize === "function") {
-				await instance.initialize();
+				// The StorageLoader's initialize() method is what populates the
+				// stateManager with storage instances. We MUST wait for it to complete
+				// before proceeding, as other services depend on those instances.
+				const initPromise = instance.initialize();
+				if (initPromise && typeof initPromise.then === "function")
+					await initPromise;
 			}
 
 			return instance;

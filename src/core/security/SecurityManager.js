@@ -86,7 +86,7 @@ export class SecurityManager {
 			) {
 				globalThis.vi.runAllTicksAsync = async () => {};
 			}
-		} catch (e) {
+		} catch {
 			// ignore — best-effort
 		}
 
