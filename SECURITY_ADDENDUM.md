@@ -56,23 +56,28 @@ All violations trigger ESLint `copilotGuard/no-insecure-api`.
    or call `asyncOrchestrator.wrap(...)` directly — raw `async` functions are prohibited in shipping code.  
    *Verified by:* `nodus/require-async-orchestration`.
 
-3. **JSDoc + Test Coverage (D-03)**  
+3. **Import Canonicalization (I-03)**  
+   Imports must use approved aliases (e.g., `@shared/...`) or explicit relative paths that reference the concrete file (including extension).  
+   Legacy index barrels and shim aliases are prohibited.  
+   *Verified by:* `nodus/prefer-alias-imports`.
+
+4. **JSDoc + Test Coverage (D-04)**  
    Every exported function or public class method must include a JSDoc header  
    and be covered by a corresponding unit test.  
-   *Verified by:* `copilotGuard/require-jsdoc-and-tests`.
+   *Verified by:* `copilotGuard/require-jsdoc-and-tests`.  
 
-4. **No Runtime Dependencies (S-04)**  
+5. **No Runtime Dependencies (S-05)**  
    Only `@core/*` imports and native Web APIs are allowed at runtime.  
    Dev tools may use `vitest`, `playwright`, and `eslint`.  
-   *Verified by:* `copilotGuard/no-runtime-dependencies`.
+   *Verified by:* `copilotGuard/no-runtime-dependencies`.  
 
-5. **Constant-Time Cryptographic Behavior (C-05)**  
+6. **Constant-Time Cryptographic Behavior (C-06)**  
    All MAC and classification comparisons must be padded using `constantTimeCheck`.  
-   *Verified by:* Security integration tests.
+   *Verified by:* Security integration tests.  
 
-6. **Audit Integrity (A-06)**  
+7. **Audit Integrity (A-07)**  
    Audit logs must use append-only, signed, hash-chained envelopes.  
-   *Verified by:* `ForensicLogger` and `NonRepudiation` modules.
+   *Verified by:* `ForensicLogger` and `NonRepudiation` modules.  
 
 ---
 
@@ -99,6 +104,7 @@ All violations trigger ESLint `copilotGuard/no-insecure-api`.
 
 - Review this document before any code change.
 - Honor the Async Orchestration Rule (A-02) by routing all async work through the shared runner.
+- Use only canonical aliases or explicit file paths with extensions when importing modules (I-03).
 - Ensure each commit passes ESLint, CI scan, and pre-commit hooks.
 - Immediately remediate violations.
 - Report suspected tampering or CI bypass to the security maintainer.
@@ -111,6 +117,7 @@ All violations trigger ESLint `copilotGuard/no-insecure-api`.
 - Must cite the relevant mandate section in code comments when generating security-sensitive logic.
 - Must never suggest third-party packages, unverified network calls, or direct DOM manipulation.
 - Must wrap async operations with the project runner (`stateManager.managers.asyncOrchestrator.createRunner(...)`) or an injected `asyncOrchestrator.wrap` call; raw `async` functions are prohibited.
+- Must import modules via canonical aliases or explicit file paths with extensions; legacy index barrels and shims are disallowed.
 - Must respect all constraints in Section 3.
 
 ---

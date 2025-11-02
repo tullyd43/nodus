@@ -147,6 +147,11 @@ export default [
 				},
 			],
 
+			"no-warning-comments": [
+				"warn",
+				{ terms: ["todo", "fixme", "xxx"], location: "start" },
+			],
+
 			"no-debugger": "error",
 
 			// --- Imports & Organization ---
@@ -185,12 +190,15 @@ export default [
 			"no-control-regex": "off",
 			"no-empty": "warn",
 
-		// --- Custom Project Rules ---
-		"nodus/no-direct-core-instantiation": "error",
-		// Enforce new orchestration model
-		"nodus/require-async-orchestration": "error",
-		"nodus/no-manual-forensics": "error",
-		"nodus/prefer-alias-imports": "error",
+			// --- Custom Project Rules ---
+			"nodus/no-direct-core-instantiation": "error",
+			// Enforce new orchestration model
+			"nodus/require-async-orchestration": "error",
+			"nodus/no-manual-forensics": "error",
+			"nodus/prefer-alias-imports": "error",
+			"nodus/no-direct-dom-access": "error",
+			"nodus/enforce-canonical-sanitizer": "error",
+			"nodus/no-security-string-literals": "error",
 
 			// --- Copilot Rules ---
 			"copilotGuard/no-insecure-api": "error",

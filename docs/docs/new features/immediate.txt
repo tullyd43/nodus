@@ -69,26 +69,29 @@ Your base stack should do the following **without external frameworks**:
   ```
 * ✅ Test by binding a simple counter or task title and ensuring DOM auto-updates.
 
-#### 3. ⚙️ Hook in AsyncOrchestrationService
+#### 3. ⚙️ Wire AsyncOrchestrationService Runners
 
-**Goal:** Allow async tasks (like network or DB calls) to show progress states in the UI.
+**Goal:** Ensure every async workflow (UI, storage, network) routes through the orchestrator so metrics, forensic envelopes, and policy context are always captured.
 
-* Create `/core/utils/AsyncOrchestrationService.js`:
-
-  ```js
-  export class AsyncOrchestrationService {
-    static async wrap(promise, label) {
-      StateUIBridge.emit("async:start", label);
-      try { return await promise; }
-      finally { StateUIBridge.emit("async:end", label); }
-    }
-  }
-  ```
-* Integrate with the grid’s async ops (saving layout, loading blocks, etc.):
+* Resolve the service that the `ServiceRegistry` already registered:
 
   ```js
-  await AsyncOrchestrationService.wrap(storage.save(entity), "SaveLayout");
+  const asyncOrchestrator = stateManager.managers.asyncOrchestrator;
+  const runUiTask = asyncOrchestrator.createRunner({
+    labelPrefix: "ui",
+    actorId: "ui.task",
+    meta: { component: "Grid" },
+  });
   ```
+* Execute feature work through the runner instead of raw `async` functions:
+
+  ```js
+  await runUiTask(() => storage.save(entity, scope), {
+    labelSuffix: "layout.save",
+    meta: { entityId: entity.id },
+  });
+  ```
+  *The runner automatically attaches the `stateManager`, policy overrides, metrics sample rate, and event classification.*
 
 #### 4. 🔐 Ensure Security Hooks Work
 

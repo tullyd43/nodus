@@ -10,12 +10,12 @@ import { createProxyTransport } from "@core/security/adapter.js";
 import { createDefaultTransport } from "@core/security/transport.js";
 import { HybridStateManager } from "@core/state/HybridStateManager.js";
 import { createBindEngineService } from "@features/ui/BindEngine.js";
-import { DateCore } from "@shared/lib/DateUtils.js";
-
 import {
 	CanonicalResolver,
 	DEFAULT_LEGACY_MAP,
 } from "@platform/security/CanonicalResolver.js";
+import { DateCore } from "@shared/lib/DateUtils.js";
+
 
 
 /**

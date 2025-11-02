@@ -15,6 +15,22 @@ This applies to: SecurityManager, MetricsRegistry, EventFlowEngine, ForensicLogg
 
 1.4. Zero New Runtime Dependencies: This is a zero-dependency project. All new features MUST be written in modern, dependency-free vanilla JavaScript (ES2022+). The date-fns library MUST be removed. A suite of regression tests comparing the internal DateUtils output against date-fns MUST be created and passed before its final removal.
 
+1.5. Canonical Imports Only: Every import MUST use the canonical project aliases (e.g. `@shared/lib/SafeDOM.js`) or an explicit relative path that resolves to a concrete file including its extension. Legacy index barrels (`.../index.js`) and shim aliases (`@core`, `@core/state`, etc.) are forbidden. Example:
+
+Correct:
+
+```
+import { SafeDOM } from "@shared/lib/SafeDOM.js";
+import createRunner from "../../async/create-runner.js";
+```
+
+Forbidden:
+
+```
+import SafeDOM from "@core/SafeDOM";
+import runner from "../../async"; // missing extension, index barrel
+```
+
 II. Security & Auditing (Non-Negotiable)
 Security is not a feature; it is the foundation. Bypassing these rules is a critical failure.
 
