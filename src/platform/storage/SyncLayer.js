@@ -56,6 +56,8 @@ export class SyncLayer {
 	#errorHelpers = null;
 	/** @private @type {import('../managers/CacheManager.js').default|null} */
 	#cacheManager = null;
+	/** @private @type {{ cleanse?:(value:any, schema?:any)=>any }|null} */
+	#sanitizer = null;
 	/**
 	 * A debounced function to trigger synchronization.
 	 * @private
@@ -78,6 +80,8 @@ export class SyncLayer {
 
 	constructor({ stateManager }) {
 		this.#stateManager = stateManager;
+		this.#sanitizer =
+			this.#stateManager?.managers?.sanitizer ?? null;
 
 		// V8.0 Parity: All configuration is derived from the stateManager.
 		const options = this.#stateManager?.config?.syncLayerConfig || {};
@@ -121,6 +125,7 @@ export class SyncLayer {
 		this.#securityManager = managers?.securityManager ?? null;
 		this.#errorHelpers = managers?.errorHelpers ?? null;
 		this.#cacheManager = managers?.cacheManager ?? null;
+		this.#sanitizer = managers?.sanitizer ?? this.#sanitizer;
 		this.#metrics = this.#stateManager.metricsRegistry?.namespace("sync");
 
 		// V8.0 Parity: Mandate 4.1 - Use the central CacheManager for bounded caches.
@@ -808,6 +813,25 @@ export class SyncLayer {
 	 * @returns {Promise<object>} The JSON response from the server.
 	 */
 	async #sendToServer(item) {
+		const sanitizedPayload = this.#sanitizeForTransport({
+			entity: item.entity,
+			operation: item.operation,
+			timestamp: item.timestamp,
+		});
+
+		if (!sanitizedPayload?.entity) {
+			console.warn(
+				"[SyncLayer] Sanitizer removed entity payload; returning conflict stub.",
+				{ entityId: item?.entity?.id }
+			);
+			return {
+				status: "sanitizer_blocked",
+				conflict: true,
+				conflictType: "sanitizer_blocked",
+				remoteEntity: null,
+			};
+		}
+
 		const response = await CDS["fetch"](
 			`${this.#config.apiEndpoint}/entities`,
 			{
@@ -816,11 +840,7 @@ export class SyncLayer {
 					"Content-Type": "application/json",
 					Authorization: `Bearer ${this.#getAuthToken()}`,
 				},
-				body: JSON.stringify({
-					entity: item.entity,
-					operation: item.operation,
-					timestamp: item.timestamp,
-				}),
+				body: JSON.stringify(sanitizedPayload),
 			}
 		);
 
@@ -1034,6 +1054,52 @@ export class SyncLayer {
 			this.#metrics?.set("last_sync_error", timestamp);
 		}
 		this.#metrics?.updateAverage("average_latency", latency);
+	}
+
+	/**
+	 * Resolves the sanitizer instance, refreshing the cached reference when available.
+	 * @private
+	 * @returns {{ cleanse?:(value:any, schema?:any)=>any }|null}
+	 */
+	#getSanitizer() {
+		const managers = this.#stateManager?.managers;
+		if (managers?.sanitizer && managers.sanitizer !== this.#sanitizer) {
+			this.#sanitizer = managers.sanitizer;
+		}
+		return this.#sanitizer;
+	}
+
+	/**
+	 * Sanitizes outbound payloads before network transmission.
+	 * @private
+	 * @param {any} value
+	 * @returns {any}
+	 */
+	#sanitizeForTransport(value) {
+		const sanitizer = this.#getSanitizer();
+		if (!sanitizer?.cleanse) return value;
+		try {
+			const cleaned = sanitizer.cleanse(value);
+			if (cleaned === null) {
+				if (value === null || value === undefined) return null;
+				if (typeof value === "object") return {};
+				return cleaned;
+			}
+			return cleaned;
+		} catch (error) {
+			console.warn(
+				"[SyncLayer] Failed to sanitize outbound payload.",
+				error
+			);
+			try {
+				if (typeof value === "object" && value !== null) {
+					return sanitizer.cleanse({ ...value }) ?? {};
+				}
+				return sanitizer.cleanse(value);
+			} catch {
+				return typeof value === "object" ? {} : null;
+			}
+		}
 	}
 
 	/**

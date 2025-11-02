@@ -1,7 +1,7 @@
 // core/security/ComposableSecurity.js
 // Composable security layer for orchestrating MAC and RBAC.
 
-import { PolicyError } from "../../utils/ErrorHelpers.js";
+import { PolicyError } from "@utils/ErrorHelpers.js";
 
 /**
  * @privateFields {#mac, #accessCache, #config, #ready, #stateManager, #metrics}
@@ -149,7 +149,6 @@ export class ComposableSecurity {
 
 			 */
 
-
 			if (action === "read") {
 				this.#mac.enforceNoReadUp(subject, objectLabel);
 			} else {
@@ -173,7 +172,6 @@ export class ComposableSecurity {
 
 
 			 */
-
 
 			if (!hasRbacAccess) {
 				this.#audit("access_denied_rbac", {
@@ -271,7 +269,6 @@ export class ComposableSecurity {
 
 
 		 */
-
 
 		if (!hasAccess) {
 			this.#audit("access_denied", {
@@ -398,7 +395,6 @@ export class ComposableSecurity {
 
 
 		 */
-
 
 		if (
 			enterpriseSecurity &&

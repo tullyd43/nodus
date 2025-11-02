@@ -9,7 +9,7 @@
 import { ServiceRegistry } from "@core/bootstrap/ServiceRegistry.js";
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
 
-import { BoundedStack } from "@/utils/BoundedStack.js";
+import { BoundedStack } from "@utils/BoundedStack.js";
 
 /**
  * @class HybridStateManager
@@ -853,11 +853,7 @@ export class HybridStateManager {
 		const segments = path.split(".");
 		let cursor = this.#stateTree;
 		for (const segment of segments) {
-			if (
-				cursor === undefined ||
-				cursor === null ||
-				!(segment in cursor)
-			)
+			if (cursor === undefined || cursor === null || !(segment in cursor))
 				return undefined;
 			cursor = cursor[segment];
 		}

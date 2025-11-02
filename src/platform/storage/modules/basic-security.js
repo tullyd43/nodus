@@ -1,6 +1,6 @@
 // src/core/storage/modules/basic-security.js
 
-import { AppError } from "../../../utils/ErrorHelpers.js";
+import { AppError } from "@utils/ErrorHelpers.js";
 
 /**
  * @description

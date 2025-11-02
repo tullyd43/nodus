@@ -1,6 +1,6 @@
 // tests/unit/core/HybridStateManager.history.test.js
 
-import { HybridStateManager } from "@core/HybridStateManager.js";
+import { HybridStateManager } from "@core/state/HybridStateManager.js";
 import { StorageLoader } from "@core/storage/StorageLoader.js";
 import { describe, test, expect, beforeEach, vi } from "vitest";
 

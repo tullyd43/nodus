@@ -20,6 +20,8 @@ export class EmbeddingManager {
 	#stateManager;
 	/** @private @type {object} */
 	#managers;
+	/** @private @type {{ cleanse?:(value:any, schema?:any)=>any, cleanseText?:(value:string)=>string }|null} */
+	#sanitizer;
 	/** @private @type {import('../core/IdManager.js').default} */
 	#idManager;
 	/** @private @type {import('../../shared/lib/MetricsRegistry.js').MetricsRegistry|undefined} */
@@ -62,6 +64,7 @@ export class EmbeddingManager {
 		this.#idManager = this.#managers.idManager;
 		this.#metrics =
 			this.#managers.metricsRegistry?.namespace("ai.embeddings");
+		this.#sanitizer = this.#managers?.sanitizer ?? null;
 
 		// V8.0 Parity: Mandate 1.2 - Derive ErrorHelpers from the stateManager.
 		const ErrorHelpers = this.#managers.errorHelpers;
@@ -164,10 +167,22 @@ export class EmbeddingManager {
 				await this.#checkAccess(entity);
 			}
 
-			if (!text || typeof text !== "string") return null;
+			const sanitizedText = this.#sanitizeText(text);
+			if (!sanitizedText) return null;
+
+			const sanitizedMeta = this.#sanitizeMeta(meta);
+			const metaObject =
+				sanitizedMeta && typeof sanitizedMeta === "object"
+					? sanitizedMeta
+					: {};
+
+			const idSource =
+				(typeof metaObject.id === "string" && metaObject.id) ||
+				(typeof meta?.id === "string" && meta.id) ||
+				null;
 
 			const id =
-				meta.id ||
+				idSource ||
 				this.#idManager.generate({
 					prefix: "emb",
 					entityType: "embedding",
@@ -193,7 +208,11 @@ export class EmbeddingManager {
 				return await this.#pendingEmbeddings.get(id);
 			}
 
-			const embeddingPromise = this.#processEmbedding(text, id, meta);
+			const embeddingPromise = this.#processEmbedding(
+				sanitizedText,
+				id,
+				metaObject
+			);
 			this.#pendingEmbeddings.set(id, embeddingPromise);
 
 			const result = await embeddingPromise;
@@ -235,7 +254,7 @@ export class EmbeddingManager {
 		const embeddingData = {
 			vector,
 			meta: {
-				...meta,
+				...(meta && typeof meta === "object" ? meta : {}),
 				text_preview: text.substring(0, 100),
 				timestamp: DateCore.timestamp(),
 				dimensions: vector.length,
@@ -317,6 +336,72 @@ export class EmbeddingManager {
 	}
 
 	/**
+	 * Resolves the sanitizer from the state manager, caching it for reuse.
+	 * @private
+	 * @returns {{ cleanse?:(value:any, schema?:any)=>any, cleanseText?:(value:string)=>string }|null}
+	 */
+	#getSanitizer() {
+		const candidate = this.#managers?.sanitizer;
+		if (candidate && candidate !== this.#sanitizer) {
+			this.#sanitizer = candidate;
+		}
+		return this.#sanitizer;
+	}
+
+	/**
+	 * Produces a sanitized text string safe for embedding generation.
+	 * @private
+	 * @param {string} value
+	 * @returns {string}
+	 */
+	#sanitizeText(value) {
+		const sanitizer = this.#getSanitizer();
+		const asString = typeof value === "string" ? value : String(value ?? "");
+		if (!sanitizer?.cleanseText) {
+			return asString;
+		}
+		try {
+			return sanitizer.cleanseText(asString);
+		} catch (error) {
+			console.warn("[EmbeddingManager] Failed to sanitize text.", error);
+			try {
+				return sanitizer.cleanseText(`${asString}`);
+			} catch {
+				return "";
+			}
+		}
+	}
+
+	/**
+	 * Sanitizes metadata prior to caching or persistence.
+	 * @private
+	 * @param {object} meta
+	 * @returns {object}
+	 */
+	#sanitizeMeta(meta) {
+		const sanitizer = this.#getSanitizer();
+		if (!sanitizer?.cleanse) {
+			return meta && typeof meta === "object" ? { ...meta } : {};
+		}
+		try {
+			const cleaned = sanitizer.cleanse(meta);
+			return cleaned && typeof cleaned === "object" ? cleaned : {};
+		} catch (error) {
+			console.warn(
+				"[EmbeddingManager] Failed to sanitize metadata.",
+				error
+			);
+			try {
+				return sanitizer.cleanse(
+					meta && typeof meta === "object" ? { ...meta } : {}
+				) ?? {};
+			} catch {
+				return {};
+			}
+		}
+	}
+
+	/**
 	 * Performs a semantic search by comparing a query's embedding against all cached embeddings.
 	 * @public
 	 * @param {string} query - The search query string.
@@ -336,10 +421,13 @@ export class EmbeddingManager {
 	async semanticSearch(query, options = {}) {
 		return this.#errorBoundary.tryAsync(async () => {
 			const { topK = 5, threshold = 0.5, includeText = false } = options;
-			if (!query) return [];
+			const sanitizedQuery = this.#sanitizeText(query);
+			if (!sanitizedQuery) return [];
 
 			// A query is public, so no entity-based security check is needed here.
-			const queryEmbedding = await this.generateEmbedding(query);
+			const queryEmbedding = await this.generateEmbedding(
+				sanitizedQuery
+			);
 			if (!queryEmbedding) return [];
 			const queryVector = queryEmbedding.vector;
 			const results = [];

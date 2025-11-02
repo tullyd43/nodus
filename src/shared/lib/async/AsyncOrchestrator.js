@@ -131,6 +131,109 @@ function normalizeMeta(meta) {
 }
 
 /**
+ * Attempts to resolve the sanitizer service from run options.
+ * @param {AsyncRunOptions} options
+ * @returns {{ cleanse?:(value:any, schema?:any)=>any }|null}
+ */
+function resolveSanitizerFromOptions(options) {
+	const stateManager = options?.stateManager;
+	if (!stateManager) return null;
+	const managers = stateManager.managers;
+	if (managers?.sanitizer) return managers.sanitizer;
+	if (stateManager.sanitizer) return stateManager.sanitizer;
+	return null;
+}
+
+/**
+ * Sanitizes a value using the provided sanitizer, falling back gracefully on failure.
+ * @param {any} value
+ * @param {{ cleanse?:(value:any, schema?:any)=>any }} sanitizer
+ * @param {any} [schema]
+ * @returns {any}
+ */
+function sanitizeWithFallback(value, sanitizer, schema) {
+	if (!sanitizer?.cleanse) return value;
+	if (value === undefined) return undefined;
+	try {
+		return schema
+			? sanitizer.cleanse(value, schema)
+			: sanitizer.cleanse(value);
+	} catch (error) {
+		console.warn(
+			"[AsyncOrchestrator] Sanitizer cleanse failed; retrying with no schema.",
+			error
+		);
+		try {
+			return sanitizer.cleanse(value);
+		} catch {
+			return value;
+		}
+	}
+}
+
+/**
+ * Produces a sanitized copy of the run options before execution.
+ * @param {AsyncRunOptions} options
+ * @returns {AsyncRunOptions}
+ */
+function sanitizeRunOptions(options) {
+	if (!options || typeof options !== "object") return options;
+	const sanitizer = resolveSanitizerFromOptions(options);
+	if (!sanitizer) return options;
+
+	const sanitized = { ...options };
+
+	if ("payload" in options) {
+		const cleaned = sanitizeWithFallback(
+			options.payload,
+			sanitizer,
+			options.payloadSchema
+		);
+		if (cleaned !== undefined) {
+			sanitized.payload = cleaned;
+		}
+	}
+
+	if (options.meta !== undefined) {
+		const cleanedMeta = sanitizeWithFallback(
+			options.meta,
+			sanitizer,
+			options.metaSchema
+		);
+		if (cleanedMeta !== undefined) {
+			sanitized.meta = cleanedMeta;
+		}
+	}
+
+	if (options.policyOverrides !== undefined) {
+		const cleanedPolicy = sanitizeWithFallback(
+			options.policyOverrides,
+			sanitizer,
+			options.policySchema
+		);
+		if (cleanedPolicy !== undefined) {
+			sanitized.policyOverrides = cleanedPolicy;
+		}
+	}
+
+	if (options.actorId !== undefined) {
+		const cleanedActor = sanitizeWithFallback(options.actorId, sanitizer);
+		if (cleanedActor !== undefined) {
+			sanitized.actorId = cleanedActor;
+		}
+	}
+
+	if (options.tenantId !== undefined) {
+		const cleanedTenant = sanitizeWithFallback(options.tenantId, sanitizer);
+		if (cleanedTenant !== undefined) {
+			sanitized.tenantId = cleanedTenant;
+		}
+	}
+
+	return sanitized;
+}
+
+/**
  * Creates the mutable execution context shared with plugins.
  * @param {AsyncOrchestrator} orchestrator
  * @param {AsyncRunOptions} options
@@ -310,8 +413,13 @@ export class AsyncOrchestrator {
 	async run(operation, options = {}) {
 		const callable =
 			typeof operation === "function" ? operation : () => operation;
-		const pipeline = this.#buildPipeline(options.plugins);
-		const context = createExecutionContext(this, options, this.#now);
+		const sanitizedOptions = sanitizeRunOptions(options);
+		const pipeline = this.#buildPipeline(sanitizedOptions.plugins);
+		const context = createExecutionContext(
+			this,
+			sanitizedOptions,
+			this.#now
+		);
 
 		await this.#dispatch("beforeRun", pipeline, context);
 		if (context.isSkipped()) {

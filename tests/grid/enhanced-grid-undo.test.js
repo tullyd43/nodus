@@ -2,10 +2,10 @@
  * @vitest-environment jsdom
  */
 
-import { HybridStateManager } from "@core/HybridStateManager.js";
+import { HybridStateManager } from "@core/state/HybridStateManager.js";
 import { StorageLoader } from "@core/storage/StorageLoader.js";
 import { describe, it, beforeEach, expect, vi } from "vitest";
-import { EnhancedGridRenderer } from "/src/grid/EnhancedGridRenderer.js";
+import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
 
 // Mock StorageLoader to avoid real IndexedDB access
 vi.mock("@core/storage/StorageLoader.js");

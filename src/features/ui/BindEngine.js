@@ -81,6 +81,12 @@ export default class BindEngine {
 	 * @private
 	 */
 	#stateUnsubscribes = [];
+	/**
+	 * Cached sanitizer reference resolved from the state manager.
+	 * @type {{ cleanse?:(value:any, schema?:any)=>any, cleanseText?:(value:string)=>string }|null}
+	 * @private
+	 */
+	#sanitizer = null;
 
 	/**
 	 * Creates an instance of BindEngine.
@@ -95,6 +101,7 @@ export default class BindEngine {
 		this.#deps = deps;
 		if (!deps?.stateManager)
 			throw new Error("BindEngine requires stateManager");
+		this.#sanitizer = this.#getSanitizer();
 	}
 
 	/**
@@ -424,6 +431,7 @@ export default class BindEngine {
 		) {
 			out = this.#deps.stateManager.format(opts.format, out);
 		}
+		out = this.#sanitizeOutbound(out);
 
 		// Mutate DOM safely under forensic envelope
 		if (opts.attr) {
@@ -468,6 +476,96 @@ export default class BindEngine {
 		const level = node?.classification || "unclassified";
 		const compartments = new Set(node?.compartments || []);
 		return { level, compartments };
+	}
+
+	/**
+	 * Resolves and caches the sanitizer service from the state manager.
+	 * @private
+	 * @returns {{ cleanse?:(value:any, schema?:any)=>any, cleanseText?:(value:string)=>string }|null}
+	 */
+	#getSanitizer() {
+		const stateManager = this.#deps.stateManager;
+		const managerSanitizer =
+			stateManager?.managers?.sanitizer || stateManager?.sanitizer || null;
+		if (managerSanitizer && managerSanitizer !== this.#sanitizer) {
+			this.#sanitizer = managerSanitizer;
+		}
+		return this.#sanitizer;
+	}
+
+	/**
+	 * Sanitizes values before rendering them into the DOM.
+	 * @private
+	 * @param {any} value
+	 * @returns {any}
+	 */
+	#sanitizeOutbound(value) {
+		const sanitizer = this.#getSanitizer();
+		if (!sanitizer) return value;
+		try {
+			if (typeof value === "string" && sanitizer.cleanseText) {
+				return sanitizer.cleanseText(value) ?? "";
+			}
+			if (sanitizer.cleanse) {
+				const cleaned = sanitizer.cleanse(value);
+				if (cleaned === null || cleaned === undefined) {
+					return typeof value === "string" ? "" : cleaned;
+				}
+				return cleaned;
+			}
+			return value;
+		} catch (error) {
+			console.warn(
+				"[BindEngine] Failed to sanitize outbound value.",
+				error
+			);
+			if (typeof value === "string" && sanitizer.cleanseText) {
+				try {
+					return sanitizer.cleanseText(String(value));
+				} catch {
+					return "";
+				}
+			}
+			return value;
+		}
+	}
+
+	/**
+	 * Sanitizes inbound user input prior to state updates.
+	 * @private
+	 * @param {any} value
+	 * @returns {any}
+	 */
+	#sanitizeInbound(value) {
+		const sanitizer = this.#getSanitizer();
+		if (!sanitizer) return value ?? (typeof value === "string" ? "" : value);
+		try {
+			if (typeof value === "string" && sanitizer.cleanseText) {
+				const cleaned = sanitizer.cleanseText(value);
+				return cleaned ?? "";
+			}
+			if (sanitizer.cleanse) {
+				const cleaned = sanitizer.cleanse(value);
+				if (cleaned === null || cleaned === undefined) {
+					return typeof value === "string" ? "" : cleaned;
+				}
+				return cleaned;
+			}
+			return value;
+		} catch (error) {
+			console.warn(
+				"[BindEngine] Failed to sanitize inbound value.",
+				error
+			);
+			if (typeof value === "string" && sanitizer.cleanseText) {
+				try {
+					return sanitizer.cleanseText(String(value));
+				} catch {
+					return "";
+				}
+			}
+			return typeof value === "string" ? "" : null;
+		}
 	}
 
 	/**
@@ -525,7 +623,9 @@ export default class BindEngine {
 	 */
 	#wireTwoWay(el, path, opts) {
 		const handler = async (e) => {
-			const newVal = /** @type {HTMLInputElement|any} */ (e.target).value;
+			const rawVal =
+				/** @type {HTMLInputElement|any} */ (e.target).value;
+			const newVal = this.#sanitizeInbound(rawVal);
 			/* copilotGuard:require-forensic-envelope */
 			const env = await this.#deps.forensicLogger.createEnvelope(
 				"UI_BIND_MUTATION",

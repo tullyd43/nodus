@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { CDS } from "../../src/core/security/cds.js";
+import { CDS } from "@core/security/cds.js";
 
 describe("CDS wrapper", () => {
 	let originalTransport;

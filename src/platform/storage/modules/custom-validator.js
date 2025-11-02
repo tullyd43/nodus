@@ -2,7 +2,7 @@
 // Custom validation module for user-defined business rules
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
 
-import { AppError } from "../../../utils/ErrorHelpers.js";
+import { AppError } from "@utils/ErrorHelpers.js";
 
 /**
  * Custom Validator Module

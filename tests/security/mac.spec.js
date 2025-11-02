@@ -1,4 +1,4 @@
-import { MACEngine } from "../../src/core/security/MACEngine.js";
+import { MACEngine } from "@core/security/MACEngine.js";
 
 const make = (lvl, comps = []) => ({
 	level: lvl,

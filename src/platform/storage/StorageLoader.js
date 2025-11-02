@@ -170,7 +170,10 @@ export class StorageLoader {
 			this.#stateManager = stateManager;
 		}
 		this.#config = {
-			baseURL: options.baseURL ?? "/src/core/storage/modules/",
+			// Storage modules live under src/platform/storage/modules in the repo.
+			// Update default baseURL to match the current project layout so dynamic
+			// imports resolve correctly in tests and runtime.
+			baseURL: options.baseURL ?? "/src/platform/storage/modules/",
 			preloadModules: options.preloadModules ?? [],
 			demoMode: options.demoMode ?? false,
 			mac: options.mac ?? null,
@@ -615,12 +618,15 @@ export class StorageLoader {
 
 		console.log("[StorageLoader] Loading module:", moduleName);
 
-		// Try a sequence of candidate paths to support nested organization of modules
+		// Try canonical platform/security locations only — historical storage
+		// fallbacks have been removed to enforce canonical module layout.
+		// We still allow callers to provide an explicit path (absolute/relative
+		// ending with .js) if they need to load a non-standard location.
 		const candidates = [
-			`${this.#config.baseURL}${moduleName}.js`,
-			`${this.#config.baseURL}encryption/${moduleName}.js`,
-			`${this.#config.baseURL}crypto/${moduleName}.js`,
-			// allow explicit moduleName to already be a path
+			`/src/platform/security/encryption/${moduleName}.js`,
+			`/src/platform/security/${moduleName}.js`,
+			`/src/platform/storage/${moduleName}.js`,
+			// allow explicit absolute/relative path if caller provided one
 			moduleName.endsWith(".js") ? moduleName : `${moduleName}.js`,
 		];
 

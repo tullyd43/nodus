@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import SecurityManager from "../../src/core/security/SecurityManager.js";
+import SecurityManager from "@core/security/SecurityManager.js";
 
 describe("SecurityManager (unit)", () => {
 	let mockStateManager;

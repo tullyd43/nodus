@@ -2,7 +2,7 @@
 // Key rotation module for forward secrecy and compliance
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
 
-import { AppError } from "../../../utils/ErrorHelpers.js";
+import { AppError } from "@utils/ErrorHelpers.js";
 
 /**
  * @typedef {object} KeyRotationOptions
@@ -304,13 +304,17 @@ export default class KeyRotation {
 		try {
 			if (typeof ForensicLogger?.createEnvelope === "function") {
 				ForensicLogger.createEnvelope({
-					actorId: this.#stateManager?.managers?.securityManager?.getSubject?.()?.userId || "system",
+					actorId:
+						this.#stateManager?.managers?.securityManager?.getSubject?.()
+							?.userId || "system",
 					action: "key_rotation.update_interval",
 					target: "key_rotation_interval",
 					payload: { newInterval: interval },
 				}).catch(() => {});
 			}
-		} catch { /* noop */ }
+		} catch {
+			/* noop */
+		}
 
 		if (this.#options.autoRotate) {
 			this.#cancelScheduledRotation();
@@ -322,8 +326,9 @@ export default class KeyRotation {
 				"KEY_ROTATION_INTERVAL_UPDATED",
 				{ newInterval: interval }
 			);
-		} catch { /* noop */ }
-
+		} catch {
+			/* noop */
+		}
 	}
 
 	/**

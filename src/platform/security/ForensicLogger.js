@@ -25,6 +25,8 @@ export class ForensicLogger {
 	#metrics = null;
 	/** @private @type {import('../../shared/lib/ErrorHelpers.js').ErrorHelpers|null} */
 	#errorHelpers = null;
+	/** @private @type {{ cleanse?:(value:any, schema?:any)=>any, getDeterministicHash?:(value:any, schema?:any)=>Promise<string> }|null} */
+	#sanitizer = null;
 
 	/** @private @type {object} */
 	#config;
@@ -132,6 +134,8 @@ export class ForensicLogger {
 		this.#metrics =
 			this.#stateManager.metricsRegistry?.namespace("forensicLogger");
 		this.#errorHelpers = this.#stateManager.managers.errorHelpers;
+		this.#sanitizer =
+			this.#stateManager.managers?.sanitizer ?? null;
 
 		const options = stateManager.config.forensicLoggerConfig || {};
 		this.#config = {
@@ -158,6 +162,8 @@ export class ForensicLogger {
 
 	async initialize() {
 		if (this.#ready) return this;
+		this.#sanitizer =
+			this.#stateManager.managers?.sanitizer ?? this.#sanitizer;
 		// V8.0 Parity: Use the shared storage instance from HybridStateManager.
 		const storageInstance = this.#stateManager?.storage?.instance;
 		/**
@@ -200,7 +206,7 @@ export class ForensicLogger {
 
 		// Use the internal logEvent to buffer and persist.
 		await this.#logEvent(event);
-		console.log(`[ForensicLogger][Audit] ${type}`, payload);
+		console.log(`[ForensicLogger][Audit] ${type}`, event.payload);
 	}
 
 	/**
@@ -215,6 +221,38 @@ export class ForensicLogger {
 	async #createEnvelope(type, payload, context = {}) {
 		const securityManager = this.#stateManager.managers?.securityManager;
 		const signer = this.#stateManager.signer;
+		const sanitizer = this.#getSanitizer();
+		let sanitizedPayload = payload;
+		let payloadDigest = null;
+
+		if (sanitizer?.cleanse) {
+			try {
+				sanitizedPayload = sanitizer.cleanse(payload);
+			} catch (error) {
+				this.#errorHelpers?.handleError?.(error, {
+					component: "ForensicLogger",
+					operation: "sanitizePayload",
+				});
+				try {
+					sanitizedPayload = sanitizer.cleanse(payload);
+				} catch {
+					sanitizedPayload = payload;
+				}
+			}
+		}
+
+		if (sanitizer?.getDeterministicHash) {
+			try {
+				payloadDigest = await sanitizer.getDeterministicHash(
+					sanitizedPayload ?? payload ?? {}
+				);
+			} catch (error) {
+				this.#errorHelpers?.handleError?.(error, {
+					component: "ForensicLogger",
+					operation: "hashPayload",
+				});
+			}
+		}
 
 		/**
 
@@ -280,7 +318,8 @@ export class ForensicLogger {
 					compartments: Array.from(userContext.compartments || []),
 				},
 			},
-			payload,
+			payload: sanitizedPayload,
+			payloadDigest,
 		};
 
 		const signature = {
@@ -911,6 +950,19 @@ export class ForensicLogger {
 		this.#ready = false;
 		this.#inMemoryBuffer = [];
 		console.log("[ForensicLogger] Cleaned up.");
+	}
+
+	/**
+	 * Resolves the sanitizer service, caching the instance for reuse.
+	 * @private
+	 * @returns {{ cleanse?:(value:any, schema?:any)=>any, getDeterministicHash?:(value:any, schema?:any)=>Promise<string> }|null}
+	 */
+	#getSanitizer() {
+		const managers = this.#stateManager?.managers;
+		if (managers?.sanitizer && managers.sanitizer !== this.#sanitizer) {
+			this.#sanitizer = managers.sanitizer;
+		}
+		return this.#sanitizer;
 	}
 }
 

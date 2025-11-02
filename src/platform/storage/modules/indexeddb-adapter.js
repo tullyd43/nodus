@@ -3,7 +3,7 @@
 
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
 
-import { StorageError } from "../../../utils/ErrorHelpers.js";
+import { StorageError } from "@utils/ErrorHelpers.js";
 
 /**
  * @description

@@ -26,6 +26,7 @@ import { InMemoryKeyring } from "@platform/security/keyring/Keyring.js";
 import { NonRepudiation } from "@platform/security/NonRepudiation.js";
 import { SystemPolicies } from "@platform/security/policies/SystemPoliciesCached.js";
 import { SecurityManager } from "@platform/security/SecurityManager.js";
+import Sanitizer from "@platform/security/Sanitizer.js";
 import { TenantPolicyService } from "@platform/security/TenantPolicyService.js";
 import { CacheManager } from "@platform/services/cache/CacheManager.js";
 import { EmbeddingManager } from "@platform/services/EmbeddingManager.js";
@@ -62,6 +63,7 @@ const CORE_LOGIC_SERVICES = {
 	conditionRegistry: ConditionRegistry,
 	actionHandler: ActionHandlerRegistry,
 	componentRegistry: ComponentDefinitionRegistry,
+	sanitizer: Sanitizer,
 	eventFlowEngine: EventFlowEngine,
 	policies: SystemPolicies,
 	asyncOrchestrator: AsyncOrchestrationService,
@@ -172,6 +174,7 @@ export class ServiceRegistry {
 			// 2. Storage Layer: Must be available for services that log or validate.
 			"storageLoader",
 			// 3. Core Logic: Depends on foundational services and storage.
+			"sanitizer",
 			"forensicLogger",
 			"conditionRegistry",
 			"actionHandler",

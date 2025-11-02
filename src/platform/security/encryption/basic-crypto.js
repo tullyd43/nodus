@@ -1,7 +1,7 @@
 // src/core/storage/modules/basic-crypto.js
 // BasicCrypto — foundational cryptographic module for Nodus storage systems.
 
-import { AppError } from "../../../../utils/ErrorHelpers.js";
+import { AppError } from "@utils/ErrorHelpers.js";
 // Handles lightweight encryption, hashing, and key generation utilities.
 // This acts as a default fallback when higher-level (enterprise/NATO) crypto modules are not loaded.
 

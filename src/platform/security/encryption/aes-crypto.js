@@ -1,7 +1,7 @@
 // modules/aes-crypto.js
 // AES crypto module for enterprise security
 
-import { AppError } from "../../../../utils/ErrorHelpers.js";
+import { AppError } from "@utils/ErrorHelpers.js";
 
 /**
  * @typedef {object} AESCryptoContext
