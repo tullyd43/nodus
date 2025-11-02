@@ -7,7 +7,7 @@ import pluginPromise from "eslint-plugin-promise";
 import pluginSecurity from "eslint-plugin-security";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
 
-import nodusPlugin from "./tools/eslint-plugin-nodus/index.js";
+import nodusPlugin from "./eslint-plugin-nodus/index.js";
 // Load override JSON in a way compatible with ESLint's loader (avoid import assertions runtime issue)
 const overrideCI = JSON.parse(
 	await (
@@ -114,7 +114,7 @@ export default [
 			// Register the local 'nodus' plugin (tools/eslint-plugin-nodus)
 			nodus: nodusPlugin,
 			copilotGuard: (
-				await import("./tools/eslint-plugin-copilot-guard/index.js")
+				await import("./eslint-plugin-copilot-guard/index.js")
 			).default,
 		},
 		rules: {
