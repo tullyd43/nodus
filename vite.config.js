@@ -1,5 +1,20 @@
+/*
+ ESLint: This file is a build-time configuration for Vite/Rollup. It must import
+ Node/Vite/rollup plugins which are build-time dependencies. The repository's
+ `copilotGuard/no-runtime-dependencies` rule flags these imports elsewhere in
+ application code, but they are acceptable here. Disable that rule for this file.
+*/
+/* eslint-disable copilotGuard/no-runtime-dependencies */
+
+import path from "path";
+import { fileURLToPath } from "url";
+
 import { visualizer } from "rollup-plugin-visualizer";
 import { defineConfig } from "vite";
+
+// Create __dirname equivalent for ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Vitest config is integrated here
 export default defineConfig({
@@ -28,24 +43,44 @@ export default defineConfig({
 			output: {
 				manualChunks(id) {
 					if (id.includes("node_modules")) return "vendor";
-					if (id.includes("/core/")) return "core";
+					if (id.includes("/platform/")) return "platform";
 					// Split grid policy modules into their own async chunks so they aren't pulled into initial grid bundle
-					if (id.endsWith("/src/grid/policies/core.js")) return "grid-policies-core";
-					if (id.endsWith("/src/grid/policies/nesting.js")) return "grid-policies-nesting";
+					if (
+						id.endsWith(
+							"/src/features/grid/policies/CoreGridPolicy.js"
+						)
+					)
+						return "grid-policies-core";
+					if (
+						id.endsWith(
+							"/src/features/grid/policies/NestingPolicy.js"
+						)
+					)
+						return "grid-policies-nesting";
 					// Fallback: group other grid modules
-					if (id.includes("/grid/") && !id.includes("/policies/")) return "grid";
+					if (
+						id.includes("/features/grid/") &&
+						!id.includes("/policies/")
+					)
+						return "grid";
 				},
 			},
 		},
 		chunkSizeWarningLimit: 800,
 	},
 	resolve: {
+		// Use explicit path.resolve so aliases work correctly on Windows and CI
 		alias: {
-			"@": "/src",
-			"@core": "/src/core",
-			"@grid": "/src/grid",
-			"@utils": "/src/utils",
-			"@components": "/src/components",
+			"@": path.resolve(__dirname, "src"),
+			"@app": path.resolve(__dirname, "src/app"),
+			"@platform": path.resolve(__dirname, "src/platform"),
+			"@features": path.resolve(__dirname, "src/features"),
+			"@shared": path.resolve(__dirname, "src/shared"),
+			// Compatibility aliases for legacy imports
+			"@core": path.resolve(__dirname, "src/platform"),
+			"@grid": path.resolve(__dirname, "src/features/grid"),
+			"@utils": path.resolve(__dirname, "src/shared/lib"),
+			"@components": path.resolve(__dirname, "src/shared/components"),
 		},
 	},
 	css: { devSourcemap: true },

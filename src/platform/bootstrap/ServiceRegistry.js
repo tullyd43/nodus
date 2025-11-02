@@ -1,0 +1,483 @@
+/**
+ * @file ServiceRegistry.js
+ * @description Implements the V8 Parity Mandate for a central service registry. This module is the *only*
+ * authorized source for instantiating and providing core application services, ensuring a single,
+ * manageable lifecycle for all major system components.
+ * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} - Mandate 1.3: Service Registry Enforcement.
+ */
+
+// Import all core service classes that will be managed by the registry.
+import { AdaptiveRenderer } from "../../core/AdaptiveRenderer.js";
+import { ComponentDefinitionRegistry } from "../../core/ComponentDefinition.js";
+import { ConditionRegistry } from "../../core/ConditionRegistry.js";
+import { ExtensionManager } from "../../core/ExtensionManager.js";
+import { ManifestPluginSystem } from "../../core/ManifestPluginSystem.js";
+import { OptimizationAccessControl } from "../../core/OptimizationAccessControl.js";
+import { CrossDomainSolution } from "../../core/security/CDS.js";
+import { InMemoryKeyring } from "../../core/security/Keyring.js";
+import { NonRepudiation } from "../../core/security/NonRepudiation.js";
+import { CompleteGridSystem } from "../../features/grid/CompleteGridSystem.js";
+import { EnhancedGridRenderer } from "../../features/grid/EnhancedGridRenderer.js";
+import { BuildingBlockRenderer } from "../../features/ui/BuildingBlockRenderer.js";
+import GridPolicyService from "../../grid/GridPolicyIntegration.js";
+import { DatabaseOptimizer } from "../../managers/DatabaseOptimizer.js";
+import { ErrorHelpers } from "../../shared/lib/ErrorHelpers.js";
+import { MetricsRegistry } from "../../shared/lib/MetricsRegistry.js";
+import { MetricsReporter } from "../../shared/lib/MetricsReporter.js";
+import { ActionHandlerRegistry } from "../actions/ActionHandlerRegistry.js";
+import { SystemPolicies } from "../platform/security/SystemPoliciesCached.js";
+import { ForensicLogger } from "../security/ForensicLogger.js";
+import { SecurityManager } from "../security/SecurityManager.js";
+import { TenantPolicyService } from "../security/TenantPolicyService.js";
+import { CacheManager } from "../services/cache/CacheManager.js";
+import { EmbeddingManager } from "../services/EmbeddingManager.js";
+import { IdManager } from "../services/id/IdManager.js";
+import { EventFlowEngine } from "../state/EventFlowEngine.js";
+import { QueryService } from "../state/QueryService.js";
+import { StorageLoader } from "../storage/StorageLoader.js";
+import { ValidationLayer } from "../storage/ValidationLayer.js";
+
+/**
+ * @description Defines foundational services with no dependencies on other managers.
+ * These are the first to be initialized.
+ * @private
+ */
+const FOUNDATIONAL_SERVICES = {
+	errorHelpers: ErrorHelpers, // Note: Static class
+	cacheManager: CacheManager,
+	metricsRegistry: MetricsRegistry,
+	idManager: IdManager,
+	securityManager: SecurityManager,
+	keyring: InMemoryKeyring,
+	nonRepudiation: NonRepudiation, // For signing
+};
+
+/**
+ * @description Defines core logic services that may depend on foundational services.
+ * @private
+ */
+const CORE_LOGIC_SERVICES = {
+	forensicLogger: ForensicLogger,
+	conditionRegistry: ConditionRegistry,
+	actionHandler: ActionHandlerRegistry,
+	componentRegistry: ComponentDefinitionRegistry,
+	eventFlowEngine: EventFlowEngine,
+	policies: SystemPolicies,
+	validationLayer: ValidationLayer,
+};
+
+/**
+ * @description Defines application-level services that depend on core logic services.
+ * @private
+ */
+const APPLICATION_SERVICES = {
+	plugin: ManifestPluginSystem,
+	embeddingManager: EmbeddingManager,
+	queryService: QueryService,
+	adaptiveRenderer: AdaptiveRenderer,
+	buildingBlockRenderer: BuildingBlockRenderer,
+	extensionManager: ExtensionManager,
+	enhancedGridRenderer: EnhancedGridRenderer,
+	completeGridSystem: CompleteGridSystem,
+	gridPolicyService: GridPolicyService,
+	tenantPolicyService: TenantPolicyService,
+};
+
+/**
+ * @description Defines specialized or server-side services.
+ * @private
+ */
+const SPECIALIZED_SERVICES = {
+	databaseOptimizer: DatabaseOptimizer,
+	cds: CrossDomainSolution,
+	optimizationAccessControl: OptimizationAccessControl,
+	metricsReporter: MetricsReporter,
+	storageLoader: StorageLoader,
+};
+
+/**
+ * A map of all service names to their constructors for easy lookup.
+ * @private
+ */
+const SERVICE_CONSTRUCTORS = {
+	...FOUNDATIONAL_SERVICES,
+	...CORE_LOGIC_SERVICES,
+	...APPLICATION_SERVICES,
+	...SPECIALIZED_SERVICES,
+};
+
+/**
+ * @class ServiceRegistry
+ * @description Manages the lifecycle of all core services, ensuring they are instantiated correctly,
+ * in a deterministic order, and only once. This enforces the "No Direct Instantiation" mandate.
+ */
+export class ServiceRegistry {
+	/** @private @type {import('./HybridStateManager.js').default} */
+	#stateManager;
+	#env;
+
+	/**
+	 * @param {import('./HybridStateManager.js').default} stateManager
+	 */
+	/**
+
+	 * TODO: Add JSDoc for method constructor
+
+	 * @memberof AutoGenerated
+
+	 */
+
+	constructor(stateManager) {
+		this.#stateManager = stateManager;
+		// Capture Vite env if present for build-time flags
+		try {
+			this.#env =
+				typeof import.meta !== "undefined" && import.meta.env
+					? import.meta.env
+					: {};
+		} catch {
+			this.#env = {};
+		}
+	}
+
+	/**
+	 * Initializes and registers all core services with the HybridStateManager in a specific,
+	 * deterministic order to correctly manage dependencies.
+	 * @returns {Promise<void>}
+	 */
+	/**
+
+	 * TODO: Add JSDoc for method initializeAll
+
+	 * @memberof AutoGenerated
+
+	 */
+
+	async initializeAll() {
+		console.log("[ServiceRegistry] Initializing all core services...");
+
+		// V8.0 Parity: Mandate 1.3 - Define an explicit, non-negotiable initialization order.
+		// This makes the system's dependency structure clear and robust.
+		const INITIALIZATION_ORDER = [
+			// 1. Foundational: No internal dependencies.
+			"errorHelpers",
+			"cacheManager",
+			"metricsRegistry",
+			"idManager",
+			"securityManager",
+			"keyring",
+			"nonRepudiation",
+			// 2. Storage Layer: Must be available for services that log or validate.
+			"storageLoader",
+			// 3. Core Logic: Depends on foundational services and storage.
+			"forensicLogger",
+			"conditionRegistry",
+			"actionHandler",
+			"componentRegistry",
+			"policies", // Policies can depend on other core services for validation context.
+			"validationLayer",
+			"eventFlowEngine", // Depends on registries being available.
+			// 4. Application Services: Depends on core logic.
+			"queryService", // Must be available for services that load data, like plugins.
+			"plugin", // Depends on queryService to load manifests.
+			"buildingBlockRenderer",
+			"adaptiveRenderer",
+			"extensionManager",
+			"enhancedGridRenderer", // CompleteGridSystem depends on EnhancedGridRenderer
+			"gridPolicyService", // Ensure policy service is available before grid system
+			"completeGridSystem", // Depends on other grid services being available.
+		];
+
+		/**
+
+
+		 * TODO: Add JSDoc for method for
+
+
+		 * @memberof AutoGenerated
+
+
+		 */
+
+		for (const serviceName of INITIALIZATION_ORDER) {
+			await this.get(serviceName);
+		}
+		console.log("[ServiceRegistry] All core services initialized.");
+	}
+
+	/**
+	 * Gets a service instance by name. If the service is not yet instantiated,
+	 * it will be created, initialized, and stored in the state manager.
+	 * @param {string} serviceName - The name of the service to retrieve.
+	 * @returns {Promise<object|null>} The service instance.
+	 */
+	/**
+
+	 * TODO: Add JSDoc for method get
+
+	 * @memberof AutoGenerated
+
+	 */
+
+	async get(serviceName) {
+		// If already instantiated, return it.
+		/**
+
+		 * TODO: Add JSDoc for method if
+
+		 * @memberof AutoGenerated
+
+		 */
+
+		if (this.#stateManager.managers[serviceName]) {
+			return this.#stateManager.managers[serviceName];
+		}
+
+		const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
+
+		/**
+
+
+		 * TODO: Add JSDoc for method if
+
+
+		 * @memberof AutoGenerated
+
+
+		 */
+
+		if (serviceName === "securityManager") {
+			try {
+				console.log(
+					"[ServiceRegistry] ServiceClass type for securityManager:",
+					typeof ServiceClass,
+					"hasProto:",
+					!!ServiceClass?.prototype,
+					"protoKeys:",
+					Object.keys(ServiceClass?.prototype || {}),
+					"proto.initialize type:",
+					typeof ServiceClass?.prototype?.initialize
+				);
+			} catch {
+				/* This is a debug-only log, safe to ignore if it fails. */
+			}
+		}
+		/**
+
+		 * TODO: Add JSDoc for method if
+
+		 * @memberof AutoGenerated
+
+		 */
+
+		if (!ServiceClass) {
+			console.error(`[ServiceRegistry] Unknown service: ${serviceName}`);
+			return null;
+		}
+
+		try {
+			// Create a unified context object to pass to all service constructors.
+			const context = { stateManager: this.#stateManager };
+
+			// Handle static classes vs. instantiable classes, with optional options resolver
+			let instance;
+			/**
+
+			 * TODO: Add JSDoc for method if
+
+			 * @memberof AutoGenerated
+
+			 */
+
+			if (
+				typeof ServiceClass === "function" &&
+				ServiceClass.prototype?.constructor
+			) {
+				const opts = this.#resolveServiceOptions(serviceName);
+				instance = opts
+					? new ServiceClass(context, opts)
+					: new ServiceClass(context);
+			} else {
+				instance = ServiceClass;
+			}
+
+			// Assign the instance to the stateManager's managers object.
+			this.#stateManager.managers[serviceName] = instance;
+
+			// If this is the forensicLogger service, register it as the global
+			// delegate so legacy static calls (ForensicLogger.createEnvelope)
+			// work as expected across the codebase.
+			if (serviceName === "forensicLogger") {
+				try {
+					ForensicLogger.registerGlobal(instance);
+				} catch {
+					/* swallow: registration is best-effort */
+				}
+			}
+
+			// Debug: log instance shape for securityManager during test runs
+			/**
+
+			 * TODO: Add JSDoc for method if
+
+			 * @memberof AutoGenerated
+
+			 */
+
+			if (serviceName === "securityManager") {
+				try {
+					console.log(
+						"[ServiceRegistry] instantiated securityManager keys:",
+						Object.keys(instance || {}),
+						"initializeType:",
+						typeof instance?.initialize
+					);
+				} catch {
+					/* ignore in production */
+				}
+			}
+
+			// Call the async initialize method if it exists.
+			/**
+
+			 * TODO: Add JSDoc for method if
+
+			 * @memberof AutoGenerated
+
+			 */
+
+			if (typeof instance.initialize === "function") {
+				// The StorageLoader's initialize() method is what populates the
+				// stateManager with storage instances. We MUST wait for it to complete
+				// before proceeding, as other services depend on those instances.
+				const initPromise = instance.initialize();
+				if (initPromise && typeof initPromise.then === "function")
+					await initPromise;
+			}
+
+			return instance;
+		} catch (error) {
+			console.error(
+				`[ServiceRegistry] Failed to instantiate or initialize service '${serviceName}':`,
+				error
+			);
+			// Ensure a failed service doesn't remain in the managers object.
+			delete this.#stateManager.managers[serviceName];
+			throw error; // Re-throw to halt bootstrap if a critical service fails.
+		}
+	}
+
+	/**
+	 * Returns optional options for specific services based on DevOps/admin configuration.
+	 * Reads from Vite env and a global window.NODUS_CONFIG if present.
+	 * @private
+	 */
+	#resolveServiceOptions(serviceName) {
+		try {
+			const wcfg =
+				typeof window !== "undefined" && window.NODUS_CONFIG
+					? window.NODUS_CONFIG
+					: {};
+			/**
+
+			 * TODO: Add JSDoc for method if
+
+			 * @memberof AutoGenerated
+
+			 */
+
+			if (serviceName === "completeGridSystem") {
+				const bool = (v, fallback) => {
+					if (v === true || v === false) return v;
+					if (typeof v === "string")
+						return v.toLowerCase() === "true";
+					return fallback;
+				};
+				return {
+					enablePolicies: bool(
+						wcfg?.grid?.enablePolicies ??
+							this.#env?.VITE_GRID_ENABLE_POLICIES,
+						true
+					),
+					enableAnalytics: bool(
+						wcfg?.grid?.enableAnalytics ??
+							this.#env?.VITE_GRID_ENABLE_ANALYTICS,
+						true
+					),
+					enableToasts: bool(
+						wcfg?.grid?.enableToasts ??
+							this.#env?.VITE_GRID_ENABLE_TOASTS,
+						true
+					),
+					enableAI: bool(
+						wcfg?.grid?.enableAI ?? this.#env?.VITE_GRID_ENABLE_AI,
+						true
+					),
+					enableNesting: bool(
+						wcfg?.grid?.enableNesting ??
+							this.#env?.VITE_GRID_ENABLE_NESTING,
+						false
+					),
+					enableHistoryInspector: bool(
+						wcfg?.grid?.enableHistoryInspector ??
+							this.#env?.VITE_GRID_HISTORY_INSPECTOR,
+						true
+					),
+				};
+			}
+			return null;
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Creates a new, non-singleton instance of a service for a specific use case,
+	 * such as a namespaced MetricsRegistry. This is an exception to the singleton
+	 * pattern and should be used sparingly.
+	 * @param {string} serviceName - The name of the service to instantiate.
+	 * @param {object} options - The constructor options for the new instance.
+	 * @returns {object|null} The newly created service instance.
+	 */
+
+	createNamespacedInstance(serviceName, options) {
+		// V8.0 Parity: Mandate 2.4 - Create forensic envelope for auditable event.
+		ForensicLogger.createEnvelope({
+			actorId: "system",
+			action: "createNamespacedInstance",
+			target: serviceName,
+			label: "system_configuration",
+		}).catch(() => {}); // Fire-and-forget to satisfy linter
+		this.#stateManager.managers.forensicLogger?.logAuditEvent(
+			"NAMESPACE_INSTANCE_CREATED",
+			{
+				serviceName,
+				options: Object.keys(options || {}),
+			}
+		);
+
+		const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
+
+		if (!ServiceClass) {
+			console.error(
+				`[ServiceRegistry] Cannot create namespaced instance. Unknown service: ${serviceName}`
+			);
+			return null;
+		}
+
+		try {
+			// The context is merged with the specific options for this instance.
+			const instance = new ServiceClass({
+				stateManager: this.#stateManager,
+				...options,
+			});
+			return instance;
+		} catch (error) {
+			console.error(
+				`[ServiceRegistry] Failed to create namespaced instance of '${serviceName}':`,
+				error
+			);
+			return null;
+		}
+	}
+}
