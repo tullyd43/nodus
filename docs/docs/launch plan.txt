@@ -1,0 +1,112 @@
+Here is a comprehensive, phased plan to migrate from your current, well-factored "Application OS" kernel to a shippable, high-assurance "Enterprise MVP" (the native Tauri app).
+
+This plan consolidates all the tasks from your `next.txt`, `grid plan.txt`, `privacy-browser.txt`, and our conversation into a single, logical roadmap.
+
+### Phase 1: Consolidate the JS Kernel (Code Rigor)
+
+**Goal:** Solidify your "Application OS" kernel by centralizing all logic into pure, stateless, and auditable platform modules. This makes the kernel stable and secure *before* you build the native backend.
+
+1.  **Create Canonical `Sanitizer.js`:**
+    * **Task:** Implement the new `Sanitizer.js` module as discussed.
+    * **Location:** `src/platform/security/Sanitizer.js`
+    * **Exports:** `cleanse(data)`, `cleanseText(string)`, `getDeterministicHash(data)`.
+    * **Action:** Register it in `ServiceRegistry.js` as `managers.sanitizer`.
+
+2.  **Integrate `Sanitizer.js` (Defense-in-Depth):**
+    * **Task:** Enforce sanitization at both the "kernel" and "edge."
+    * **Action (Kernel):** Modify `AsyncOrchestrator.js` to call `sanitizer.cleanse()` on all incoming data as an "insurance" check.
+    * **Action (AI):** Modify `EmbeddingManager.js` to use `sanitizer.cleanseText()` before processing any user content.
+    * **Action (Audit):** Modify `ForensicLogger.js` to use `sanitizer.getDeterministicHash()` to ensure a clean, consistent audit log.
+    * **Action (Edge):** Modify `SyncLayer.js` to call `sanitizer.cleanse()` before sending any data out of the app.
+
+3.  **Consolidate All Policy Logic:**
+    * **Task:** Move all feature-specific policy logic from `src/features/` into the `src/platform/` kernel.
+    * **Action:** Move the logic from `CoreGridPolicy.js` and `NestingPolicy.js` into declarative schemas within `src/platform/security/`.
+    * **Action:** Make **`TenantPolicyService.js`** the *single* module that loads and enforces these policies.
+    * **Action:** Refactor `GridPolicyIntegration.js` to be a "dumb" adapter that just calls the `TenantPolicyService`.
+
+---
+
+### Phase 2: Integrate the "Killer Feature" (UI Engines)
+
+**Goal:** Finish the "Enterprise MVP" feature by integrating all your `src/features/ui/` engines, as planned in `next.txt`.
+
+1.  **Refactor `BuildingBlockRenderer.js`:**
+    * **Task:** Convert the renderer from a "monolith" to a "factory."
+    * **Action:** Modify `BuildingBlockRenderer.js` to delegate its work:
+        * All data rendering must be passed to **`BindEngine.js`**.
+        * All event handling (like button clicks) must be wired up by **`ActionDispatcher.js`**.
+
+2.  **Activate the UI Engines:**
+    * **Task:** Wire the UI engines to the core kernel.
+    * **Action:** Connect **`BindEngine.js`** to **`StateUIBridge.js`** and **`QueryService.js`** to enable live data reads.
+    * **Action:** Connect **`ActionDispatcher.js`** to **`EventFlowEngine.js`** to enable actions.
+    * **Action:** Secure this new pipeline by having `BindEngine` check `SecurityManager.canRead()` and `ActionDispatcher` check `SecurityManager.canWrite()`.
+
+3.  **Build the Builder UI:**
+    * **Task:** Create the visual "Toolbox" for the low-code builder.
+    * **Action:** Create a new `ComponentToolbox.js` UI feature.
+    * **Action:** This new component will read its list of available "atomic elements" (Button, Label, etc.) from your existing **`ComponentRegistry.js`**.
+
+---
+
+### Phase 3: Build the Native Backend (Tauri "Core Host")
+
+**Goal:** Migrate your platform from a browser environment to a high-performance, secure native app, as planned.
+
+1.  **Initialize Tauri:**
+    * **Task:** Create the native "chassis" for your app.
+    * **Action:** Create the `/src-tauri/` project.
+    * **Action:** Configure `tauri.conf.json` with a strict Content Security Policy (CSP) and your custom `nodus://` protocol.
+
+2.  **Build the Rust "Core Host":**
+    * **Task:** Write the Rust backend that replaces your `server/index.js` and `indexeddb-adapter.js`.
+    * **Action:** In `/src-tauri/src/main.rs`, use a Rust Postgres driver (like `sqlx`) to manage a local Postgres database, using your existing `.sql` schema files.
+    * **Action:** Expose the minimal storage API to your JavaScript kernel using Tauri's `#[tauri::command]` for `storage_get`, `storage_put`, and `storage_query`.
+
+3.  **"Slot In" the Kernel (The Migration):**
+    * **Task:** Re-wire your `StorageLoader.js` to talk to the new Rust backend.
+    * **Action:** Modify **`StorageLoader.js`**. Remove all calls to the `indexeddb-adapter.js`.
+    * **Action:** Replace them with Tauri's `invoke` command (e.g., `this.adapter.get(id)` becomes `invoke('storage_get', { id })`). Your entire "Application OS" is now running on top of a native Rust/Postgres backend.
+
+---
+
+### Phase 4: Build the Native Kernel (Rust/WASM Core)
+
+**Goal:** Harden the platform by moving critical security logic from JavaScript into a high-performance, auditable Rust binary, as outlined in your high-assurance plans.
+
+1.  **Build the `security_core` Crate:**
+    * **Task:** Create the core Rust library for all security logic.
+    * **Action:** Create a new Rust library (`security_core`).
+    * **Action:** Implement the pure functions from your plan: `compare_classifications`, `enforce_no_read_up`, `enforce_no_write_down`, and `merge_poly`.
+
+2.  **Integrate Natively (Rust-to-Rust):**
+    * **Task:** Connect your "Core Host" to your "Security Kernel."
+    * **Action:** Modify your Tauri Rust backend (from Phase 3) to import and use the `security_core` crate *natively*.
+    * **Action:** Your Rust `storage_get` function will now *first* call the Rust `enforce_no_read_up` function before executing the Postgres query. This is the "unified Rust backend" we discussed—it's fast, secure, and all heavy lifting is off the JS thread.
+
+3.  **Update CI Pipeline:**
+    * **Task:** Ensure your new Rust backend is continuously verified.
+    * **Action:** Integrate the CI/CD pipeline you've already planned, including TLA+ model checks, WASM integrity hashing, and timing regression tests.
+
+---
+
+### Phase 5: Launch the Enterprise Platform
+
+**Goal:** Package your product and build the "Private Core, Public Ecosystem" to get your first customers.
+
+1.  **Protect Your IP:**
+    * **Action:** Make your `nodus-main` GitHub repository **private**.
+
+2.  **Build the "Public Ecosystem":**
+    * **Action:** Create a **new public repo** for `@nodus/sdk` (containing only TypeScript definitions) and a `nodus-samples` repo.
+    * **Action:** Build your **centralized plugin marketplace** (your "lite" server). Its only job is to run your `ArbitraryCodeValidator.js` on submitted plugins and host the *signed* bundles.
+
+3.  **Build the "Go-to-Market" Demo:**
+    * **Action:** Create the 2-minute "Pain Point" video for enterprise customers (CISOs, IT Directors), showing:
+        1.  A `MACEngine` policy block.
+        2.  The instant, signed `ForensicLogger` audit trail of that block.
+        3.  The "low-code builder" (from Phase 2) creating a new, secure tool in seconds.
+
+4.  **Engage Customers:**
+    * **Action:** Use the "LinkedIn Advice" strategy to get this demo in front of 50-100 CISOs and IT Directors at high-assurance companies (Law, Finance, Healthcare) to get your first paying customer.

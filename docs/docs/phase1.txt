@@ -1,0 +1,90 @@
+Here is a detailed, comprehensive plan for executing Phase 1 and Phase 2, consolidating all the tasks from your `next.txt`, `grid plan.txt`, `privacy-browser.txt`, and our recent conversation.
+
+This plan focuses on getting your "Enterprise MVP" ready by first solidifying the JavaScript kernel (Phase 1) and then integrating the "killer feature" (the low-code builder) on top of it (Phase 2).
+
+---
+
+## Phase 1: Consolidate the JS Kernel (Code Rigor & Centralization)
+
+**Goal:** To prepare the platform for the Tauri migration by centralizing all scattered logic (sanitization, policy) into pure, stateless, and auditable kernel modules. This makes the kernel secure, stable, and easy to maintain *before* you build the native backend.
+
+### 1.A: Implement Canonical `Sanitizer.js` Module
+This task is based on our conversation to create a single source of truth for data safety.
+
+1.  **Create the Module:**
+    * **Action:** Create a new file at `src/platform/security/Sanitizer.js`.
+    * **Exports:** The module must be pure and stateless, exporting functions like:
+        * `cleanse(data, schema)`: Recursively cleans an object based on rules.
+        * `cleanseText(string)`: Strips all HTML, scripts, etc., to get pure, safe text for AI.
+        * `getDeterministicHash(data)`: Creates a hash *after* cleansing for forensic consistency.
+    * **Registration:** Add this module to `src/platform/bootstrap/ServiceRegistry.js` so it's available as `stateManager.managers.sanitizer`.
+
+2.  **Integrate at the "Kernel Edge" (Defense-in-Depth):**
+    * **Task:** Ensure all data entering the core platform services is sterile.
+    * **Action (Orchestrator):** Modify `src/shared/lib/async/AsyncOrchestrator.js`. Before any operation's `execute` step, it must call `stateManager.managers.sanitizer.cleanse(payload)`. This is your critical "insurance" check.
+    * **Action (Audit):** Modify `src/platform/security/ForensicLogger.js`. All data being logged must first be passed to `stateManager.managers.sanitizer.getDeterministicHash()` to guarantee a clean and consistent audit log.
+    * **Action (AI):** Modify `src/platform/services/EmbeddingManager.js`. It must use `sanitizer.cleanseText()` on all user content before generating embeddings, preventing the AI from processing malicious code.
+
+3.  **Integrate at the "UI/Sync Edge":**
+    * **Task:** Ensure all data leaving the app is also clean.
+    * **Action (Sync):** Modify `src/platform/storage/SyncLayer.js`. Before any data is sent *out* to the "lite" server, it must be passed through `sanitizer.cleanse()`.
+    * **Action (Input):** Refactor `src/features/ui/BindEngine.js`. All user-generated input (e.g., from a `TextField` on save) should be passed to the sanitizer as a first-line defense.
+
+### 1.B: Consolidate All Policy Enforcement
+This task addresses the "scattered policy" risk we identified, where feature-level policies (`src/features/grid/policies/`) could bypass kernel-level security.
+
+1.  **Centralize Policy Definitions:**
+    * **Task:** Move all policy *definitions* from `src/features/` into the `src/platform/` kernel.
+    * **Action:** Move the logic/schemas from `src/features/grid/policies/CoreGridPolicy.js` and `NestingPolicy.js` to a new directory, e.g., `src/platform/security/policies/`.
+    * **Action:** These files should be refactored into pure, declarative JSON schemas or data objects, not active code.
+
+2.  **Centralize Policy Enforcement:**
+    * **Task:** Make the kernel the *single source of truth* for enforcement.
+    * **Action:** Modify **`src/platform/security/TenantPolicyService.js`** (and/or `SecurityManager.js`) to be the *only* module that loads, interprets, and enforces these newly centralized policies.
+    * **Action:** Refactor `src/features/grid/policies/GridPolicyIntegration.js` to be a "dumb adapter." It must be stripped of all logic and must only make calls to the kernel (e.g., `stateManager.managers.tenantPolicy.canMoveBlock(user, block)`).
+
+---
+
+## Phase 2: Integrate the "Killer Feature" (UI Engines)
+
+**Goal:** To build the user-facing low-code "atomic element" builder by integrating all your standalone `src/features/ui/` engines, as outlined in your `next.txt` file.
+
+### 2.A: Refactor `BuildingBlockRenderer.js`
+This is the core task from your `next.txt` plan.
+
+1.  **Convert Renderer to a "Factory":**
+    * **Task:** Modify `src/features/ui/BuildingBlockRenderer.js` from a "monolith" into a "factory" that delegates all its logic.
+    * **Action:** Remove the internal `_bindData` method. All data-binding logic must be delegated by calling **`src/features/ui/BindEngine.js`**.
+    * **Action:** Remove the internal `_attachAction` method. All event handling logic must be delegated by calling **`src/platform/actions/ActionDispatcher.js`**.
+
+### 2.B: Activate the UI Data Flow
+This is the "wiring" part of your `next.txt` plan.
+
+1.  **Activate "Read" Path:**
+    * **Task:** Make the `BindEngine` functional.
+    * **Action:** Wire `BindEngine.js` to use **`src/platform/state/StateUIBridge.js`** for simple state bindings and **`src/platform/state/QueryService.js`** for complex, query-based components.
+
+2.  **Activate "Write" Path:**
+    * **Task:** Make the `ActionDispatcher` functional.
+    * **Action:** Wire `ActionDispatcher.js` to call **`src/platform/state/EventFlowEngine.js`**, which will in turn look up and execute the action from the `ActionHandlerRegistry.js`.
+
+### 2.C: Secure the UI Pipeline
+This is a critical security task from your `next.txt` plan.
+
+1.  **Secure "Read" Path:**
+    * **Action:** Modify **`BindEngine.js`** so that before it renders any data, it first calls `stateManager.managers.securityManager.canRead(subject, dataBindingPath)`. If this returns `false`, it must not render the data.
+2.  **Secure "Write" Path:**
+    * **Action:** Modify **`ActionDispatcher.js`** so that before it dispatches any action, it first calls `stateManager.managers.securityManager.canWrite(subject, actionName, payload)`. If this returns `false`, it must block the action and notify the `SystemToastManager.js`.
+
+### 2.D: Build the "Builder" UI & Grid Stability
+This task combines the "builder" concept with the stability roadmap from your `grid plan.txt`.
+
+1.  **Build the "Toolbox" UI:**
+    * **Task:** Create the visual drag-and-drop interface for your low-code builder.
+    * **Action:** Create a new UI component (e.g., `src/features/builder/ComponentToolbox.js`).
+    * **Action:** This new component must read its list of available "atomic elements" (Button, Label, `iframe_renderer`, etc.) from your existing **`src/features/grid/runtime/ComponentRegistry.js`**.
+
+2.  **Implement Grid Stability:**
+    * **Task:** Implement the "High Priority" items from `grid plan.txt`.
+    * **Action (Collision):** Modify `EnhancedGridRenderer.js` to add an "occupancy map" and prevent blocks from overlapping.
+    * **Action (Undo/Redo):** Modify `EnhancedGridRenderer.js` so that all drag/resize/add/remove operations are wrapped in a `stateManager.transaction()` call. This will automatically populate your `GridHistoryInspector.js` and enable the undo/redo feature.
