@@ -5,9 +5,9 @@
  */
 
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
+import ConditionSchema from "@platform/rules/ConditionSchema.json";
+import { DateUtils } from "@utils/DateUtils.js";
 
-import ConditionSchema from "../../core/ConditionSchema.json";
-import { DateUtils } from "../../shared/lib/DateUtils.js";
 /**
  * @class ConditionRegistry
  * @privateFields {#stateManager, #conditions, #conditionCache, #metrics, #errorHelpers, #rateLimitStore, #schemaValidator}

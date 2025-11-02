@@ -6,9 +6,10 @@
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  **/
 
-import { ForensicLogger } from "./security/ForensicLogger.js";
-import { ServiceRegistry } from "./ServiceRegistry.js";
-import { BoundedStack } from "../utils/BoundedStack.js";
+import { ServiceRegistry } from "@core/bootstrap/ServiceRegistry.js";
+import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
+import { BoundedStack } from "@/utils/BoundedStack.js";
 
 /**
  * @class HybridStateManager
@@ -57,6 +58,10 @@ export class HybridStateManager {
 	#txBeforeSnapshot = null;
 	/** @private @type {string[]} */
 	#recentOps = [];
+	/** @private @type {Record<string, any>} */
+	#stateTree = {};
+	/** @private @type {Map<string, Set<Function>>} */
+	#pathSubscribers = new Map();
 
 	// --- Public Getters for Controlled Access ---
 
@@ -744,6 +749,117 @@ export class HybridStateManager {
 				.namespace("state")
 				.measure("saveEntity")(this.saveEntity.bind(this));
 		}
+	}
+
+	/**
+	 * Retrieves the value stored at the provided dot-notation path.
+	 * @param {string} path
+	 * @returns {any}
+	 */
+	get(path) {
+		if (!path) return undefined;
+		return this.#getValueAtPath(String(path));
+	}
+
+	/**
+	 * Sets the value at the provided dot-notation path and emits the appropriate change events.
+	 * @param {string} path
+	 * @param {any} value
+	 * @returns {Promise<any>}
+	 */
+	async set(path, value) {
+		if (!path) return value;
+		const normalized = String(path);
+		const previous = this.get(normalized);
+		if (Object.is(previous, value)) return value;
+		this.#assignValueAtPath(normalized, value);
+		this.#notifyStateChange({ path: normalized, value, previous });
+		return value;
+	}
+
+	/**
+	 * Subscribes to fine-grained changes on a specific state path.
+	 * @param {string} path
+	 * @param {(value:any)=>void} handler
+	 * @returns {() => void}
+	 */
+	subscribe(path, handler) {
+		if (!path || typeof handler !== "function") {
+			return () => {};
+		}
+		const key = String(path);
+		const bucket = this.#pathSubscribers.get(key) || new Set();
+		bucket.add(handler);
+		this.#pathSubscribers.set(key, bucket);
+		return () => {
+			const set = this.#pathSubscribers.get(key);
+			if (!set) return;
+			set.delete(handler);
+			if (set.size === 0) {
+				this.#pathSubscribers.delete(key);
+			}
+		};
+	}
+
+	#notifyStateChange(event) {
+		const payload = {
+			path: event.path,
+			value: event.value,
+			previous: event.previous,
+			changedPaths: [event.path],
+		};
+		const subscribers = this.#pathSubscribers.get(event.path);
+		if (subscribers) {
+			for (const handler of subscribers) {
+				try {
+					handler(event.value);
+				} catch (err) {
+					console.error(
+						`[HybridStateManager] subscriber for "${event.path}" failed:`,
+						err
+					);
+				}
+			}
+		}
+		this.emit("stateChanged", payload);
+		this.emit("state:changed", payload);
+		this.emit("stateChange", payload);
+	}
+
+	#assignValueAtPath(path, value) {
+		const segments = path.split(".");
+		let cursor = this.#stateTree;
+		for (let i = 0; i < segments.length; i++) {
+			const segment = segments[i];
+			const isLast = i === segments.length - 1;
+			if (isLast) {
+				cursor[segment] = value;
+			} else {
+				if (
+					cursor[segment] === undefined ||
+					cursor[segment] === null ||
+					typeof cursor[segment] !== "object"
+				) {
+					cursor[segment] = {};
+				}
+				cursor = cursor[segment];
+			}
+		}
+	}
+
+	#getValueAtPath(path) {
+		const segments = path.split(".");
+		let cursor = this.#stateTree;
+		for (const segment of segments) {
+			if (
+				cursor === undefined ||
+				cursor === null ||
+				!(segment in cursor)
+			)
+				return undefined;
+			cursor = cursor[segment];
+		}
+		return cursor;
 	}
 
 	/**

@@ -6,11 +6,12 @@
  * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} - This file is central to enforcing Mandates 1.3, 2.1, 2.4, and 4.3.
  */
 
-import { HybridStateManager } from "../../core/HybridStateManager.js";
-import { createProxyTransport } from "../../core/security/adapter.js";
-import { DateCore } from "../../shared/lib/DateUtils.js";
-import { createBindEngineService } from "../../ui/BindEngine.js";
-import { createDefaultTransport } from "../security/transport.js";
+import { createProxyTransport } from "@core/security/adapter.js";
+import { createDefaultTransport } from "@core/security/transport.js";
+import { HybridStateManager } from "@core/state/HybridStateManager.js";
+import { createBindEngineService } from "@features/ui/BindEngine.js";
+import { DateCore } from "@shared/lib/DateUtils.js";
+
 
 /**
  * @privateFields {#config, #stateManager, #metrics, #forensicLogger}

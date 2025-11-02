@@ -75,6 +75,12 @@ export default class BindEngine {
 	 * @private
 	 */
 	#started = false;
+	/**
+	 * Holds unsubscribe callbacks for coarse-grained state change listeners.
+	 * @type {Array<() => void>}
+	 * @private
+	 */
+	#stateUnsubscribes = [];
 
 	/**
 	 * Creates an instance of BindEngine.
@@ -107,13 +113,22 @@ export default class BindEngine {
 		this.#started = true;
 
 		// Reactivity: listen to state changes
-		this.#deps.stateManager.on?.("stateChanged", (evt) => {
-			try {
-				this.#onStateChanged(evt);
-			} catch {
-				/* swallow to avoid UI lock */
+		const events = ["stateChanged", "state:changed", "stateChange"];
+		for (const evtName of events) {
+			const maybeUnsub = this.#deps.stateManager.on?.(
+				evtName,
+				(evt) => {
+					try {
+						this.#onStateChanged(evt);
+					} catch {
+						/* swallow to avoid UI lock */
+					}
+				}
+			);
+			if (typeof maybeUnsub === "function") {
+				this.#stateUnsubscribes.push(maybeUnsub);
 			}
-		});
+		}
 
 		// Initial scan
 		await this.bindAll(root);
@@ -128,6 +143,14 @@ export default class BindEngine {
 	 * @returns {void}
 	 */
 	stop() {
+		for (const unsub of this.#stateUnsubscribes) {
+			try {
+				unsub();
+			} catch {
+				/* noop */
+			}
+		}
+		this.#stateUnsubscribes.length = 0;
 		for (const [el, meta] of this.#bindings) {
 			meta.unsub?.();
 			this.#bindings.delete(el);

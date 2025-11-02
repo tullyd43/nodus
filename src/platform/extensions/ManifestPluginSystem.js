@@ -1,8 +1,7 @@
 import { CDS } from "@core/security/CDS.js";
 import { ForensicLogger } from "@core/security/ForensicLogger.js";
-
-import { PluginError } from "../../shared/lib/ErrorHelpers.js";
-import { scanForForbiddenPatterns } from "../utils/ArbitraryCodeValidator.js";
+import { scanForForbiddenPatterns } from "@utils/ArbitraryCodeValidator.js";
+import { PluginError } from "@utils/ErrorHelpers.js";
 
 /**
  * @file ManifestPluginSystem.js

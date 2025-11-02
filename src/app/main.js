@@ -438,7 +438,7 @@ const bootstrap = async () => {
 		if (!container || vlist) return;
 		try {
 			const { default: VirtualList } = await import(
-				"@/ui/VirtualList.js"
+				"@components/VirtualList.js"
 			);
 			vlist = new VirtualList({
 				container,

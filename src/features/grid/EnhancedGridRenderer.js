@@ -2626,6 +2626,49 @@ export class EnhancedGridRenderer {
 
 			// Emit for any listeners (audit, analytics, etc.)
 			this.#eventFlowEngine?.emit("layoutChanged", layoutChangeEvent);
+			try {
+				this.#stateManager?.emit?.("layoutChanged", layoutChangeEvent);
+			} catch {
+				/* noop */
+			}
+
+			let layoutSnapshot = null;
+			try {
+				layoutSnapshot =
+					typeof this.getCurrentLayout === "function"
+						? this.getCurrentLayout()
+						: null;
+			} catch {
+				layoutSnapshot = null;
+			}
+
+			try {
+				if (layoutSnapshot) {
+					void this.#stateManager?.set?.(
+						"grid.layout",
+						layoutSnapshot
+					);
+					void this.#stateManager?.set?.(
+						"grid.lastChange",
+						layoutChangeEvent
+					);
+					this.#stateManager?.emit?.("grid:layoutChange", {
+						change: layoutChangeEvent,
+						layout: layoutSnapshot,
+					});
+				} else {
+					this.#stateManager?.emit?.(
+						"grid:layoutChange",
+						layoutChangeEvent
+					);
+					void this.#stateManager?.set?.(
+						"grid.lastChange",
+						layoutChangeEvent
+					);
+				}
+			} catch {
+				/* noop */
+			}
 
 			// If onLayoutChange callback provided, use it
 			/**

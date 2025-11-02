@@ -7,35 +7,35 @@
  */
 
 // Import all core service classes that will be managed by the registry.
-import { AdaptiveRenderer } from "../../core/AdaptiveRenderer.js";
-import { ComponentDefinitionRegistry } from "../../core/ComponentDefinition.js";
-import { ConditionRegistry } from "../../core/ConditionRegistry.js";
-import { ExtensionManager } from "../../core/ExtensionManager.js";
-import { ManifestPluginSystem } from "../../core/ManifestPluginSystem.js";
-import { OptimizationAccessControl } from "../../core/OptimizationAccessControl.js";
-import { CrossDomainSolution } from "../../core/security/CDS.js";
-import { InMemoryKeyring } from "../../core/security/Keyring.js";
-import { NonRepudiation } from "../../core/security/NonRepudiation.js";
-import { CompleteGridSystem } from "../../features/grid/CompleteGridSystem.js";
-import { EnhancedGridRenderer } from "../../features/grid/EnhancedGridRenderer.js";
-import { BuildingBlockRenderer } from "../../features/ui/BuildingBlockRenderer.js";
-import GridPolicyService from "../../grid/GridPolicyIntegration.js";
-import { DatabaseOptimizer } from "../../managers/DatabaseOptimizer.js";
-import { ErrorHelpers } from "../../shared/lib/ErrorHelpers.js";
-import { MetricsRegistry } from "../../shared/lib/MetricsRegistry.js";
-import { MetricsReporter } from "../../shared/lib/MetricsReporter.js";
-import { ActionHandlerRegistry } from "../actions/ActionHandlerRegistry.js";
-import { SystemPolicies } from "../platform/security/SystemPoliciesCached.js";
-import { ForensicLogger } from "../security/ForensicLogger.js";
-import { SecurityManager } from "../security/SecurityManager.js";
-import { TenantPolicyService } from "../security/TenantPolicyService.js";
-import { CacheManager } from "../services/cache/CacheManager.js";
-import { EmbeddingManager } from "../services/EmbeddingManager.js";
-import { IdManager } from "../services/id/IdManager.js";
-import { EventFlowEngine } from "../state/EventFlowEngine.js";
-import { QueryService } from "../state/QueryService.js";
-import { StorageLoader } from "../storage/StorageLoader.js";
-import { ValidationLayer } from "../storage/ValidationLayer.js";
+import { CompleteGridSystem } from "@features/grid/CompleteGridSystem.js";
+import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
+import GridPolicyService from "@features/grid/policies/GridPolicyIntegration.js";
+import { BuildingBlockRenderer } from "@features/ui/BuildingBlockRenderer.js";
+import { AdaptiveRenderer } from "@features/ui/runtime/AdaptiveRenderer.js";
+import { ComponentDefinitionRegistry } from "@features/ui/runtime/ComponentDefinition.js";
+import { ActionHandlerRegistry } from "@platform/actions/ActionHandlerRegistry.js";
+import { ExtensionManager } from "@platform/extensions/ExtensionManager.js";
+import { ManifestPluginSystem } from "@platform/extensions/ManifestPluginSystem.js";
+import { DatabaseOptimizer } from "@platform/optimization/DatabaseOptimizer.js";
+import { OptimizationAccessControl } from "@platform/optimization/OptimizationAccessControl.js";
+import { ConditionRegistry } from "@platform/rules/ConditionRegistry.js";
+import { CrossDomainSolution } from "@platform/security/CDS.js";
+import { ForensicLogger } from "@platform/security/ForensicLogger.js";
+import { InMemoryKeyring } from "@platform/security/keyring/Keyring.js";
+import { NonRepudiation } from "@platform/security/NonRepudiation.js";
+import { SystemPolicies } from "@platform/security/policies/SystemPoliciesCached.js";
+import { SecurityManager } from "@platform/security/SecurityManager.js";
+import { TenantPolicyService } from "@platform/security/TenantPolicyService.js";
+import { CacheManager } from "@platform/services/cache/CacheManager.js";
+import { EmbeddingManager } from "@platform/services/EmbeddingManager.js";
+import { IdManager } from "@platform/services/id/IdManager.js";
+import { EventFlowEngine } from "@platform/state/EventFlowEngine.js";
+import { QueryService } from "@platform/state/QueryService.js";
+import { StorageLoader } from "@platform/storage/StorageLoader.js";
+import { ValidationLayer } from "@platform/storage/ValidationLayer.js";
+import { ErrorHelpers } from "@shared/lib/ErrorHelpers.js";
+import { MetricsRegistry } from "@shared/lib/MetricsRegistry.js";
+import { MetricsReporter } from "@shared/lib/MetricsReporter.js";
 
 /**
  * @description Defines foundational services with no dependencies on other managers.
