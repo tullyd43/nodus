@@ -1,0 +1,938 @@
+Perfect — let’s step back and outline **exactly what you need to do** to bring the entire Nodus system up to its modern, modular, fully-instrumented, and policy-driven architecture.
+
+Below is your **high-level integration and modernization guide** — a map of *what to replace*, *what to add*, *what to remove*, and *what to configure*.
+
+---
+
+# 🧭 Nodus v8 Modernization & Integration Guide
+
+## 🧩 Goal
+
+Unify every operation in the system — state, UI, network, storage, security, and AI — under a single **async orchestration kernel** that automatically handles:
+
+* Forensic auditing (signed envelopes)
+* Metrics & observability
+* Policy-based depth & sampling
+* Embedding creation + lineage
+* Localization (i18n)
+* Security labeling (MAC/RBAC)
+* Multi-tenant configurability
+
+This creates a **defense-grade, composable runtime** that’s predictable, measurable, and compliant.
+
+---
+
+## 1️⃣ Replace Monolithic Helpers With Modular Orchestration
+
+### Replace:
+
+* `AsyncHelper` (monolithic version with all logic inline)
+* Any ad-hoc `try { await ...; forensicLogger.log... }` sequences
+
+### With:
+
+* **`AsyncOrchestrator`** (core runner)
+* A suite of modular **plugins**:
+
+  * `MetricsPlugin`
+  * `ForensicPlugin`
+  * `EmbeddingPlugin`
+  * `PolicyPlugin`
+  * `LocalizationPlugin`
+  * (optional) `RetryPlugin`, `CachePlugin`, `CircuitBreakerPlugin`, `RBACPlugin`
+
+### Outcome:
+
+All async code runs through a single entry point:
+
+```js
+await orchestrator.run(asyncFn, { label: "SaveLayout", meta: { domain: "ui" } });
+```
+
+Every plugin is optional and policy-driven.
+
+---
+
+## 2️⃣ Remove Hard-Coded Auditing & Embedding Calls (except bootstrap/security)
+
+### Remove or refactor:
+
+* Manual `forensicLogger.createEnvelope()` / `.logAuditEvent()` inside regular modules.
+* Manual `EmbeddingManager.createEmbedding()` inside normal app logic.
+
+### Keep manual calls in:
+
+* **SystemBootstrap** (startup, shutdown, integrity anchor)
+* **SecurityManager / PolicyControlBlock** (atomic, synchronous)
+* **TenantPolicyService** (policy overrides)
+* **Emergency/critical fail-safe routines**
+
+### Why:
+
+Normal operations now inherit auditing and embeddings automatically via plugins, removing duplication and error risk.
+
+---
+
+## 3️⃣ Introduce Observability Policies
+
+### Add domain:
+
+`observability.*` in `SystemPolicies_Cached`:
+
+| Key                           | Purpose                         |
+| ----------------------------- | ------------------------------- |
+| `forensic_depth`              | minimal / summary / full        |
+| `metrics_sample_rate`         | 0–1 (sampling probability)      |
+| `embedding_depth`             | none / summary / full           |
+| `embedding_version_retention` | number of versions              |
+| `embedding_vector_resolution` | dimension/truncation limit      |
+| `forensic_field_granularity`  | standard / extended / hash_only |
+| `i18n_enabled_languages`      | language array                  |
+| `i18n_scope`                  | ui / ai / system                |
+
+Use `TenantPolicyService` for per-tenant overrides.
+
+---
+
+## 4️⃣ Add Internationalization Layer
+
+Create `LocalizationRegistry`:
+
+* Registers translations per language
+* Exposes `.t(key)` to resolve labels
+
+Wire into:
+
+* `LocalizationPlugin` (for async labels)
+* `EmbeddingPlugin` (for multilingual embeddings)
+* UI renderers (for live translation)
+
+Policies drive which languages and scopes are active.
+
+---
+
+## 5️⃣ Upgrade Embedding System for Lineage + Retention
+
+### Add to `EmbeddingManager`:
+
+* `parent`, `parentHash` for version chaining
+* `embedding_version_retention` enforcement
+* Hash caching (`CacheManager`)
+* Policy enforcement via `PolicyControlBlock_Enhanced`
+
+### Result:
+
+Each vector knows its ancestry → full semantic lineage.
+
+---
+
+## 6️⃣ Instrument Metrics Everywhere
+
+Replace ad-hoc logging with `MetricsPlugin`:
+
+* Counters: `async.started`, `async.success`, `async.failure`, `async.completed`
+* Timers: `async.<label>.duration_ms`
+* Retry counters, embedding success/failure counts
+* Plugin performance metrics (`plugin.<name>.duration_ms`)
+
+Hook into your existing MetricsReporter dashboards.
+
+---
+
+## 7️⃣ Enforce Policy & Security Gates
+
+Before any plugin executes:
+
+* Evaluate `observability.*` policies (`PolicyPlugin`)
+* Enforce classification through `PolicyControlBlock_Enhanced`
+* Skip or downgrade plugins based on clearance, sampling, or tenant restrictions
+
+Guarantees no sensitive data is embedded or exported if disallowed.
+
+---
+
+## 8️⃣ Implement Hardening & QA (from your checklist)
+
+* **Safe execution wrapper** (`safeCall`) around each plugin hook
+* **Timeouts** for long plugins
+* **Priority ordering** (`priority` property)
+* **Signed plugin manifests** (`ManifestPluginSystem`)
+* **Performance budgets:**
+
+  * < 2 ms avg per plugin
+  * < 20 KB alloc per op
+  * < 5 % overhead vs monolith
+* **Automated tests:** latency, sampling toggles, retention, policy enforcement
+
+---
+
+## 9️⃣ Integrate Auditing & Embedding Matrix Generator
+
+Add a script (like `scripts/generate-audit-embedding-matrix.mjs`) to:
+
+* Scan codebase for async/await, instrumentation calls
+* Generate `/docs/audit/audit_embedding_matrix.md`
+* Enforce coverage in CI (optional ESLint rule)
+
+Keeps visibility on what’s instrumented and what’s not.
+
+---
+
+## 🔟 Clean Up Legacy & Duplicate Logic
+
+Remove or deprecate:
+
+* `AsyncHelper.createAsyncHelper`
+* Standalone metrics counters
+* Duplicated forensic/embedding snippets
+* Old manual i18n or metrics registries
+* Outdated “security-attest” scripts that now belong in Orchestrator plugins
+
+Replace imports system-wide:
+
+```diff
+-import { AsyncHelper } from "../core/AsyncHelper.js";
++import { AsyncOrchestrator } from "../core/async/AsyncOrchestrator.js";
+```
+
+---
+
+## 11️⃣ Operational Runbook
+
+| Task                     | Tool / Policy                                    | Notes                    |
+| ------------------------ | ------------------------------------------------ | ------------------------ |
+| Adjust telemetry volume  | `observability.metrics_sample_rate`              | runtime, tenant-aware    |
+| Turn embeddings off      | `observability.embedding_depth = 'none'`         | disables EmbeddingPlugin |
+| Rotate forensic keys     | `NonRepudiation` + `ForensicLogger.rotateKeys()` | scheduled job            |
+| Change language coverage | `observability.i18n_enabled_languages`           | dynamic reload           |
+| Control vector retention | `embedding_version_retention`                    | triggers auto-prune      |
+
+---
+
+## 12️⃣ Test Plan
+
+1. Unit-test each plugin in isolation.
+2. Integration-test orchestrator with all plugins active.
+3. Simulate tenant policy overrides → observe plugin activation/deactivation.
+4. Benchmark latency and memory.
+5. Run the coverage generator → expect ≥ 95 % Full coverage.
+6. Manual smoke test:
+
+   * Boot forensic event exists
+   * SaveLayout triggers forensic + metrics + embedding
+   * Policy toggle disables embeddings immediately
+
+---
+
+## 13️⃣ Deliverables Checklist
+
+| Deliverable                                                         | Status                                               |
+| ------------------------------------------------------------------- | ---------------------------------------------------- |
+| `AsyncOrchestrator` core kernel                                     | ✅ replace monolith                                   |
+| Plugin directory (`/core/async/plugins/`)                           | ✅ Metrics, Forensic, Embedding, Policy, Localization |
+| Observability policy domain                                         | ✅ add + validators                                   |
+| LocalizationRegistry                                                | ✅ create                                             |
+| Embedding lineage + retention                                       | ✅ extend manager                                     |
+| Hardening checklist                                                 | ✅ documented                                         |
+| Audit & Embedding matrix generator                                  | ✅ add script                                         |
+| CI lint rule                                                        | optional                                             |
+| Updated docs (`/docs/integration/observability-embedding-guide.md`) | ✅                                                    |
+| Dashboards + alerts                                                 | configure in MetricsReporter                         |
+
+---
+
+## 14️⃣ After Migration
+
+* **Everything async** → automatically instrumented.
+* **Security-critical paths** → manually audited (atomic).
+* **Embeddings & metrics** → policy-governed.
+* **Policies** → tunable at runtime (system + tenant).
+* **Orchestrator** → plug-in extensible for future AI, analytics, or tracing modules.
+
+---
+
+### 🚀 TL;DR
+
+1. **Refactor AsyncHelper → AsyncOrchestrator + plugins.**
+2. **Move all auditing & embeddings into plugins; keep only boot/security manual.**
+3. **Add observability policies for depth, sampling, languages.**
+4. **Add localization, metrics, and embedding lineage integration.**
+5. **Enforce performance and safety hardening.**
+6. **Generate the audit/embedding matrix to verify coverage.**
+
+Follow this roadmap and Nodus becomes a *modular, measurable, and compliant* platform—ready for continuous AI-driven observability and multi-tenant governance.
+
+---
+
+Would you like me to turn this into a formal `MIGRATION_GUIDE_v8.md` (formatted with version header, task checklist, and phase breakdown so you can include it directly in your repo)?
+
+
+
+Excellent — this new **`BindEngine_v2`** fits beautifully into your modular orchestration system, and it already follows the same architectural and compliance principles you’ve been designing.
+
+Let’s go through **how it integrates**, what you **don’t need to replace**, and what you should **link or refactor for consistency**.
+
+---
+
+## 🧩 1. Purpose and Role
+
+`BindEngine_v2` is your **front-end reactive binding layer**, sitting between:
+
+* The **HybridStateManager** (core reactive state)
+* The **UI DOM**
+* The **Security / Forensic / Metrics stack**
+
+Essentially, it’s the “reactive UI plugin” for your async orchestration model — but optimized for low-latency rendering and safe DOM mutation (for the visual layer).
+
+---
+
+## ⚙️ 2. How it fits in the architecture
+
+| Layer                          | Example Component                           | Integration Relationship                                                                                 |
+| ------------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Async orchestration kernel** | `AsyncOrchestrator`                         | `BindEngine` runs under this; it doesn’t replace it.                                                     |
+| **Plugins**                    | ForensicPlugin, MetricsPlugin, PolicyPlugin | `BindEngine` *consumes* their services via dependency injection (`deps.forensicLogger`, `deps.metrics`). |
+| **State / Reactivity**         | `HybridStateManager`                        | Primary dependency. All `data-bind` elements subscribe to it.                                            |
+| **Security enforcement**       | `SecurityManager` or MAC engine             | Used in `#safeRender()` constant-time read checks.                                                       |
+| **Forensic logging**           | `ForensicLogger`                            | Already fully integrated (`createEnvelope`, `commitEnvelope`).                                           |
+| **Metrics**                    | `MetricsRegistry`                           | Already integrated (increment + record calls).                                                           |
+| **Orchestration**              | `AsyncHelper` / `AsyncOrchestrator`         | Wraps `BindEngine` start, updateBinding, and bootstrap events for global observability.                  |
+
+✅ You don’t need to modify the engine’s internal structure — it’s already policy-compliant and security-hardened.
+You just need to **register it as a plugin participant** in your orchestration lifecycle.
+
+---
+
+## 🧱 3. Integration Steps (High-Level)
+
+### Step 1 — Register as a service in `SystemBootstrap`
+
+You already have this function at the bottom:
+
+```js
+export async function createBindEngineService(deps)
+```
+
+That’s exactly what `SystemBootstrap` should call:
+
+```js
+const bindEngine = await createBindEngineService({
+  stateManager,
+  forensicLogger,
+  metrics: metricsRegistry,
+  securityManager,
+  securityExplainer,
+  eventBus,
+});
+stateManager.services.bindEngine = bindEngine;
+```
+
+### Step 2 — Hook into Async Orchestrator lifecycle
+
+Wrap the bootstrap/start calls in the orchestrator:
+
+```js
+await orchestrator.run(
+  () => createBindEngineService({
+    stateManager,
+    forensicLogger,
+    metricsRegistry,
+    securityManager,
+  }),
+  { label: "BindEngine_Service_Start", meta: { domain: "ui" } }
+);
+```
+
+That ensures:
+
+* Metrics: `async:start/end` + timing
+* Forensic: “SERVICE_START” envelope already recorded
+* Policy enforcement: Observability depth/sampling applied
+
+---
+
+### Step 3 — Register `BindEngine` as a “UI Plugin”
+
+In your **AsyncOrchestrator plugin list**, add a lightweight plugin that forwards UI mutation metrics:
+
+```js
+class BindPlugin {
+  priority = 40;
+  constructor(bindEngine) { this.bindEngine = bindEngine; }
+
+  onSuccess(ctx, result) {
+    this.bindEngine?.deps?.metrics?.increment?.("async.bind.success");
+  }
+  onFailure(ctx, error) {
+    this.bindEngine?.deps?.metrics?.increment?.("async.bind.failure");
+  }
+}
+```
+
+Now, any orchestrated async operation (save, sync, load) will increment UI binding counters as part of the same metric family.
+
+---
+
+### Step 4 — Ensure Policy & MAC Awareness
+
+The BindEngine already does constant-time `canRead()` checks through `SecurityManager`.
+To make it policy-tunable, connect it to `SystemPolicies` via `HybridStateManager`:
+
+```js
+const obs = stateManager.managers.systemPolicies.getDomainPolicies("observability");
+bindEngine.ctMinDurationMs = obs.ct_min_duration_ms ?? 5; // adjustable timing padding
+```
+
+That lets policy define the **minimum security check duration** to mitigate timing attacks.
+
+---
+
+## 🔐 4. Audit & Forensic Integration
+
+| Operation               | Forensic Event Type     | Notes                                      |
+| ----------------------- | ----------------------- | ------------------------------------------ |
+| UI mutation (render)    | `DOM_MUTATION`          | Wrapped in envelope, immediate commit      |
+| Binding update (coarse) | `UI_BIND_UPDATE_COARSE` | Captures state sync between UI and manager |
+| Two-way input change    | `UI_BIND_MUTATION`      | Envelope per user edit                     |
+| Service start           | `SERVICE_START`         | Boot event for bind engine                 |
+
+These event types fit seamlessly into your forensic chain (no change needed).
+They’ll appear in the same ledger as orchestrated async events.
+
+---
+
+## 📊 5. Metrics Integration
+
+Already emits:
+
+* `bind.render.denied`
+* `bind.render.count`
+* `bind.render.time` (timer)
+
+You should add policy-based sampling thresholds in `MetricsRegistry`:
+
+```js
+if (obs.metrics_sample_rate < 1.0 && Math.random() > obs.metrics_sample_rate) return;
+```
+
+That makes UI telemetry obey the same sampling rules as backend async ops.
+
+---
+
+## 🧠 6. Embedding Integration (Optional but Recommended)
+
+For UI semantic analytics (e.g., “what content users see”), you can tie the BindEngine into the `EmbeddingManager` as well.
+
+Inside `#safeRender()` (after successful render):
+
+```js
+if (this.#deps.embeddingManager && this.#deps.observability?.embedding_depth !== "none") {
+  try {
+    await this.#deps.embeddingManager.createEmbedding({
+      source: `UI:${path}`,
+      content: String(out),
+      metadata: { path, domain: "ui" },
+    });
+  } catch { /* best-effort */ }
+}
+```
+
+💡 This should be policy-driven: only store embeddings if `observability.embedding_depth` ≥ `summary`.
+
+---
+
+## 🧩 7. Relationship to AsyncHelper / AsyncOrchestrator
+
+Think of `BindEngine` as a **specialized async participant**, not a replacement.
+
+| Concept             | Responsible for                                               |
+| ------------------- | ------------------------------------------------------------- |
+| `AsyncOrchestrator` | Managing async workflows (business logic, API calls)          |
+| `BindEngine`        | Reflecting those state changes in the UI (reactive rendering) |
+
+* Orchestrator handles *system-level observability*
+* BindEngine handles *UI-level observability*
+  (via Forensic envelopes, metrics, and security-aware rendering)
+
+Both share the same forensic, metric, and policy infrastructure.
+
+---
+
+## 🔄 8. Replacement Summary
+
+| Old                                 | New                                          | Status       |
+| ----------------------------------- | -------------------------------------------- | ------------ |
+| Direct DOM updates                  | BindEngine-managed rendering                 | ✅ done       |
+| Manual forensic UI logs             | Automatic envelopes via BindEngine           | ✅ done       |
+| AsyncHelper wrappers for UI updates | AsyncOrchestrator (system) + BindEngine (UI) | ✅ integrated |
+| Standalone security checks          | Constant-time `canRead` (BindEngine)         | ✅ integrated |
+| UI metrics scattered                | Centralized in MetricsRegistry               | ✅ integrated |
+
+No replacement needed — just **register BindEngine in bootstrap** and wire it into the orchestrator lifecycle.
+
+---
+
+## 🧩 9. Future-Proofing Extensions
+
+| Area                 | Option                                         | Purpose                      |
+| -------------------- | ---------------------------------------------- | ---------------------------- |
+| **Offline mode**     | Buffer envelopes when offline                  | Forensic continuity          |
+| **AI suggestions**   | Embed UI text for semantic feedback            | Context-aware UIs            |
+| **Policy awareness** | Add “bind.rateLimit” to observability policies | Prevent excessive re-renders |
+| **Granular metrics** | Add per-component tags                         | Deeper UI telemetry          |
+| **Multi-tenant UI**  | Inject tenant ID in `meta`                     | Audit isolation              |
+
+---
+
+### ✅ TL;DR — Integration Summary
+
+1. **Keep BindEngine as-is** — it’s compliant and secure.
+2. **Bootstrap it** via `createBindEngineService()` in `SystemBootstrap`.
+3. **Run it under AsyncOrchestrator** (so async start/end + metrics apply).
+4. **Inject same dependencies** (ForensicLogger, MetricsRegistry, SecurityManager, etc.) used across plugins.
+5. **Optionally add EmbeddingManager + Policy** for UI embeddings.
+6. **Let it emit its own forensic envelopes and metrics** — they merge naturally with your system ledger.
+
+---
+
+Would you like me to show what the **SystemBootstrap + AsyncOrchestrator** combined wiring would look like (so you can see exactly how BindEngine registers alongside other subsystems)?
+
+
+Beautiful — that’s exactly where this system matures from “instrumented” to **self-governing**.
+
+Once you remove manual audit calls and migrate everything under the orchestrator + BindEngine, you need **linting and enforcement** to *keep* the architecture clean.
+Here’s the full framework for that — from ESLint rules to CI gates and runtime verification.
+
+---
+
+# 🧩 1. Design Goal
+
+> **Every async or state-mutating operation must be auditable and policy-controlled.**
+> No developer should accidentally introduce an uninstrumented async function, direct `fetch()`, or ad-hoc forensic call.
+
+Linting and enforcement create a *compliance perimeter* around your codebase.
+
+---
+
+# ⚙️ 2. ESLint Layer (Static Enforcement)
+
+Add a local plugin called **`eslint-plugin-nodus-rules`** in `/tools/eslint/` or `/eslint/rules/`.
+
+### Rule 1 — `require-async-orchestration`
+
+Detects async functions not wrapped in the orchestration framework.
+
+```js
+// tools/eslint/rules/require-async-orchestration.js
+export default {
+  meta: {
+    type: "problem",
+    docs: { description: "All async functions must use AsyncOrchestrator/AsyncHelper" },
+    schema: [{ type: "object", properties: { allowIn: { type: "array" } } }]
+  },
+  create(context) {
+    const allowIn = new Set(context.options[0]?.allowIn || []);
+    return {
+      FunctionDeclaration(node) {
+        if (!node.async) return;
+        const filename = context.getFilename();
+        if (allowIn.some((dir) => filename.includes(dir))) return;
+
+        const src = context.getSourceCode().getText(node);
+        const ok = /\bAsyncOrchestrator\b|\bAsyncHelper\b/.test(src);
+        if (!ok)
+          context.report({
+            node,
+            message: "Async function not orchestrated. Wrap in AsyncOrchestrator or AsyncHelper."
+          });
+      }
+    };
+  }
+};
+```
+
+Enable it in `.eslintrc.cjs`:
+
+```js
+{
+  "plugins": ["nodus-rules"],
+  "rules": {
+    "nodus-rules/require-async-orchestration": [
+      "error",
+      { "allowIn": ["tests/", "scripts/"] }
+    ]
+  }
+}
+```
+
+---
+
+### Rule 2 — `no-manual-forensics`
+
+Blocks direct forensic calls in forbidden layers (e.g., `BindState`, `UI`, etc.).
+
+```js
+export default {
+  meta: { type: "problem", docs: { description: "Disallow manual forensic/metric calls" } },
+  create(context) {
+    return {
+      CallExpression(node) {
+        const txt = context.getSourceCode().getText(node);
+        if (/\bforensicLogger\.(createEnvelope|logAuditEvent)\b/.test(txt))
+          context.report({ node, message: "Manual forensicLogger calls are deprecated; use orchestrator/BindEngine." });
+        if (/\bmetricsRegistry\.(increment|timer)\b/.test(txt))
+          context.report({ node, message: "Manual metrics calls are deprecated; use MetricsPlugin." });
+        if (/\bembeddingManager\.createEmbedding\b/.test(txt))
+          context.report({ node, message: "Manual embedding calls are deprecated; use EmbeddingPlugin." });
+      }
+    };
+  }
+};
+```
+
+---
+
+### Rule 3 — `require-policy-gate`
+
+Ensures that security-sensitive files call the PolicyControlBlock.
+
+```js
+if (/\bSecurityManager|PolicyControlBlock/.test(filename)) {
+  if (!/\bPolicyControlBlock\b/.test(src))
+    context.report({ message: "Security code must gate operations through PolicyControlBlock." });
+}
+```
+
+---
+
+# 🧪 3. CI/Pre-Commit Integration
+
+Add to `package.json`:
+
+```json
+"scripts": {
+  "lint": "eslint . --ext .js,.mjs --max-warnings 0",
+  "precommit": "npm run lint"
+}
+```
+
+Use **Husky** or **simple-git-hooks** to run it on every commit.
+
+Add a GitHub Action:
+
+```yaml
+# .github/workflows/lint.yml
+name: Lint
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - run: npm run lint
+```
+
+---
+
+# 🧮 4. Dynamic Enforcement (Runtime)
+
+Static linting prevents mistakes before merge; runtime enforcement ensures compliance **in production**.
+
+### A. Async Policy Hook
+
+Add a lightweight validator inside `AsyncOrchestrator`:
+
+```js
+if (!stateManager.managers.policyControl.validateAsyncContext(label)) {
+  forensicLogger.logAuditEvent("ASYNC_POLICY_VIOLATION", { label });
+  throw new Error(`Async operation ${label} blocked by policy.`);
+}
+```
+
+### B. Forensic Double-Entry Detection
+
+In `ForensicLogger.logAuditEvent()`:
+
+```js
+if (recentEvents.has(eventId)) {
+  metricsRegistry.increment("forensic.duplicate");
+  return; // drop duplicate manual log
+}
+```
+
+### C. Plugin Registration Enforcement
+
+Require digital signatures on all plugin manifests:
+
+```js
+if (!verifySignature(plugin.manifest, plugin.signature))
+  throw new Error(`Unverified plugin: ${plugin.name}`);
+```
+
+---
+
+# 🔒 5. Repository Compliance Gates
+
+| Layer          | Gate                     | Enforcement                               |
+| -------------- | ------------------------ | ----------------------------------------- |
+| **Pre-commit** | ESLint rules             | Blocks uninstrumented async / manual logs |
+| **CI**         | Lint + Coverage Matrix   | Fails PR if coverage < threshold          |
+| **Runtime**    | PolicyControlBlock       | Rejects illegal async ops                 |
+| **Audit Logs** | Duplicate event detector | Drops redundant forensic events           |
+| **Plugins**    | Manifest signature check | Prevents rogue plugins                    |
+
+---
+
+# 📊 6. Coverage Matrix Check (Automated)
+
+Use your earlier generator (`scripts/generate-audit-embedding-matrix.mjs`):
+
+* CI runs it on every PR.
+* Parse summary line:
+
+  ```bash
+  grep "Summary:" docs/audit/audit_embedding_matrix.md
+  ```
+* Fail if missing coverage > 0.
+
+Example gate:
+
+```yaml
+- name: Verify Audit Coverage
+  run: |
+    node scripts/generate-audit-embedding-matrix.mjs .
+    if grep -q "Missing (of" docs/audit/audit_embedding_matrix.md; then
+      echo "❌ Audit coverage incomplete"; exit 1;
+    fi
+```
+
+---
+
+# 🧠 7. Developer Experience Enhancements
+
+* **VSCode integration:** add ESLint + status bar indicator
+* **Pre-commit hints:** short message, e.g.,
+  “⚠️ Async function detected without orchestration — wrap it or disable rule locally.”
+* **Auto-fix suggestions:** optionally wrap simple async calls in `AsyncHelper.wrap()`.
+
+---
+
+# 🧩 8. Long-Term Maintenance
+
+| Task                         | Frequency          | Owner                    |
+| ---------------------------- | ------------------ | ------------------------ |
+| Lint rule updates (new APIs) | Each minor release | Core security maintainer |
+| Audit coverage report        | Every PR / nightly | CI                       |
+| Plugin manifest verification | Startup            | SystemBootstrap          |
+| Policy validation review     | Quarterly          | Compliance lead          |
+
+---
+
+### ✅ TL;DR
+
+* Add **ESLint rules** for async orchestration, forensic/metric deprecation, and policy gating.
+* Enforce via **pre-commit hooks** and **CI**.
+* Add **runtime policy enforcement** inside `AsyncOrchestrator`.
+* Maintain **coverage matrix checks** as part of CI.
+* Require **signed plugin manifests** for runtime safety.
+
+---
+
+Would you like me to generate the complete ESLint plugin folder structure (`eslint-plugin-nodus-rules/` with index.js + these three rules ready to copy into your repo)?
+
+
+
+Excellent — your current setup already implements almost everything needed for the new enforcement framework.
+Here’s how what you have fits together with the orchestration model and what minor upgrades will finalize it.
+
+---
+
+## 🧩 1. What You Already Have
+
+| File                                               | Purpose                                                                  | Status                                     |
+| -------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------ |
+| **`eslint.config.js`**                             | Central ESLint flat config (v9 style) with CopilotGuard + Nodus plugin   | ✅ Modern, solid foundation                 |
+| **`.eslint-allowlist.json`**                       | Exception registry for specific safe HTML/fetch/mutations                | ✅ Matches current security model           |
+| **`.eslint.config.exception.js`**                  | Loads allowlist, applies CopilotGuard overrides                          | ✅ Correctly wired                          |
+| **`.eslint-override.ci.json`**                     | CI mode relaxations (warn forensic, enforce no-insecure-api)             | ✅ Ideal for staging pipelines              |
+| **`agent.json`**                                   | Enforcement & philosophy manifest; used for alignment & doc generation   | ✅ Matches Nodus mandates                   |
+| **`tools/eslint-plugin-copilot-guard` (index.js)** | Custom security plugin (forensic enforcement, dependency blocking, etc.) | ✅ Already enforces your Developer Mandates |
+
+In other words:
+You’re not missing enforcement — you already have *first-generation enforcement*.
+You just need to **evolve it to recognize the new modular async system** and **retire manual forensic requirements** where automation now applies.
+
+---
+
+## ⚙️ 2. What Needs to Change (High Level)
+
+### 🔧 A. Update the ESLint Plugin Rules
+
+You don’t need to add an entirely new plugin — just modernize `eslint-plugin-copilot-guard`:
+
+| Rule                        | Update Needed | New Behavior                                                                                                      |
+| --------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `require-forensic-envelope` | ✅ Update      | Skip warning for functions already running under `AsyncOrchestrator` or `BindEngine_v2` (detected by import/use). |
+| `no-insecure-api`           | ✅ Minor       | Keep as is — continues blocking raw `fetch`, `innerHTML`, etc.                                                    |
+| `no-runtime-dependencies`   | ✅ Keep        | Already compliant with Nodus “no external runtime deps” mandate.                                                  |
+| `require-jsdoc-and-tests`   | ⚙️ Optional   | Keep, but may auto-ignore generated plugin stubs.                                                                 |
+
+✅ Outcome: You still enforce forensic envelopes on low-level mutators (like `save*()`),
+but **skip** enforcement in modules that automatically create forensic envelopes (AsyncOrchestrator, BindEngine, etc.).
+
+---
+
+### 🔧 B. Modify `.eslint-allowlist.json`
+
+Add the orchestration and UI engines to `unsafeMutations` since they *intentionally* mutate DOM/state but do so safely:
+
+```json
+"unsafeMutations": [
+  "src/core/ui/BindEngine_v2.js",
+  "src/core/async/AsyncOrchestrator.js",
+  "src/core/async/plugins/*"
+]
+```
+
+This tells CopilotGuard:
+
+> “Don’t flag these files for manual forensic calls — they are automatically instrumented.”
+
+---
+
+### 🔧 C. Add New Rules (Optional)
+
+Add these to your `nodus` or `copilotGuard` plugin:
+
+#### 1. `require-async-orchestration`
+
+Ensure all async code uses the orchestrator:
+
+```js
+"nodus/require-async-orchestration": [
+  "error",
+  { "allowIn": ["tests/", "scripts/"] }
+]
+```
+
+#### 2. `no-manual-forensics`
+
+Deprecate manual calls in orchestrated code:
+
+```js
+"nodus/no-manual-forensics": "error"
+```
+
+These two additions enforce your “no manual audit in orchestrated zones” rule.
+
+---
+
+### 🔧 D. Integrate Runtime Self-Enforcement
+
+Inside `AsyncOrchestrator`:
+
+```js
+if (!context.fromOrchestrator && !context.policyBypass) {
+  forensicLogger.logAuditEvent("ASYNC_POLICY_VIOLATION", { label });
+  throw new Error("Async operation executed without orchestration context");
+}
+```
+
+This guarantees runtime compliance even if linting is bypassed.
+
+---
+
+## 🧮 3. Enforcement Levels
+
+| Environment             | Lint Config                | Rule Strength                                   |
+| ----------------------- | -------------------------- | ----------------------------------------------- |
+| **Development**         | `.eslint.config.js`        | Strict (`error` for forensic / insecure / deps) |
+| **CI**                  | `.eslint-override.ci.json` | Forensic = `warn` (to avoid false positives)    |
+| **Security Audit Mode** | `ESLINT_MODE="audit"`      | All rules = `error`, enforce full scan          |
+
+✅ Your pipeline can switch between these easily.
+
+---
+
+## 🔐 4. Integration With New Async Architecture
+
+| Component                                            | Enforcement Mechanism             | ESLint Treatment                                     |
+| ---------------------------------------------------- | --------------------------------- | ---------------------------------------------------- |
+| `AsyncOrchestrator`                                  | Runtime orchestration enforcement | Allowlisted in unsafeMutations                       |
+| `ForensicPlugin`, `MetricsPlugin`, `EmbeddingPlugin` | Plugin-managed auditing           | ESLint ignores require-forensic-envelope             |
+| `BindEngine_v2`                                      | UI forensic + metrics             | Allowlisted under unsafeMutations                    |
+| `SecurityManager`, `PolicyControlBlock`              | Manual forensic required          | ESLint still enforces forensic envelope rule         |
+| `StateUIBridge`, `HybridStateManager`                | Async orchestrated                | Enforce require-async-orchestration, ignore forensic |
+| `scripts/` & `tests/`                                | Partial enforcement               | Rules downgraded via `.eslint-override.ci.json`      |
+
+---
+
+## 🧠 5. Enforcement Philosophy Alignment
+
+✅ **Agent.json** already codifies this philosophy perfectly.
+Update its `mandatory_rules` to reflect the new reality:
+
+```json
+"mandatory_rules": [
+  "All state mutations must be executed through AsyncOrchestrator or BindEngine.",
+  "All network calls must use SecureFetch or CDSProxy.",
+  "No direct ForensicLogger or MetricsRegistry calls outside core plugins.",
+  "No runtime dependencies (zero external packages).",
+  "All public methods require JSDoc and forensic classification notes."
+]
+```
+
+---
+
+## 🧰 6. Recommended Repo Structure Adjustment
+
+Add this directory:
+
+```
+/tools/eslint-plugin-nodus/
+├─ index.js                # new rules: require-async-orchestration, no-manual-forensics
+├─ rules/
+│  ├─ require-async-orchestration.js
+│  ├─ no-manual-forensics.js
+└─ package.json            # metadata
+```
+
+Then import both plugins in `eslint.config.js`:
+
+```js
+plugins: {
+  nodus: nodusPlugin,
+  copilotGuard: copilotGuardPlugin,
+},
+```
+
+---
+
+## ✅ 7. Resulting Behavior
+
+| Developer Action                            | Lint Reaction                                  | Runtime Reaction                |
+| ------------------------------------------- | ---------------------------------------------- | ------------------------------- |
+| Writes raw `fetch()`                        | ❌ ESLint error (`no-insecure-api`)             | N/A                             |
+| Creates async function outside orchestrator | ❌ ESLint error (`require-async-orchestration`) | Runtime policy block            |
+| Adds manual forensicLogger call in UI       | ❌ ESLint error (`no-manual-forensics`)         | Redundant logs prevented        |
+| Uses core orchestrator or BindEngine        | ✅ Allowed                                      | Forensics handled automatically |
+| Introduces runtime dependency               | ❌ ESLint error (`no-runtime-dependencies`)     | N/A                             |
+
+---
+
+## 🚀 TL;DR Migration Checklist
+
+1. ✅ Keep all your current ESLint + CopilotGuard configs.
+2. 🔧 Add `nodus/require-async-orchestration` and `nodus/no-manual-forensics`.
+3. 🧾 Update allowlist: add orchestrator & BindEngine.
+4. 🔒 Update `agent.json` mandates (reflect automation).
+5. 🧪 Add runtime validation in orchestrator.
+6. 🧰 Add CI gate for `generate-audit-embedding-matrix.mjs`.
+7. 🎯 Enforce developer onboarding: “Never manually call forensicLogger, metricsRegistry, or embeddingManager.”
+
+---
+
+Would you like me to generate the **`eslint-plugin-nodus` folder** (with `index.js` + both rule files ready to drop into `/tools/`) that integrates cleanly with your existing `eslint.config.js` and CopilotGuard setup?

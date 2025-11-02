@@ -176,6 +176,10 @@ export default [
 
 			// --- Custom Project Rules ---
 			"nodus/no-direct-core-instantiation": "error",
+			// Enforce new orchestration model
+			"nodus/require-async-orchestration": "error",
+			"nodus/no-manual-forensics": "error",
+
 			// --- Copilot Rules ---
 			"copilotGuard/no-insecure-api": "error",
 			"copilotGuard/require-jsdoc-and-tests": "off",

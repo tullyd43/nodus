@@ -1,34 +1,18 @@
+import { AsyncHelper } from "@shared/lib/AsyncHelper.js";
+import { SafeDOM } from "@shared/lib/SafeDOM.js";
+
 /**
  * @class StateUIBridge
- * @description Bridges the HybridStateManager event bus with UI helpers so vanilla bindings stay coherent.
+ * @description Bridges HybridStateManager events with vanilla UI helpers so the grid, BindEngine, and DOM bindings stay in sync.
  * @privateFields {#stateManager, #logger, #gridSubscriptions, #domBridgeUnsubscribe, #bindEngine}
  */
-import { ForensicLogger } from "@platform/security/ForensicLogger.js";
-
 export class StateUIBridge {
-	/**
-	 * @private
-	 * @type {import('../core/HybridStateManager.js').HybridStateManager}
-	 * The central state management instance.
-	 */
-	#stateManager;
-
-	/**
-	 * @private
-	 * @type {import('../core/services/ForensicLogger.js').ForensicLogger|null}
-	 * The centralized logging service.
-	 */
-	#logger;
-
-	#gridSubscriptions = new Set();
-	#domBridgeUnsubscribe = null;
-	#bindEngine = null;
-
 	/**
 	 * Creates an instance of StateUIBridge.
 	 * @param {import('../core/HybridStateManager.js').HybridStateManager} stateManager - The central state management instance.
 	 */
 	constructor(stateManager) {
+		if (!stateManager) throw new Error("StateUIBridge requires a stateManager instance.");
 		this.#stateManager = stateManager;
 		this.#logger = stateManager?.forensicLogger ?? null;
 	}
@@ -36,7 +20,7 @@ export class StateUIBridge {
 	/**
 	 * Binds StateManager events to a grid component to keep it synchronized in real-time.
 	 * @param {object} grid - The grid component instance to bind, which should expose `refreshRow`, `removeRow`, and `refresh` methods.
-	 * @returns {() => void} Cleanup callback.
+	 * @returns {() => void} Cleanup callback that removes the subscriptions.
 	 */
 	bindGrid(grid) {
 		if (!this.#stateManager || !grid?.refreshRow || !grid?.removeRow) {
@@ -64,46 +48,14 @@ export class StateUIBridge {
 			saved?.();
 			deleted?.();
 			synced?.();
+			this.#gridSubscriptions.delete(cleanup);
 		};
-		this.#registerGridCleanup(cleanup);
+		this.#gridSubscriptions.add(cleanup);
 		return cleanup;
 	}
 
 	/**
-	 * Handles the 'entitySaved' event to refresh a grid row.
-	 * @private
-	 * @param {object} grid - The grid component instance.
-	 * @param {{store: string, item: object}} eventData - The event payload.
-	 */
-	#handleEntitySaved(grid, { store, item }) {
-		if (store === "objects") {
-			grid.refreshRow(item);
-		}
-	}
-
-	/**
-	 * Handles the 'entityDeleted' event to remove a grid row.
-	 * @private
-	 * @param {object} grid - The grid component instance.
-	 * @param {{store: string, id: string}} eventData - The event payload.
-	 */
-	#handleEntityDeleted(grid, { store, id }) {
-		if (store === "objects") {
-			grid.removeRow(id);
-		}
-	}
-
-	/**
-	 * Handles the 'syncCompleted' event to refresh the entire grid.
-	 * @private
-	 * @param {object} grid - The grid component instance.
-	 */
-	#handleSyncCompleted(grid) {
-		grid.refresh?.();
-	}
-
-	/**
-	 * Registers the active BindEngine so the bridge can delegate binding work.
+	 * Registers the active BindEngine so the bridge can reuse it when present.
 	 * @param {import('../../features/ui/BindEngine.js').default|null} bindEngine
 	 * @returns {void}
 	 */
@@ -112,30 +64,45 @@ export class StateUIBridge {
 	}
 
 	/**
-	 * Enables a lightweight DOM bridge mirroring `stateChange` events onto `[data-bind]` elements.
+	 * Enables a lightweight DOM bridge mirroring `stateChange` events to `[data-bind]` elements.
 	 * @param {object} [options]
-	 * @param {ParentNode} [options.root=document]
-	 * @param {boolean} [options.updateInputs=false]
+	 * @param {ParentNode} [options.root=document] - Root node used for query selection.
+	 * @param {boolean} [options.updateInputs=false] - Whether to push values into form controls (skipping the focused element).
 	 * @returns {() => void} Cleanup callback.
 	 */
 	enableDomBridge({ root = document, updateInputs = false } = {}) {
 		this.disableDomBridge();
-		if (
-			!root?.querySelectorAll ||
-			typeof this.#stateManager?.on !== "function"
-		) {
+		if (!root?.querySelectorAll || typeof this.#stateManager?.on !== "function") {
 			return () => {};
 		}
 
 		const handler = ({ path, value }) => {
-			// V8.0 Parity: Delegate binding updates to the BindEngine, which is the
-			// single source of truth for UI-state binding logic.
-			if (this.#bindEngine) {
+			// If a BindEngine is available, delegate fine-grained updates to it.
+			if (typeof this.#bindEngine?.updateBinding === "function") {
 				this.#bindEngine.updateBinding(path, value);
+				return;
+			}
+
+			const targets = root.querySelectorAll?.(`[data-bind="${path}"]`);
+			if (!targets || targets.length === 0) return;
+			for (const el of targets) {
+				const isFormControl =
+					updateInputs &&
+					el &&
+					el.nodeType === 1 &&
+					typeof el.matches === "function" &&
+					el.matches("input, textarea, select");
+				if (isFormControl) {
+					if (document.activeElement !== el) {
+						el.value = value == null ? "" : String(value);
+					}
+				} else {
+					SafeDOM.setText(el, value == null ? "" : String(value));
+				}
 			}
 		};
 
-		const unsubscribe = this.#stateManager.on("state:changed", handler);
+		const unsubscribe = this.#stateManager.on("stateChange", handler);
 		this.#domBridgeUnsubscribe = () => {
 			unsubscribe?.();
 			this.#domBridgeUnsubscribe = null;
@@ -153,7 +120,7 @@ export class StateUIBridge {
 	}
 
 	/**
-	 * Emits a UI-driven state update and records a forensic envelope.
+	 * Emits a UI-driven state update (with forensic logging best-effort).
 	 * @param {string} path
 	 * @param {any} value
 	 * @param {object} [options]
@@ -166,25 +133,25 @@ export class StateUIBridge {
 		value,
 		{ eventType = "UI_STATE_CHANGE", actorId = "ui.bridge" } = {}
 	) {
-		// V8.0 Parity: Mandate 2.4 - Statically call createEnvelope to satisfy CI gate.
-		// This ensures an auditable event is created for all UI-driven state mutations.
-		ForensicLogger.createEnvelope({
-			actorId,
-			action: eventType,
-			target: path,
-		}).catch(() => {
-			/* fire-and-forget to satisfy linter */
-		});
-		try {
-			await this.#logger?.createEnvelope?.(
-				eventType,
-				{ path, value },
-				{ actorId }
-			);
-		} catch {
-			/* forensic logging is best-effort */
+		if (!path) return undefined;
+		const setter = this.#stateManager?.set;
+		if (typeof setter !== "function") {
+			return undefined;
 		}
-		return this.#stateManager?.set?.(path, value);
+
+		return AsyncHelper.wrap(
+			() => setter.call(this.#stateManager, path, value),
+			{
+				stateManager: this.#stateManager,
+				label: `ui.state.update.${path}`,
+				eventType,
+				actorId,
+				meta: {
+					path,
+					source: "StateUIBridge.updateState",
+				},
+			}
+		);
 	}
 
 	/**
@@ -204,11 +171,27 @@ export class StateUIBridge {
 		this.#bindEngine = null;
 	}
 
-	#registerGridCleanup(cleanup) {
-		if (typeof cleanup === "function") {
-			this.#gridSubscriptions.add(cleanup);
+	#handleEntitySaved(grid, { store, item }) {
+		if (store === "objects") {
+			grid.refreshRow(item);
 		}
 	}
+
+	#handleEntityDeleted(grid, { store, id }) {
+		if (store === "objects") {
+			grid.removeRow(id);
+		}
+	}
+
+	#handleSyncCompleted(grid) {
+		grid.refresh?.();
+	}
+
+	#stateManager;
+	#logger;
+	#gridSubscriptions = new Set();
+	#domBridgeUnsubscribe = null;
+	#bindEngine = null;
 }
 
 export default StateUIBridge;

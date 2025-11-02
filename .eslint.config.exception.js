@@ -18,5 +18,17 @@ export default {
 			"error",
 			{ allowMutations: allowlist.unsafeMutations },
 		],
+		"nodus/require-async-orchestration": [
+			"error",
+			{
+				allowIn: allowlist.allowUnorchestratedAsync,
+			},
+		],
+		"nodus/no-manual-forensics": [
+			"error",
+			{
+				allowIn: allowlist.allowManualForensics,
+			},
+		],
 	},
 };

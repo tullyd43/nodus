@@ -115,16 +115,13 @@ export default class BindEngine {
 		// Reactivity: listen to state changes
 		const events = ["stateChanged", "state:changed", "stateChange"];
 		for (const evtName of events) {
-			const maybeUnsub = this.#deps.stateManager.on?.(
-				evtName,
-				(evt) => {
-					try {
-						this.#onStateChanged(evt);
-					} catch {
-						/* swallow to avoid UI lock */
-					}
+			const maybeUnsub = this.#deps.stateManager.on?.(evtName, (evt) => {
+				try {
+					this.#onStateChanged(evt);
+				} catch {
+					/* swallow to avoid UI lock */
 				}
-			);
+			});
 			if (typeof maybeUnsub === "function") {
 				this.#stateUnsubscribes.push(maybeUnsub);
 			}
@@ -233,6 +230,107 @@ export default class BindEngine {
 		if (!meta) return;
 		meta.unsub?.();
 		this.#bindings.delete(el);
+	}
+
+	/**
+	 * Updates all registered elements bound to the provided path.
+	 * Used by StateUIBridge as a lightweight fallback when the state manager
+	 * emits coarse-grained change events.
+	 *
+	 * @public
+	 * @async
+	 * @function updateBinding
+	 * @memberof BindEngine
+	 * @param {string} path - Dot-notation path tracked by the binding.
+	 * @param {any} value - Optional value override; when omitted the current state value is used.
+	 * @returns {Promise<void>}
+	 */
+	async updateBinding(path, value) {
+		if (!path) return;
+
+		await this.#withForensicEnvelope(
+			"UI_BIND_UPDATE_COARSE",
+			{
+				path,
+				source: "StateUIBridge",
+			},
+			async () => {
+				for (const [el, meta] of this.#bindings) {
+					if (meta.path !== path) continue;
+					const nextVal =
+						value !== undefined
+							? value
+							: this.#deps.stateManager.get?.(path);
+					try {
+						await this.#safeRender(el, path, nextVal, meta.opts);
+					} catch {
+						/* noop - rendering is best-effort */
+					}
+				}
+			}
+		);
+	}
+
+	/**
+	 * Wraps an operation in a forensic logging envelope that captures classification metadata.
+	 *
+	 * @template T
+	 * @private
+	 * @param {string} type Envelope event type.
+	 * @param {Record<string, any>} payload Additional envelope payload metadata.
+	 * @param {() => Promise<T>|T} operation Operation to execute while the envelope is active.
+	 * @returns {Promise<T>} Resolves with the operation result.
+	 */
+	async #withForensicEnvelope(type, payload, operation) {
+		/* copilotGuard:require-forensic-envelope */
+		const logger = this.#deps.forensicLogger;
+		if (!logger?.createEnvelope || !logger?.commitEnvelope) {
+			return await operation();
+		}
+
+		const label =
+			payload?.path != null
+				? this.#labelForPath(payload.path)
+				: { level: "unclassified", compartments: new Set() };
+
+		const envelopePayload = {
+			...payload,
+			classification: {
+				level: label.level,
+				compartments: Array.from(label.compartments || []),
+			},
+		};
+
+		let envelopeTask;
+		try {
+			envelopeTask = logger.createEnvelope(type, envelopePayload);
+		} catch {
+			return await operation();
+		}
+		if (!envelopeTask) {
+			return await operation();
+		}
+
+		let result;
+		try {
+			result = await operation();
+		} catch (error) {
+			try {
+				const env = await envelopeTask;
+				await logger.commitEnvelope(env);
+			} catch {
+				/* envelope commit best-effort */
+			}
+			throw error;
+		}
+
+		try {
+			const env = await envelopeTask;
+			await logger.commitEnvelope(env);
+		} catch {
+			/* commit best-effort */
+		}
+		return result;
 	}
 
 	// ---------------------------------------------------------------------------

@@ -2,13 +2,14 @@
 import { DeveloperDashboard } from "@features/dashboard/DeveloperDashboard.js";
 import { SystemBootstrap } from "@platform/bootstrap/SystemBootstrap.js";
 import { ForensicLogger } from "@platform/security/ForensicLogger.js";
+import StateUIBridge from "@platform/state/StateUIBridge.js";
 
 import { AppConfig } from "./environment.config.js";
 
 import SecurityExplainer from "@/features/security/SecurityExplainer.js";
 import { ActionDispatcher } from "@/features/ui/ActionDispatcher.js";
 import BindEngine from "@/features/ui/BindEngine.js";
-import StateUIBridge from "@platform/state/StateUIBridge.js";
+
 // Use the SecurityExplainer implementation under features/security (you provided this file)
 
 // Platform bootstrap & security
@@ -595,14 +596,15 @@ try {
 
      */
 
-		if (shouldExpose) {
-			const exposed = {
-				state: stateManager,
-				hud,
-				vlist,
-				dashboard,
-				capabilities: window.__nodusCapabilities || {},
-			};
+	if (shouldExpose) {
+		const exposed = {
+			state: stateManager,
+			hud,
+			vlist,
+			dashboard,
+			uiBridge,
+			capabilities: window.__nodusCapabilities || {},
+		};
 			Object.freeze?.(exposed);
 			Object.defineProperty(window, "Nodus", {
 				value: exposed,
@@ -625,22 +627,27 @@ try {
    */
 
 	if (import.meta.hot) {
-		import.meta.hot.dispose(() => {
-			try {
-				vlist?.unmount?.();
-			} catch {
-				/* noop */
-			}
-			try {
-				hud?.dispose?.();
-			} catch {
-				/* noop */
-			}
-			try {
-				window.nodusApp?.dispose?.();
-			} catch {
-				/* noop */
-			}
+	import.meta.hot.dispose(() => {
+		try {
+			vlist?.unmount?.();
+		} catch {
+			/* noop */
+		}
+		try {
+			hud?.dispose?.();
+		} catch {
+			/* noop */
+		}
+		try {
+			uiBridge?.dispose?.();
+		} catch {
+			/* noop */
+		}
+		try {
+			window.nodusApp?.dispose?.();
+		} catch {
+			/* noop */
+		}
 			try {
 				uiBridge.disableDomBridge();
 			} catch {

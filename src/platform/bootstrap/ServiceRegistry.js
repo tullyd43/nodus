@@ -19,6 +19,7 @@ import { ManifestPluginSystem } from "@platform/extensions/ManifestPluginSystem.
 import { DatabaseOptimizer } from "@platform/optimization/DatabaseOptimizer.js";
 import { OptimizationAccessControl } from "@platform/optimization/OptimizationAccessControl.js";
 import { ConditionRegistry } from "@platform/rules/ConditionRegistry.js";
+import { AsyncOrchestrationService } from "@platform/services/AsyncOrchestrationService.js";
 import { CrossDomainSolution } from "@platform/security/CDS.js";
 import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 import { InMemoryKeyring } from "@platform/security/keyring/Keyring.js";
@@ -63,6 +64,7 @@ const CORE_LOGIC_SERVICES = {
 	componentRegistry: ComponentDefinitionRegistry,
 	eventFlowEngine: EventFlowEngine,
 	policies: SystemPolicies,
+	asyncOrchestrator: AsyncOrchestrationService,
 	validationLayer: ValidationLayer,
 };
 
@@ -177,6 +179,7 @@ export class ServiceRegistry {
 			"policies", // Policies can depend on other core services for validation context.
 			"validationLayer",
 			"eventFlowEngine", // Depends on registries being available.
+			"asyncOrchestrator",
 			// 4. Application Services: Depends on core logic.
 			"queryService", // Must be available for services that load data, like plugins.
 			"plugin", // Depends on queryService to load manifests.

@@ -650,6 +650,7 @@ export class HybridStateManager {
 		 *   actionHandler: import('./ActionHandlerRegistry.js').ActionHandlerRegistry,
 		 *   componentRegistry: import('./ComponentDefinition.js').ComponentDefinitionRegistry,
 		 *   eventFlowEngine: import('./EventFlowEngine.js').EventFlowEngine,
+		 *   asyncOrchestrator: import('../services/AsyncOrchestrationService.js').AsyncOrchestrationService,
 		 *   validationLayer: import('./storage/ValidationLayer.js').ValidationLayer,
 		 *   plugin: import('./ManifestPluginSystem.js').ManifestPluginSystem,
 		 *   embeddingManager: import('../state/EmbeddingManager.js').EmbeddingManager,
@@ -679,6 +680,7 @@ export class HybridStateManager {
 			buildingBlockRenderer: null,
 			queryService: null,
 			eventFlowEngine: null,
+			asyncOrchestrator: null,
 			componentRegistry: null, // NEW: Component Definition Registry
 			conditionRegistry: null,
 			actionHandler: null,
