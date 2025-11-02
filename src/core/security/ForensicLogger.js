@@ -175,7 +175,7 @@ export class ForensicLogger {
 
 		this.#registerStorageReadyListener();
 		console.warn(
-			"[ForensicLogger] Storage not ready; buffering audit events until storageReady."
+			`[ForensicLogger] Storage not ready; buffering audit events until storageReady. (buffered=${this.#inMemoryBuffer.length})`
 		);
 		return this;
 	}
@@ -438,6 +438,9 @@ export class ForensicLogger {
 			this.#stateManager?.emit?.("forensicLogFlushed", {
 				count: eventsToFlush.length,
 			});
+			console.log(
+				`[ForensicLogger] Flushed ${eventsToFlush.length} buffered audit events to storage.`
+			);
 		} catch (error) {
 			this.#errorHelpers?.handleError(error, {
 				component: "ForensicLogger",

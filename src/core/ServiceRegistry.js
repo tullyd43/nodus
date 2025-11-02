@@ -178,6 +178,8 @@ export class ServiceRegistry {
 			"validationLayer",
 			"eventFlowEngine", // Depends on registries being available.
 			// 4. Application Services: Depends on core logic.
+			"queryService", // Must be available for services that load data, like plugins.
+			"plugin", // Depends on queryService to load manifests.
 			"buildingBlockRenderer",
 			"adaptiveRenderer",
 			"extensionManager",
@@ -200,8 +202,6 @@ export class ServiceRegistry {
 		for (const serviceName of INITIALIZATION_ORDER) {
 			await this.get(serviceName);
 		}
-		// Load plugins last, after all core registries are available.
-		await this.get("plugin");
 		console.log("[ServiceRegistry] All core services initialized.");
 	}
 

@@ -612,24 +612,46 @@ export class StorageLoader {
 		if (this.#loadedModules.has(moduleName)) {
 			return this.#loadedModules.get(moduleName);
 		}
+
 		console.log("[StorageLoader] Loading module:", moduleName);
 
-		const url = `${this.#config.baseURL}${moduleName}.js`;
-		try {
-			const mod = await import(/* @vite-ignore */ url);
-			const Klass = mod.default || mod[this.#toPascalCase(moduleName)];
-			if (!Klass) throw new Error("No default or named export found");
-			if (this.#config.cacheModules)
-				this.#loadedModules.set(moduleName, Klass);
-			return Klass;
-		} catch (e) {
-			console.error(
-				"[StorageLoader] Failed to load module",
-				moduleName,
-				e
-			);
-			throw new Error(`Module loading failed: ${moduleName}`);
+		// Try a sequence of candidate paths to support nested organization of modules
+		const candidates = [
+			`${this.#config.baseURL}${moduleName}.js`,
+			`${this.#config.baseURL}encryption/${moduleName}.js`,
+			`${this.#config.baseURL}crypto/${moduleName}.js`,
+			// allow explicit moduleName to already be a path
+			moduleName.endsWith(".js") ? moduleName : `${moduleName}.js`,
+		];
+
+		let lastError = null;
+		for (const url of candidates) {
+			try {
+				console.debug("[StorageLoader] Attempting import:", url);
+				const mod = await import(/* @vite-ignore */ url);
+				const Klass =
+					mod.default || mod[this.#toPascalCase(moduleName)];
+				if (!Klass) throw new Error("No default or named export found");
+				if (this.#config.cacheModules)
+					this.#loadedModules.set(moduleName, Klass);
+				return Klass;
+			} catch (e) {
+				// record and try next candidate
+				lastError = e;
+				console.warn(
+					"[StorageLoader] import attempt failed for",
+					url,
+					e.message || e
+				);
+			}
 		}
+
+		console.error(
+			"[StorageLoader] Failed to load module",
+			moduleName,
+			lastError
+		);
+		throw new Error(`Module loading failed: ${moduleName}`);
 	}
 
 	// ---------------------------------------------------------------------------

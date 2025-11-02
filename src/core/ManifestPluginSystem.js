@@ -17,7 +17,7 @@ import { PluginError } from "../utils/ErrorHelpers.js";
  * to component registration and dependency management.
  */
 export class ManifestPluginSystem {
-	// V8.0 Parity: Mandate 3.1 & 3.2 - All internal properties MUST be private.
+	/** @privateFields {#stateManager, #metrics, #errorHelpers, #forensicLogger, #componentRegistry, #actionHandlerRegistry, #queryService, #loadedPlugins, #pluginManifests, #loadingPromises, #dependencyGraph, #hooks} */
 	/** @private @type {import('./HybridStateManager.js').default} */
 	#stateManager;
 	/** @private @type {import('../utils/MetricsRegistry.js').MetricsRegistry|null} */
@@ -30,6 +30,8 @@ export class ManifestPluginSystem {
 	#componentRegistry = null;
 	/** @private @type {import('./ActionHandlerRegistry.js').ActionHandlerRegistry|null} */
 	#actionHandlerRegistry = null;
+	/** @private @type {import('../state/QueryService.js').QueryService|null} */
+	#queryService = null;
 	/** @private @type {Map<string, object>} */
 	#loadedPlugins = new Map();
 	/** @private @type {Map<string, object>} */
@@ -95,6 +97,41 @@ export class ManifestPluginSystem {
 		return this.#errorHelpers.tryOr(
 			async () => {
 				// Load plugin manifests from stored entities
+				// Use the ServiceRegistry exposed by the state manager to obtain services.
+				this.#queryService =
+					await this.#stateManager.serviceRegistry.get(
+						"queryService"
+					);
+
+				// If neither QueryService provides a DB-like `query` API nor the
+				// storage.instance is currently exposing query/getAll, wait for the
+				// storage system to become ready. This ensures plugin manifests can
+				// be loaded from persistent storage when running in full-app mode.
+				const hasQueryApi =
+					typeof this.#queryService?.query === "function" ||
+					(Boolean(this.#stateManager?.storage?.instance) &&
+						(typeof this.#stateManager.storage.instance.query ===
+							"function" ||
+							typeof this.#stateManager.storage.instance
+								.getAll === "function"));
+				if (!hasQueryApi && this.#stateManager?.on) {
+					// Wait until storageReady event fires
+					await new Promise((resolve) => {
+						const unsub = this.#stateManager.on(
+							"storageReady",
+							() => {
+								try {
+									unsub();
+								} catch (_) {
+									void _;
+									/* noop - best-effort unsubscribe */
+								}
+								resolve();
+							}
+						);
+					});
+				}
+
 				await this.#loadPluginManifests();
 
 				// Load enabled plugins
@@ -124,12 +161,48 @@ export class ManifestPluginSystem {
 		return this.#errorHelpers.tryOr(
 			async () => {
 				// Use the correct storage query method as per the V8.0 Global Contracts
-				const manifestEntities =
-					await this.#stateManager.storage.instance.query(
+				if (!this.#queryService) {
+					throw new Error("QueryService is not available.");
+				}
+				let manifestEntities = [];
+				// Primary: QueryService may provide a query abstraction (DB-like) — use it if present
+				if (typeof this.#queryService.query === "function") {
+					manifestEntities = await this.#queryService.query(
 						"objects",
-						"entity_type",
-						"plugin_manifest"
+						{ where: { entity_type: "plugin_manifest" } }
 					);
+				} else if (
+					this.#stateManager?.storage?.instance &&
+					typeof this.#stateManager.storage.instance.query ===
+						"function"
+				) {
+					// ModularOfflineStorage.query(storeName, index, value)
+					const rows =
+						await this.#stateManager.storage.instance.query(
+							"objects",
+							"entity_type",
+							"plugin_manifest"
+						);
+					// Storage returns decrypted rows; wrap to match expected entity shape
+					manifestEntities = (rows || []).map((r) => ({ data: r }));
+				} else if (
+					this.#stateManager?.storage?.instance &&
+					typeof this.#stateManager.storage.instance.getAll ===
+						"function"
+				) {
+					// Fallback: get all and filter in-memory
+					const all =
+						await this.#stateManager.storage.instance.getAll(
+							"objects"
+						);
+					manifestEntities = (all || [])
+						.filter((x) => x?.entity_type === "plugin_manifest")
+						.map((d) => ({ data: d }));
+				} else {
+					throw new Error(
+						"No storage/query API available to load plugin manifests."
+					);
+				}
 
 				/**
 

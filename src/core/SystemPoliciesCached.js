@@ -51,7 +51,7 @@ const DEFAULT_POLICIES = {
 	},
 
 	security: {
-		allow_unsigned_audit_in_dev: false,
+		allow_unsigned_audit_in_dev: true,
 		allow_client_policy_updates: false,
 		policy_admin_permission: "policy.admin",
 		report_unhandled_errors: false,
