@@ -1,7 +1,7 @@
 // src/core/storage/modules/sync-stack.js
 // SyncStack — a thin orchestrator over pluggable sync strategies.
 
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
+import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 
 import { AppError } from "../../shared/lib/ErrorHelpers.js";
 // No private class fields (avoids eslint/parser issues). Fully JSDoc’d.

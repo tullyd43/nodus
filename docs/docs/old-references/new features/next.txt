@@ -349,6 +349,8 @@ That ensures:
 * Forensic: “SERVICE_START” envelope already recorded
 * Policy enforcement: Observability depth/sampling applied
 
+> **Lifecycle alignment:** The same plugin contract powers both gateways. Every run (ActionDispatcher or AsyncOrchestrator) now executes `before → after/error/skip → settled`, so registering `ForensicPlugin`, `MetricsPlugin`, or future hooks once guarantees the sync UI layer inherits the exact forensic and policy treatment as async jobs.
+
 ---
 
 ### Step 3 — Register `BindEngine` as a “UI Plugin”
@@ -360,10 +362,10 @@ class BindPlugin {
   priority = 40;
   constructor(bindEngine) { this.bindEngine = bindEngine; }
 
-  onSuccess(ctx, result) {
+  after(ctx, result) {
     this.bindEngine?.deps?.metrics?.increment?.("async.bind.success");
   }
-  onFailure(ctx, error) {
+  error(ctx, error) {
     this.bindEngine?.deps?.metrics?.increment?.("async.bind.failure");
   }
 }
@@ -567,23 +569,27 @@ Enable it in `.eslintrc.cjs`:
 
 ---
 
-### Rule 2 — `no-manual-forensics`
+### Rule 2 — `no-manual-platform-calls`
 
-Blocks direct forensic calls in forbidden layers (e.g., `BindState`, `UI`, etc.).
+Blocks direct forensic, metrics, or state event calls in forbidden layers (e.g., `BindState`, `UI`, synchronous helpers). Forces developers to route through `ActionDispatcher`, `AsyncOrchestrationService`, or `this.#run`.
 
 ```js
 export default {
-  meta: { type: "problem", docs: { description: "Disallow manual forensic/metric calls" } },
+  meta: { type: "problem", docs: { description: "Disallow manual platform service calls" } },
   create(context) {
+    const forbidden = [
+      { matcher: /\bforensicLogger\.(createEnvelope|logAuditEvent)\b/, message: "Use orchestrated forensic envelopes." },
+      { matcher: /\bmetricsRegistry\.(increment|timer|gauge|decrement)\b/, message: "Emit metrics via MetricsPlugin hooks." },
+      { matcher: /\bstateManager\.emit\b/, message: "Emit state events through ActionDispatcher or AsyncOrchestrationService." }
+    ];
     return {
       CallExpression(node) {
         const txt = context.getSourceCode().getText(node);
-        if (/\bforensicLogger\.(createEnvelope|logAuditEvent)\b/.test(txt))
-          context.report({ node, message: "Manual forensicLogger calls are deprecated; use orchestrator/BindEngine." });
-        if (/\bmetricsRegistry\.(increment|timer)\b/.test(txt))
-          context.report({ node, message: "Manual metrics calls are deprecated; use MetricsPlugin." });
-        if (/\bembeddingManager\.createEmbedding\b/.test(txt))
-          context.report({ node, message: "Manual embedding calls are deprecated; use EmbeddingPlugin." });
+        for (const { matcher, message } of forbidden) {
+          if (matcher.test(txt)) {
+            context.report({ node, message });
+          }
+        }
       }
     };
   }
@@ -818,12 +824,12 @@ Ensure all async code uses the orchestrator:
 ]
 ```
 
-#### 2. `no-manual-forensics`
+#### 2. `no-manual-platform-calls`
 
 Deprecate manual calls in orchestrated code:
 
 ```js
-"nodus/no-manual-forensics": "error"
+"nodus/no-manual-platform-calls": "error"
 ```
 
 These two additions enforce your “no manual audit in orchestrated zones” rule.
@@ -893,10 +899,10 @@ Add this directory:
 
 ```
 /tools/eslint-plugin-nodus/
-├─ index.js                # new rules: require-async-orchestration, no-manual-forensics
+├─ index.js                # new rules: require-async-orchestration, no-manual-platform-calls
 ├─ rules/
 │  ├─ require-async-orchestration.js
-│  ├─ no-manual-forensics.js
+│  ├─ no-manual-platform-calls.js
 └─ package.json            # metadata
 ```
 
@@ -917,7 +923,7 @@ plugins: {
 | ------------------------------------------- | ---------------------------------------------- | ------------------------------- |
 | Writes raw `fetch()`                        | ❌ ESLint error (`no-insecure-api`)             | N/A                             |
 | Creates async function outside orchestrator | ❌ ESLint error (`require-async-orchestration`) | Runtime policy block            |
-| Adds manual forensicLogger call in UI       | ❌ ESLint error (`no-manual-forensics`)         | Redundant logs prevented        |
+| Adds manual forensicLogger call in UI       | ❌ ESLint error (`no-manual-platform-calls`)    | Redundant logs prevented        |
 | Uses core orchestrator or BindEngine        | ✅ Allowed                                      | Forensics handled automatically |
 | Introduces runtime dependency               | ❌ ESLint error (`no-runtime-dependencies`)     | N/A                             |
 
@@ -926,7 +932,7 @@ plugins: {
 ## 🚀 TL;DR Migration Checklist
 
 1. ✅ Keep all your current ESLint + CopilotGuard configs.
-2. 🔧 Add `nodus/require-async-orchestration` and `nodus/no-manual-forensics`.
+2. 🔧 Add `nodus/require-async-orchestration` and `nodus/no-manual-platform-calls`.
 3. 🧾 Update allowlist: add orchestrator & BindEngine.
 4. 🔒 Update `agent.json` mandates (reflect automation).
 5. 🧪 Add runtime validation in orchestrator.

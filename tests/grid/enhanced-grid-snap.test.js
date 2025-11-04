@@ -1,28 +1,8 @@
 import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
-import { describe, it, expect, beforeEach } from "vitest";
 
-// Minimal stubs for the stateManager and viewModel used by the renderer
-function makeStateManager() {
-	return {
-		managers: {},
-		metricsRegistry: { namespace: () => ({ increment: () => {} }) },
-		eventFlowEngine: { on: () => {}, emit: () => {} },
-		transaction: (fn) => fn && fn(),
-		recordOperation: () => {},
-		undo: () => {},
-		redo: () => {},
-	};
-}
+import { createContainer, addBlockElement } from "../_helpers.js";
 
-function makeAppViewModel(layout) {
-	return {
-		gridLayoutViewModel: {
-			getCurrentLayout: () => ({ blocks: layout }),
-			updatePositions: () => {},
-		},
-		getCurrentUser: () => ({ id: "test-user" }),
-	};
-}
+/* global describe,it,beforeEach */
 
 describe("EnhancedGridRenderer snap-to-cell helpers", () => {
 	let container;
@@ -32,21 +12,11 @@ describe("EnhancedGridRenderer snap-to-cell helpers", () => {
 
 	beforeEach(() => {
 		// Setup DOM container
-		container = document.createElement("div");
-		container.className = "grid-container";
-		// Make clientWidth available for getCellMetrics
-		Object.defineProperty(container, "clientWidth", {
-			value: 1200,
-			configurable: true,
-		});
-		// Ensure getBoundingClientRect returns meaningful width/height
-		container.getBoundingClientRect = () => ({
-			left: 0,
-			top: 0,
+		container = createContainer({
 			width: 1200,
 			height: 800,
+			clientWidth: 1200,
 		});
-		document.body.appendChild(container);
 
 		// Create a sample layout with one occupied block
 		const layout = [
@@ -54,13 +24,25 @@ describe("EnhancedGridRenderer snap-to-cell helpers", () => {
 		];
 
 		// Add DOM element for existing block
-		const el = document.createElement("div");
-		el.className = "grid-block";
-		el.dataset.blockId = "blockA";
-		container.appendChild(el);
+		addBlockElement(container, "blockA");
 
-		stateManager = makeStateManager();
-		appViewModel = makeAppViewModel(layout);
+		stateManager = {
+			managers: {},
+			metricsRegistry: { namespace: () => ({ increment: () => {} }) },
+			eventFlowEngine: { on: () => {}, emit: () => {} },
+			transaction: (fn) => fn && fn(),
+			recordOperation: () => {},
+			undo: () => {},
+			redo: () => {},
+		};
+
+		appViewModel = {
+			gridLayoutViewModel: {
+				getCurrentLayout: () => ({ blocks: layout }),
+				updatePositions: () => {},
+			},
+			getCurrentUser: () => ({ id: "test-user" }),
+		};
 
 		renderer = new EnhancedGridRenderer(stateManager);
 		renderer.initialize({ container, appViewModel, options: {} });

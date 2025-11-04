@@ -1,4 +1,4 @@
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
+
 
 import RenderContext from "./runtime/RenderContext.js";
 /**
@@ -21,6 +21,14 @@ export class BuildingBlockRenderer {
 	#metrics;
 	/** @private @type {import('../../utils/ErrorHelpers.js').ErrorHelpers|null} */
 	#errorHelpers;
+	/** @private @type {import('../state/HybridStateManager.js').default|null} */
+	#stateManager = null;
+	/** @private @type {import('./BindEngine.js').default|null} */
+	#bindEngine = null;
+	/** @private @type {import('../../platform/actions/ActionDispatcher.js').ActionDispatcher|null} */
+	#actionDispatcher = null;
+	/** @private @type {WeakSet<Element>} */
+	#dispatcherAttachedElements = new WeakSet();
 
 	/**
 	 * @class
@@ -37,11 +45,252 @@ export class BuildingBlockRenderer {
 
 	constructor({ stateManager }) {
 		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from the stateManager.
+		this.#stateManager = stateManager || null;
 		this.#componentRegistry = stateManager.managers.componentRegistry;
 		this.#metrics = stateManager.metricsRegistry?.namespace(
 			"buildingBlockRenderer"
 		);
 		this.#errorHelpers = stateManager.managers.errorHelpers;
+		this.#bindEngine =
+			stateManager.managers?.bindEngine ??
+			stateManager.managers?.stateUIBridge?.getBindEngine?.() ??
+			null;
+		this.#actionDispatcher =
+			stateManager.managers?.actionDispatcher ??
+			stateManager.managers?.actions?.dispatcher ??
+			null;
+	}
+
+	/**
+	 * Factory helper to construct a renderer from the application state manager.
+	 * Keeps callers free from using `new` and makes the module act like a factory
+	 * as required by the Phase 2 refactor plan.
+	 */
+	static create({ stateManager }) {
+		return new BuildingBlockRenderer({ stateManager });
+	}
+
+	/**
+	 * Centralized event wiring. Function handlers are attached directly. Non-function
+	 * handlers (strings/objects) are delegated to the ActionDispatcher so observability
+	 * remains centralized.
+	 */
+	#wireEvents(element, events = {}) {
+		if (!events) return;
+
+		Object.entries(events).forEach(([eventName, handler]) => {
+			if (typeof handler === "function") {
+				element.addEventListener(eventName, handler);
+				return;
+			}
+
+			const descriptor = this.#resolveActionFromHandler(handler);
+			if (!descriptor) return;
+
+			this.#delegateAction(element, descriptor);
+		});
+	}
+
+	#resolveActionFromHandler(handler) {
+		if (!handler) return null;
+
+		if (typeof handler === "string") {
+			return { actionName: handler };
+		}
+
+		if (typeof handler === "object") {
+			const actionName =
+				handler.actionName ?? handler.name ?? handler.action ?? null;
+			if (!actionName) return null;
+
+			return {
+				actionName,
+				payload:
+					handler.payload ?? handler.actionPayload ?? undefined,
+				entityId: handler.entityId ?? undefined,
+			};
+		}
+
+		return null;
+	}
+
+	#resolveActionFromProps(props = {}) {
+		if (!props) return null;
+
+		const actionName =
+			props.actionName ??
+			props.action ??
+			props.props?.actionName ??
+			props.props?.action ??
+			null;
+
+		if (!actionName) return null;
+
+		return {
+			actionName,
+			payload:
+				props.actionPayload ??
+				props.payload ??
+				props.props?.actionPayload ??
+				props.props?.payload ??
+				undefined,
+			entityId:
+				props.entityId ?? props.props?.entityId ?? undefined,
+		};
+	}
+
+	#delegateAction(element, descriptor) {
+		if (!descriptor?.actionName) return;
+
+		try {
+			element.dataset.action = descriptor.actionName;
+		} catch {
+			/* ignore dataset write failures */
+		}
+
+		if (descriptor.entityId !== undefined) {
+			try {
+				element.dataset.entity = descriptor.entityId;
+			} catch {
+				void 0;
+			}
+		}
+
+		if (descriptor.payload !== undefined) {
+			try {
+				const serialized =
+					typeof descriptor.payload === "string"
+						? descriptor.payload
+						: JSON.stringify(descriptor.payload);
+				element.dataset.actionPayload = serialized;
+			} catch {
+				try {
+					element.dataset.actionPayload = String(
+						descriptor.payload
+					);
+				} catch {
+					void 0;
+				}
+			}
+		}
+
+		if (
+			this.#actionDispatcher &&
+			!this.#dispatcherAttachedElements.has(element)
+		) {
+			try {
+				this.#actionDispatcher.attach(element);
+				this.#dispatcherAttachedElements.add(element);
+			} catch {
+				// best-effort; dispatcher attach failures are non-fatal for rendering
+			}
+		}
+	}
+
+	#applyActionProps(element, props = {}) {
+		const descriptor = this.#resolveActionFromProps(props);
+		if (descriptor) {
+			this.#delegateAction(element, descriptor);
+		}
+	}
+
+	#extractBindingDescriptor(props = {}) {
+		const path =
+			props.bindingPath ??
+			props["data-bind"] ??
+			props.props?.bindingPath ??
+			props.props?.["data-bind"] ??
+			props.binding?.path ??
+			null;
+
+		if (!path) return null;
+
+		const optionCandidate =
+			(typeof props.bindingOptions === "object" && props.bindingOptions) ||
+			(typeof props.props?.bindingOptions === "object" &&
+				props.props.bindingOptions) ||
+			(typeof props.binding?.options === "object" &&
+				props.binding.options) ||
+			null;
+
+		const options = optionCandidate ? { ...optionCandidate } : {};
+
+		["format", "twoWay", "attr", "map", "fallback"].forEach((key) => {
+			const value =
+				props[key] ??
+				props.props?.[key] ??
+				props.binding?.[key] ??
+				undefined;
+			if (value !== undefined) {
+				options[key] = value;
+			}
+		});
+
+		return {
+			path,
+			options: Object.keys(options).length > 0 ? options : undefined,
+		};
+	}
+
+	#applyBinding(element, props = {}) {
+		const descriptor = this.#extractBindingDescriptor(props);
+		if (!descriptor) return;
+
+		try {
+			element.dataset.bind = descriptor.path;
+		} catch {
+			// dataset assignment is best-effort
+			void 0;
+		}
+
+		if (
+			this.#bindEngine &&
+			typeof this.#bindEngine.registerBinding === "function"
+		) {
+			void this.#bindEngine
+				.registerBinding(
+					element,
+					descriptor.path,
+					descriptor.options ?? {}
+				)
+				.catch(() => {});
+		}
+	}
+
+	#assignElementProperties(element, props = {}) {
+		if (!props || typeof props !== "object") return;
+
+		const skipKeys = new Set([
+			"type",
+			"children",
+			"events",
+			"style",
+			"className",
+			"bindingPath",
+			"bindingOptions",
+			"binding",
+			"bindingFormat",
+			"twoWay",
+			"format",
+			"attr",
+			"map",
+			"fallback",
+			"actionName",
+			"action",
+			"actionPayload",
+			"entityId",
+			"props",
+		]);
+
+		Object.entries(props).forEach(([key, value]) => {
+			if (skipKeys.has(key)) return;
+			try {
+				element[key] = value;
+			} catch {
+				// ignore invalid assignments; rendering should continue
+				void 0;
+			}
+		});
 	}
 
 	/**
@@ -309,11 +558,8 @@ export class BuildingBlockRenderer {
 		// perform any engine initialization required.
 		if (type === "button") {
 			const btn = this.#renderButton(props, context);
-			// Attach any explicit event handlers defined in the composition
-			Object.entries(events).forEach(([event, handler]) => {
-				if (typeof handler === "function")
-					btn.addEventListener(event, handler);
-			});
+			// Delegate event wiring to the canonical dispatcher helper
+			this.#wireEvents(btn, events);
 			// Append children if present
 			children.forEach((child) => {
 				const childElement = this.render(child, context);
@@ -325,37 +571,25 @@ export class BuildingBlockRenderer {
 		if (type === "input" || type === "text-field") {
 			// Inputs typically don't have children; render a bound input and return.
 			const input = this.#renderTextField(props, context);
-			Object.entries(events).forEach(([event, handler]) => {
-				if (typeof handler === "function")
-					input.addEventListener(event, handler);
-			});
+			this.#wireEvents(input, events);
 			return input;
 		}
 
 		if (type === "textarea" || type === "text-area") {
 			const ta = this.#renderTextArea(props, context);
-			Object.entries(events).forEach(([event, handler]) => {
-				if (typeof handler === "function")
-					ta.addEventListener(event, handler);
-			});
+			this.#wireEvents(ta, events);
 			return ta;
 		}
 
 		if (type === "label" || type === "span") {
 			const lbl = this.#renderLabel(props, context);
-			Object.entries(events).forEach(([event, handler]) => {
-				if (typeof handler === "function")
-					lbl.addEventListener(event, handler);
-			});
+			this.#wireEvents(lbl, events);
 			return lbl;
 		}
 
 		if (type === "container") {
 			const cont = this.#renderContainer(props, context);
-			Object.entries(events).forEach(([event, handler]) => {
-				if (typeof handler === "function")
-					cont.addEventListener(event, handler);
-			});
+			this.#wireEvents(cont, events);
 			return cont;
 		}
 
@@ -365,70 +599,32 @@ export class BuildingBlockRenderer {
 
 		Object.assign(element.style, style);
 
-		// Convenience: map common prop names into dataset attributes so the
-		// global BindEngine / ActionDispatcher (which use document delegation)
-		// can pick up dynamically created elements. We prefer data-* attributes
-		// as the delegation engines already look for them.
-		try {
-			if (props.bindingPath) {
-				element.dataset.bind = props.bindingPath;
+		this.#applyBinding(element, props);
+		this.#applyActionProps(element, props);
+
+		const entityRef =
+			props.entityId ?? props.props?.entityId ?? undefined;
+		if (entityRef !== undefined && entityRef !== null) {
+			try {
+				element.dataset.entity = entityRef;
+			} catch {
+				void 0;
 			}
-			if (props.actionName) {
-				element.dataset.action = props.actionName;
-			}
-			if (props.entityId) {
-				element.dataset.entity = props.entityId;
-			}
-		} catch {
-			// Non-fatal; continue rendering even if dataset wiring fails.
-			void 0;
 		}
 
-		// Set other properties
-		Object.entries(props).forEach(([key, value]) => {
-			/**
+		this.#assignElementProperties(element, props);
+		if (props.props) {
+			this.#assignElementProperties(element, props.props);
+		}
 
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
-			if (key !== "type" && key !== "children") {
-				element[key] = value;
-			}
-		});
-
-		// Add event listeners
-		Object.entries(events).forEach(([event, handler]) => {
-			element.addEventListener(event, handler);
-		});
+		// Add event listeners or delegate to ActionDispatcher via dataset
+		this.#wireEvents(element, events);
 
 		// Render children
 		children.forEach((child) => {
-			const childElement = this.render(child, context); // Recurse with public render
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
-			if (childElement) {
-				element.appendChild(childElement);
-			}
+			const childElement = this.render(child, context);
+			if (childElement) element.appendChild(childElement);
 		});
-
-		// If a BindEngine was registered on the state manager, initialize it for
-		// this newly-created element so dynamic [data-bind] elements are tracked.
-		try {
-			const stateManager = this.#componentRegistry?.stateManager;
-			stateManager?.managers?.bindEngine?.register?.(element);
-		} catch {
-			// Swallow; binding registration is best-effort for dynamic elements.
-			void 0;
-		}
 
 		return element;
 	}
@@ -481,25 +677,20 @@ export class BuildingBlockRenderer {
 			props.textContent || props.props?.label || props.props?.text || "";
 		Object.assign(btn.style, props.style || props.props?.style || {});
 
-		// wire action/entity for ActionDispatcher
-		try {
-			if (props.actionName) btn.dataset.action = props.actionName;
-			if (props.entityId) btn.dataset.entity = props.entityId;
-			if (props.props?.actionName)
-				btn.dataset.action = props.props.actionName;
-			if (props.props?.entityId)
-				btn.dataset.entity = props.props.entityId;
-		} catch {
-			/* best effort */
-			void 0;
+		this.#applyActionProps(btn, props);
+		this.#applyBinding(btn, props);
+		const entityRef =
+			props.entityId ?? props.props?.entityId ?? undefined;
+		if (entityRef !== undefined && entityRef !== null) {
+			try {
+				btn.dataset.entity = entityRef;
+			} catch {
+				void 0;
+			}
 		}
-
-		// Register dynamic binds if present
-		try {
-			const stateManager = this.#componentRegistry?.stateManager;
-			stateManager?.managers?.bindEngine?.register?.(btn);
-		} catch {
-			void 0;
+		this.#assignElementProperties(btn, props);
+		if (props.props) {
+			this.#assignElementProperties(btn, props.props);
 		}
 
 		return btn;
@@ -518,17 +709,11 @@ export class BuildingBlockRenderer {
 		input.placeholder = props.placeholder || props.props?.placeholder || "";
 		Object.assign(input.style, props.style || props.props?.style || {});
 
-		// bind wiring
-		try {
-			const binding =
-				props.bindingPath ||
-				props.props?.bindingPath ||
-				props["data-bind"];
-			if (binding) input.dataset.bind = binding;
-			const stateManager = this.#componentRegistry?.stateManager;
-			stateManager?.managers?.bindEngine?.register?.(input);
-		} catch {
-			void 0;
+		this.#applyBinding(input, props);
+		this.#applyActionProps(input, props);
+		this.#assignElementProperties(input, props);
+		if (props.props) {
+			this.#assignElementProperties(input, props.props);
 		}
 
 		return input;
@@ -546,17 +731,11 @@ export class BuildingBlockRenderer {
 		ta.placeholder = props.placeholder || props.props?.placeholder || "";
 		Object.assign(ta.style, props.style || props.props?.style || {});
 
-		try {
-			const binding =
-				props.bindingPath ||
-				props.props?.bindingPath ||
-				props["data-bind"];
-			if (binding) ta.dataset.bind = binding;
-			const stateManager = this.#componentRegistry?.stateManager;
-			stateManager?.managers?.bindEngine?.register?.(ta);
-		} catch {
-			// ignore
-			void 0;
+		this.#applyBinding(ta, props);
+		this.#applyActionProps(ta, props);
+		this.#assignElementProperties(ta, props);
+		if (props.props) {
+			this.#assignElementProperties(ta, props.props);
 		}
 
 		return ta;
@@ -573,18 +752,11 @@ export class BuildingBlockRenderer {
 		Object.assign(lbl.style, props.style || props.props?.style || {});
 		if (props.textContent) lbl.textContent = props.textContent;
 		else if (props.props?.text) lbl.textContent = props.props.text;
-		// bind support
-		try {
-			const binding =
-				props.bindingPath ||
-				props.props?.bindingPath ||
-				props["data-bind"];
-			if (binding) lbl.dataset.bind = binding;
-			this.#componentRegistry?.stateManager?.managers?.bindEngine?.register?.(
-				lbl
-			);
-		} catch {
-			void 0;
+		this.#applyBinding(lbl, props);
+		this.#applyActionProps(lbl, props);
+		this.#assignElementProperties(lbl, props);
+		if (props.props) {
+			this.#assignElementProperties(lbl, props.props);
 		}
 
 		return lbl;
@@ -604,6 +776,12 @@ export class BuildingBlockRenderer {
 		Object.assign(cont.style, props.style || props.props?.style || {});
 		cont.style.display = "flex";
 		cont.style.flexDirection = dir === "row" ? "row" : "column";
+		this.#applyBinding(cont, props);
+		this.#applyActionProps(cont, props);
+		this.#assignElementProperties(cont, props);
+		if (props.props) {
+			this.#assignElementProperties(cont, props.props);
+		}
 
 		// render children if provided
 		if (Array.isArray(props.children)) {

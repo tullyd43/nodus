@@ -1,50 +1,19 @@
 /**
  * @vitest-environment jsdom
  */
-/* global MouseEvent, KeyboardEvent */
+/* global describe,it,beforeEach,vi,MouseEvent,KeyboardEvent */
 
 import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
-import { describe, it, beforeEach, expect, vi } from "vitest";
 
+import {
+	createContainer,
+	makeMockStateManager,
+	makeAppViewModel,
+	addBlockElement,
+	setupRenderer,
+} from "../_helpers.js";
 
-function makeMockStateManager() {
-	const listeners = new Map();
-	return {
-		managers: {
-			policies: {
-				getPolicy: () => true,
-			},
-			errorHelpers: { handleError: () => {} },
-			gridToastManager: {
-				warning: vi.fn(),
-				success: vi.fn(),
-				info: vi.fn(),
-			},
-		},
-		eventFlowEngine: {
-			on: (k, fn) => {
-				if (!listeners.has(k)) listeners.set(k, []);
-				listeners.get(k).push(fn);
-				return () => {
-					const arr = listeners.get(k) || [];
-					listeners.set(
-						k,
-						arr.filter((f) => f !== fn)
-					);
-				};
-			},
-			emit: (k, d) => {
-				(listeners.get(k) || []).forEach((fn) => fn(d));
-			},
-		},
-		metricsRegistry: { namespace: () => ({ increment: vi.fn() }) },
-		metricsRegistryRaw: vi.fn(),
-		recordOperation: vi.fn(),
-		transaction: vi.fn((fn) => fn()),
-		undo: vi.fn(),
-		redo: vi.fn(),
-	};
-}
+/* eslint-disable nodus/no-direct-dom-access, nodus/require-async-orchestration */
 
 describe("EnhancedGridRenderer - occupancy and constraints", () => {
 	let container;
@@ -53,44 +22,25 @@ describe("EnhancedGridRenderer - occupancy and constraints", () => {
 	let appViewModel;
 
 	beforeEach(() => {
-		// DOM container
-		document.body.innerHTML = "";
-		container = document.createElement("div");
-		container.className = "grid-container";
-		container.style.width = "600px";
-		container.style.height = "400px";
-		document.body.appendChild(container);
-
-		// Two blocks: A at (0,0,w=2,h=1), B at (2,0,w=2,h=1)
-		const a = document.createElement("div");
-		a.className = "grid-block";
-		a.dataset.blockId = "A";
-		container.appendChild(a);
-		const b = document.createElement("div");
-		b.className = "grid-block";
-		b.dataset.blockId = "B";
-		container.appendChild(b);
+		// container and DOM
+		container = createContainer({ width: 600, height: 400 });
+		// add two blocks
+		addBlockElement(container, "A");
+		addBlockElement(container, "B");
 
 		stateManager = makeMockStateManager();
 
-		appViewModel = {
-			gridLayoutViewModel: {
-				getCurrentLayout: () => ({
-					blocks: [
-						{ blockId: "A", position: { x: 0, y: 0, w: 2, h: 1 } },
-						{ blockId: "B", position: { x: 2, y: 0, w: 2, h: 1 } },
-					],
-				}),
-				updatePositions: vi.fn(),
-			},
-			getCurrentUser: () => ({ id: "tester" }),
-		};
+		appViewModel = makeAppViewModel([
+			{ blockId: "A", position: { x: 0, y: 0, w: 2, h: 1 } },
+			{ blockId: "B", position: { x: 2, y: 0, w: 2, h: 1 } },
+		]);
+		// tests expect to spy on updatePositions
+		appViewModel.gridLayoutViewModel.updatePositions = vi.fn();
 
-		renderer = new EnhancedGridRenderer({ stateManager });
-		renderer.initialize({
+		renderer = setupRenderer(EnhancedGridRenderer, {
+			stateManager,
 			container,
 			appViewModel,
-			// enable testMode so test-only helpers are exposed/used
 			options: { enableKeyboard: true, testMode: true },
 		});
 	});

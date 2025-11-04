@@ -1,6 +1,6 @@
 import { CDS } from "@core/security/cds.js";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-
+/* global describe,it,beforeEach,afterEach,vi */
+/* eslint-disable nodus/require-async-orchestration */
 
 describe("CDS wrapper", () => {
 	let originalTransport;

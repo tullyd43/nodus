@@ -9,13 +9,8 @@ const DEFAULT_ACTOR = "system";
 const DEFAULT_TENANT = "shared";
 const RUN_ID_PREFIX = "async";
 
-const HOOK_SEQUENCE = [
-	"beforeRun",
-	"onSuccess",
-	"onError",
-	"onSkip",
-	"afterRun",
-];
+const HOOK_SEQUENCE = ["before", "after", "error", "skip", "settled"];
+const DEFAULT_PLUGIN_TIMEOUT_MS = 100;
 
 const STATUS = Object.freeze({
 	PENDING: "pending",
@@ -51,11 +46,11 @@ const STATUS = Object.freeze({
  * @property {string} name Unique plugin name.
  * @property {number} [priority] Execution priority; lower values run earlier.
  * @property {(context: AsyncRunContext) => boolean|Promise<boolean>} [supports] Optional gate to skip plugin at runtime.
- * @property {(context: AsyncRunContext) => void|Promise<void>} [beforeRun]
- * @property {(context: AsyncRunContext) => void|Promise<void>} [onSuccess]
- * @property {(context: AsyncRunContext) => void|Promise<void>} [onError]
- * @property {(context: AsyncRunContext) => void|Promise<void>} [onSkip]
- * @property {(context: AsyncRunContext) => void|Promise<void>} [afterRun]
+ * @property {(context: AsyncRunContext) => void|Promise<void>} [before]
+ * @property {(context: AsyncRunContext, result?:any) => void|Promise<void>} [after]
+ * @property {(context: AsyncRunContext, error?:Error) => void|Promise<void>} [error]
+ * @property {(context: AsyncRunContext) => void|Promise<void>} [skip]
+ * @property {(context: AsyncRunContext) => void|Promise<void>} [settled]
  */
 
 /**
@@ -69,7 +64,10 @@ const STATUS = Object.freeze({
  */
 function createRunId(label) {
 	const base = label || DEFAULT_LABEL;
-	if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+	if (
+		typeof crypto !== "undefined" &&
+		typeof crypto.randomUUID === "function"
+	)
 		return crypto.randomUUID();
 	const suffix = Math.random().toString(16).slice(2, 10);
 	return `${RUN_ID_PREFIX}-${base}-${Date.now()}-${suffix}`;
@@ -172,6 +170,33 @@ function sanitizeWithFallback(value, sanitizer, schema) {
 }
 
 /**
+ * Safely executes a function, catching and logging any synchronous or asynchronous errors.
+ * @param {Function} fn The function to execute.
+ * @param {string} description A description for logging purposes (e.g., plugin name and hook).
+ * @param {object} [options={}]
+ * @param {import("./AsyncOrchestrator.js").AsyncOrchestratorDeps["logger"]} [options.logger]
+ * @param {number} [options.timeoutMs] Optional timeout for the function execution.
+ * @returns {Promise<any>} A promise that resolves with the function's return value, or undefined on error/timeout.
+ */
+/* eslint-disable-next-line nodus/require-async-orchestration -- This is a low-level utility for the orchestrator itself, not an application workflow. */
+async function safeCall(fn, description, options = {}) {
+	const { logger, timeoutMs = DEFAULT_PLUGIN_TIMEOUT_MS } = options;
+	try {
+		return await Promise.race([
+			Promise.resolve(fn()),
+			new Promise((_, reject) =>
+				setTimeout(
+					() =>
+						reject(new Error(`Timeout of ${timeoutMs}ms exceeded`)),
+					timeoutMs
+				)
+			),
+		]);
+	} catch (error) {
+		logger?.warn?.(`[AsyncOrchestrator] Error in ${description}:`, error);
+	}
+}
+/**
  * Produces a sanitized copy of the run options before execution.
  * @param {AsyncRunOptions} options
  * @returns {AsyncRunOptions}
@@ -181,56 +206,43 @@ function sanitizeRunOptions(options) {
 	const sanitizer = resolveSanitizerFromOptions(options);
 	if (!sanitizer) return options;
 
-	const sanitized = { ...options };
+	// Per Mandate A-07 (Audit Integrity), all inputs to the orchestration
+	// should be sanitized to prevent injection attacks that could corrupt
+	// forensic logs or metrics. We cleanse the entire options object.
+	return sanitizeWithFallback(
+		options,
+		sanitizer,
+		options.payloadSchema || options.metaSchema || options.policySchema
+	);
+}
 
-	if ("payload" in options) {
-		const cleaned = sanitizeWithFallback(
-			options.payload,
-			sanitizer,
-			options.payloadSchema
-		);
-		if (cleaned !== undefined) {
-			sanitized.payload = cleaned;
-		}
-	}
-
-	if (options.meta !== undefined) {
-		const cleanedMeta = sanitizeWithFallback(
-			options.meta,
-			sanitizer,
-			options.metaSchema
-		);
-		if (cleanedMeta !== undefined) {
-			sanitized.meta = cleanedMeta;
-		}
-	}
-
-	if (options.policyOverrides !== undefined) {
-		const cleanedPolicy = sanitizeWithFallback(
-			options.policyOverrides,
-			sanitizer,
-			options.policySchema
-		);
-		if (cleanedPolicy !== undefined) {
-			sanitized.policyOverrides = cleanedPolicy;
-		}
-	}
-
-	if (options.actorId !== undefined) {
-		const cleanedActor = sanitizeWithFallback(options.actorId, sanitizer);
-		if (cleanedActor !== undefined) {
-			sanitized.actorId = cleanedActor;
-		}
-	}
-
-	if (options.tenantId !== undefined) {
-		const cleanedTenant = sanitizeWithFallback(options.tenantId, sanitizer);
-		if (cleanedTenant !== undefined) {
-			sanitized.tenantId = cleanedTenant;
-		}
-	}
-
-	return sanitized;
+/**
+ * Creates a tiny bounded attachments container for per-run plugin metadata.
+ * This avoids unbounded Map growth on long-lived systems while keeping the
+ * implementation dependency-free and simple.
+ * @param {number} [limit]
+ */
+function createBoundedAttachments(limit = 128) {
+	const map = new Map();
+	return {
+		set(key, value) {
+			if (!map.has(key) && map.size >= limit) {
+				const oldest = map.keys().next().value;
+				/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- internal in-memory attachment store */
+				map.delete(oldest);
+			}
+			/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- internal in-memory attachment store */
+			map.set(key, value);
+		},
+		get(key) {
+			/* eslint-disable-next-line nodus/require-observability-compliance -- internal in-memory attachment store */
+			return map.get(key);
+		},
+		delete(key) {
+			/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- internal in-memory attachment store */
+			return map.delete(key);
+		},
+	};
 }
 
 /**
@@ -241,7 +253,7 @@ function sanitizeRunOptions(options) {
  * @returns {object}
  */
 function createExecutionContext(orchestrator, options, now) {
-	const attachments = new Map();
+	const attachments = createBoundedAttachments();
 	let skip = false;
 	let resultValue;
 
@@ -276,6 +288,12 @@ function createExecutionContext(orchestrator, options, now) {
 		 * @returns {void}
 		 */
 		attach(key, value) {
+			/* attachments are in-memory plugin metadata only and do not
+			 * represent state mutations. They are intentionally excluded
+			 * from ActionDispatcher/stateManager flows. Disable the
+			 * action-dispatcher/observability rules for this internal
+			 * helper with a clear justification. */
+			/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- in-memory plugin metadata, not a state mutation */
 			attachments.set(key, value);
 		},
 		/**
@@ -284,6 +302,7 @@ function createExecutionContext(orchestrator, options, now) {
 		 * @returns {any}
 		 */
 		getAttachment(key) {
+			/* eslint-disable-next-line nodus/require-observability-compliance -- in-memory plugin metadata, not a state mutation */
 			return attachments.get(key);
 		},
 		/**
@@ -292,6 +311,7 @@ function createExecutionContext(orchestrator, options, now) {
 		 * @returns {void}
 		 */
 		deleteAttachment(key) {
+			/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- in-memory plugin metadata, not a state mutation */
 			attachments.delete(key);
 		},
 		/**
@@ -355,9 +375,139 @@ export class AsyncOrchestrator {
 	constructor(deps = {}) {
 		this.#logger = deps.logger || console;
 		this.#now = typeof deps.now === "function" ? deps.now : defaultNow;
+		// Allow wiring from a stateManager when available so orchestrator can
+		// reuse repository-managed services (policies, observability, trackers)
+		this._stateManager = deps.stateManager || null;
+
 		if (Array.isArray(deps.plugins)) {
 			for (const plugin of deps.plugins) {
 				this.registerPlugin(plugin);
+			}
+		}
+
+		// If a stateManager was provided, derive observability/instrumentation
+		// adapters from its managers (do NOT instantiate core managers).
+		if (this._stateManager) {
+			const managers = this._stateManager.managers || {};
+			this._automaticInstrumentation = managers.observability
+				?.automaticInstrumentation ||
+				managers.instrumentation?.automaticInstrumentation || {
+					/* eslint-disable-next-line nodus/require-async-orchestration -- fallback noop adapter */
+					instrumentOperation: async () => null,
+				};
+			this._asyncTracker = managers.observability
+				?.asyncOperationTracker ||
+				managers.asyncOperationTracker || {
+					/* eslint-disable-next-line nodus/require-async-orchestration -- fallback noop adapter */
+					recordSuccess: async () => {},
+					/* eslint-disable-next-line nodus/require-async-orchestration -- fallback noop adapter */
+					recordError: async () => {},
+				};
+
+			// Register a lightweight automatic observability plugin that starts
+			// instrumentation in the 'before' hook (non-blocking) and waits for
+			// completion in 'after'/'error' hooks. This mirrors ActionDispatcher's
+			// best-effort instrumentation behavior while keeping wiring via
+			// stateManager.managers.
+			const autoPlugin = {
+				name: "automatic-observability",
+				priority: 50,
+				before: (context) => {
+					try {
+						const instrCtx = {
+							component: "async",
+							operation: "run",
+							contextName: context.label,
+							classification:
+								context.classification?.level || "internal",
+							performanceState: "normal",
+							tenantId: context.tenantId,
+							data: context.meta,
+						};
+						// Policy gate: consult shared policy adapter (fast sync path) when available.
+						try {
+							const stateManager =
+								this._stateManager ||
+								context.options?.stateManager;
+							const adapter =
+								stateManager?.managers?.policyAdapter;
+							if (adapter?.shouldInstrumentSync) {
+								const allowed = Boolean(
+									adapter.shouldInstrumentSync(instrCtx)
+								);
+								if (!allowed) {
+									// Policy denied instrumentation for this run.
+									return;
+								}
+							}
+						} catch (policyErr) {
+							this.#logger?.warn?.(
+								"[AsyncOrchestrator] Policy evaluation failed for automatic-observability.before; proceeding",
+								policyErr
+							);
+						}
+						// Start instrumentation in background and attach the promise to
+						// the run context so other hooks may await it.
+						const p = Promise.resolve(
+							this._automaticInstrumentation.instrumentOperation(
+								instrCtx
+							)
+						).catch(() => null);
+						context.attach("__autoInstrumentationPromise__", p);
+					} catch (e) {
+						this.#logger?.warn?.(
+							"[AsyncOrchestrator] automatic-observability.before error",
+							e
+						);
+					}
+				},
+				/* eslint-disable-next-line nodus/require-async-orchestration -- plugin lifecycle hook executed inside orchestrator */
+				after: async (context) => {
+					const p = context.getAttachment(
+						"__autoInstrumentationPromise__"
+					);
+					if (p && typeof p.then === "function") {
+						try {
+							await p;
+						} catch (e) {
+							this.#logger?.warn?.(
+								"[AsyncOrchestrator] auto-instr.after failed",
+								e
+							);
+						}
+					}
+				},
+				/* eslint-disable-next-line nodus/require-async-orchestration -- plugin lifecycle hook executed inside orchestrator */
+				error: async (context) => {
+					const p = context.getAttachment(
+						"__autoInstrumentationPromise__"
+					);
+					if (p && typeof p.then === "function") {
+						try {
+							await p;
+						} catch (e) {
+							this.#logger?.warn?.(
+								"[AsyncOrchestrator] auto-instr.error failed",
+								e
+							);
+						}
+					}
+				},
+				/* eslint-disable-next-line nodus/require-async-orchestration -- plugin hooks are part of the orchestrator lifecycle */
+				settled: async (context) => {
+					// Ensure instrumentation promise is observed to avoid unhandled rejections
+					const p = context.getAttachment(
+						"__autoInstrumentationPromise__"
+					);
+					if (p && typeof p.then === "function") {
+						p.catch(() => null);
+					}
+				},
+			};
+
+			// Register plugin if not present
+			if (!this.#plugins.some((pl) => pl.name === autoPlugin.name)) {
+				this.registerPlugin(autoPlugin);
 			}
 		}
 		if (deps.registerGlobal) {
@@ -410,6 +560,8 @@ export class AsyncOrchestrator {
 	 * @param {AsyncRunOptions} [options]
 	 * @returns {Promise<T|void>}
 	 */
+	// @performance-budget: 5ms
+	/* eslint-disable nodus/require-async-orchestration -- This is the orchestrator's entry point. */
 	async run(operation, options = {}) {
 		const callable =
 			typeof operation === "function" ? operation : () => operation;
@@ -421,11 +573,12 @@ export class AsyncOrchestrator {
 			this.#now
 		);
 
-		await this.#dispatch("beforeRun", pipeline, context);
+		await this.#dispatch("before", pipeline, context);
 		if (context.isSkipped()) {
 			context.endTime = this.#now();
-			await this.#dispatch("onSkip", pipeline, context);
-			await this.#dispatch("afterRun", pipeline, context);
+			await this.#dispatch("skip", pipeline, context);
+			await this.#dispatch("after", pipeline, context, context.result);
+			await this.#dispatch("settled", pipeline, context);
 			return context.result;
 		}
 
@@ -434,18 +587,19 @@ export class AsyncOrchestrator {
 			context.result = output;
 			context.status = STATUS.SUCCESS;
 			context.endTime = this.#now();
-			await this.#dispatch("onSuccess", pipeline, context);
+			await this.#dispatch("after", pipeline, context, output);
 			return output;
 		} catch (error) {
 			context.error = error;
 			context.status = STATUS.ERROR;
 			context.endTime = this.#now();
-			await this.#dispatch("onError", pipeline, context);
+			await this.#dispatch("error", pipeline, context, error);
 			throw error;
 		} finally {
-			await this.#dispatch("afterRun", pipeline, context);
+			await this.#dispatch("settled", pipeline, context);
 		}
 	}
+	/* eslint-enable nodus/require-async-orchestration */
 
 	/**
 	 * Retrieves the currently registered plugin list.
@@ -529,33 +683,29 @@ export class AsyncOrchestrator {
 	 * @param {AsyncRunContext} context
 	 * @returns {Promise<void>}
 	 */
-	async #dispatch(hook, pipeline, context) {
+	/* eslint-disable-next-line nodus/require-async-orchestration -- This is an internal part of the orchestration flow. */
+	async #dispatch(hook, pipeline, context, extra) {
 		if (!HOOK_SEQUENCE.includes(hook)) return;
 		for (const plugin of pipeline) {
 			const handler = plugin[hook];
 			if (typeof handler !== "function") continue;
-			try {
-				if (typeof plugin.supports === "function") {
-					const gateResult = plugin.supports(context);
-					if (gateResult === false) continue;
-					if (
-						gateResult &&
-						typeof gateResult.then === "function" &&
-						!(await gateResult)
-					) {
-						continue;
+
+			await safeCall(
+				/* eslint-disable-next-line nodus/require-async-orchestration -- This is an internal part of the orchestration flow. */
+				async () => {
+					const supported = await safeCall(
+						() => plugin.supports?.(context) ?? true,
+						`'${plugin.name}'.supports`,
+						{ logger: this.#logger }
+					);
+
+					if (supported) {
+						await handler.call(plugin, context, extra);
 					}
-				}
-				const maybePromise = handler.call(plugin, context);
-				if (maybePromise && typeof maybePromise.then === "function") {
-					await maybePromise;
-				}
-			} catch (error) {
-				this.#logger?.warn?.(
-					`[AsyncOrchestrator] Plugin '${plugin.name}' hook '${hook}' failed:`,
-					error
-				);
-			}
+				},
+				`'${plugin.name}'.${hook}`,
+				{ logger: this.#logger }
+			);
 		}
 	}
 }

@@ -1,93 +1,483 @@
-Excellent — with the newest batch of files (`HybridStateManager.js`, `SystemBootstrap.js`, `SystemPolicies_Cached.js`, `TenantPolicyService.js`, `ServiceRegistry.js`, `RenderContext.js`, `PluginManifestSchema.js`, etc.), I now have everything needed to produce a **comprehensive Test & Coverage Matrix** for the Nodus architecture.
+I'll create a comprehensive test plan based on the uploaded ESLint plugin files for the Nodus enterprise observability platform. Let me first search the project knowledge to understand the broader context.# Comprehensive Test Plan for Nodus ESLint Plugin v2.0
 
-Here’s the full breakdown:
+Based on the uploaded files, I can see this is an enterprise-grade ESLint plugin for the Nodus observability platform with 10 sophisticated rules and enterprise features. Here's a comprehensive test plan:
 
----
+## 1. Test Plan Overview
 
-## 🧩 **NODUS V8 PLATFORM — TEST COVERAGE MATRIX**
+### 1.1 Test Categories
+- **Unit Tests**: Individual rule validation
+- **Integration Tests**: Plugin-wide functionality  
+- **Configuration Tests**: Environment-specific behavior
+- **Enterprise Tests**: License and compliance scenarios
+- **Performance Tests**: Rule execution efficiency
+- **Security Tests**: Validation robustness
+- **Compliance Tests**: Audit and forensic requirements
 
-| **Subsystem**                        | **Core Modules**                                                                       | **Test Files Present**                                                                                                       | **Functional Areas Verified**                                         | **Missing Coverage / Suggested Tests**                                                       |
-| ------------------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **🧠 Hybrid State Layer**            | `HybridStateManager.js`                                                                | ✅ `HybridStateManager.history.test.js`                                                                                       | Versioning, history tracking, rollback, commit logic                  | ⚠️ Test missing for hybrid event relay (sync with EventFlowEngine)                           |
-| **💾 Storage Infrastructure**        | `StorageLoader.js`, `ModernIndexedDB.js`                                               | ✅ `StorageLoader.test.js`                                                                                                    | Polyinstantiation merge, classification precedence, deep object merge | ⚠️ Add tests for encryption/decryption flows and Dexie error handling                        |
-| **🧮 Cache & Query**                 | `CacheManager.js`, `QueryService.js`                                                   | ❌ none                                                                                                                       | —                                                                     | ⚠️ Add cache invalidation + TTL expiration tests; Query filtering coverage                   |
-| **🔐 Security & MAC**                | `SecurityManager.js`, `MACEngine.js`, `NonRepudiation.js`, `InformationFlowTracker.js` | ✅ `SecurityManager.test.js`, `mac.spec.js`, `NonRepudiation.test.js`                                                         | Context TTL, compartment validation, ECDSA signing/verification       | ⚠️ Add tests for InformationFlowTracker propagation + multi-label derivations                |
-| **🔏 Non-Repudiation & Forensics**   | `NonRepudiation.js`, `ForensicLogger.js`                                               | ✅ `NonRepudiation.test.js`                                                                                                   | Deterministic signature generation + chain validation                 | ⚠️ Add test ensuring `ForensicLogger.logAuditEvent` creates signed envelopes                 |
-| **🧰 Access Control Layer**          | `OptimizationAccessControl.js`, `SystemPolicies_Cached.js`, `TenantPolicyService.js`   | ❌ none                                                                                                                       | —                                                                     | ⚠️ Add tests verifying tenant vs. system override hierarchy + cache eviction                 |
-| **📜 Policy Engine**                 | `SystemPolicies_Cached.js`                                                             | ✅ indirectly tested via `TenantPolicyService`                                                                                | Policy persistence, validation, dependency enforcement, caching       | ⚠️ Add coverage for API sync + policy dependency resolution                                  |
-| **🪪 Plugin Framework**              | `ManifestPluginSystem.js`, `PluginManifestSchema.js`, `ServiceRegistry.js`             | ❌ none                                                                                                                       | —                                                                     | ⚠️ Add validation tests for `validateManifest()` using `ExampleManifests`                    |
-| **🖥️ Rendering & UI Context**       | `RenderContext.js`, `AdaptiveRenderer.js`, `EnhancedGridRenderer.js`                   | ✅ `enhanced-grid-renderer.test.js`, `enhanced-grid-drag.test.js`, `enhanced-grid-snap.test.js`, `enhanced-grid-undo.test.js` | Grid snapping, undo/redo, drag collision, rendering adaptivity        | ⚠️ Add `RenderContext` trigger/permission/policy evaluation tests                            |
-| **🧩 Grid System Core**              | `CompleteGridSystem.js`, `GridEnhancementIntegration.js`, `GridRuntimeConfig.js`       | ✅ multiple grid-related tests above                                                                                          | Dynamic resizing, history stack, grid validation                      | ⚠️ Add coverage for nested grids, AI-suggested layouts, and policy constraints               |
-| **⚙️ System Lifecycle**              | `SystemBootstrap.js`, `ServiceRegistry.js`                                             | ❌ none                                                                                                                       | —                                                                     | ⚠️ Add integration test for cold-start bootstrap, verifying ordered init and metrics logging |
-| **🌐 CDS & External Comms**          | `CDS.js`, `OptimizationWebSocketServer.js`                                             | ✅ `CDS.test.js`                                                                                                              | Custom transport forwarding + XHR mode                                | ⚠️ Add error and timeout handling coverage                                                   |
-| **🧩 Runtime Policies**              | `TenantPolicyService.js`, `SystemPolicies_Cached.js`                                   | ✅ partially                                                                                                                  | Tenant override logic                                                 | ⚠️ Add test ensuring internal policies are blocked from tenant override                      |
-| **🧠 AI & Embedding Layer**          | `EmbeddingManager.js`                                                                  | ❌ none                                                                                                                       | —                                                                     | ⚠️ Add vector embedding creation and cache persistence tests                                 |
-| **🔌 Extension & Integration Layer** | `ServiceRegistry.js`, `ManifestPluginSystem.js`, `PluginManifestSchema.js`             | ✅ `PluginManifestSchema` schema integrity implied                                                                            | Schema validation and composition                                     | ⚠️ Add runtime validation test for ExampleManifests (simpleWidget, complexIntegration)       |
-| **🎛️ System Governance**            | `SystemPolicies_Cached.js`, `OptimizationAccessControl.js`                             | ❌ none                                                                                                                       | —                                                                     | ⚠️ Add policy enforcement tests for restricted flags (debug mode, maintenance mode)          |
+### 1.2 Test Environments
+- **Development**: Permissive rules, unsigned plugins allowed
+- **Enterprise**: Strict rules, license validation required
+- **Production**: Maximum security, all rules enforced
+- **CI/CD**: Tolerant mode for gradual adoption
 
----
+## 2. Unit Tests for ESLint Rules
 
-## 📊 **Coverage Summary by Domain**
+### 2.1 Core Architecture Rules
 
-| **Domain**                      | **Total Modules** | **Modules Tested** | **Coverage % (approx)** |
-| ------------------------------- | ----------------- | ------------------ | ----------------------- |
-| Core Infrastructure             | 12                | 8                  | **≈ 67%**               |
-| Security + MAC + NonRepudiation | 6                 | 4                  | **≈ 70%**               |
-| Policy / Governance             | 3                 | 1.5                | **≈ 50%**               |
-| Grid / UI Layer                 | 5                 | 4                  | **≈ 80%**               |
-| Plugin / Extension              | 4                 | 1                  | **≈ 25%**               |
-| Lifecycle / Bootstrap           | 2                 | 0                  | **≈ 0%**                |
-| Network / CDS                   | 2                 | 1                  | **≈ 50%**               |
+#### **no-direct-core-instantiation.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - Service registry instantiation
+  - Bootstrap file usage
+  - Allowed instantiator patterns
 
-**→ Weighted Overall Coverage:** ~ **59% functional behavior coverage**
+❌ Invalid Patterns  
+  - Direct class instantiation outside registry
+  - Static method calls bypassing registry
+  - Import statements for forbidden classes
+  - Enterprise class instantiation without license
 
----
+Test Scenarios:
+  - Core classes (SecurityManager, MetricsRegistry, etc.)
+  - Enterprise classes (UnifiedPolicyEngine, SystemOptimizer, etc.)
+  - Allowed vs forbidden file contexts
+  - Manager path suggestions in error messages
+```
 
-## 🧠 **Behavior Validated Across Layers**
+#### **require-action-dispatcher.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - ActionDispatcher.dispatch() usage
+  - Declarative data-action attributes
+  - Proper action patterns
 
-✅ Core event propagation (`HybridStateManager` → `StorageLoader`)
-✅ Grid drag/snap/undo correctness
-✅ MAC classification enforcement & TTL expiry
-✅ ECDSA signing & audit integrity
-✅ CDS proxy transport forwarding
-✅ Polyinstantiation and data merge logic
+❌ Invalid Patterns
+  - Direct storage access bypassing dispatcher
+  - UI mutations without declarative actions
+  - Synchronous operations without dispatcher
 
----
+Test Scenarios:
+  - Storage operations (put, set, update, delete)
+  - UI operations (toggle, show, hide, enable)
+  - HTML content with/without data-action attributes
+  - Template literals with interactive elements
+```
 
-## ⚙️ **Behavioral Gaps Remaining**
+### 2.2 Security & Access Control Rules
 
-* ❌ Full bootstrap flow (cold-start → metrics)
-* ❌ Tenant vs. system policy enforcement
-* ❌ InformationFlowTracker derivation lineage
-* ❌ AI embedding + semantic search integration
-* ❌ Plugin manifest validation against schema
-* ❌ CacheManager lifecycle + eviction policy tests
+#### **no-external-scripts.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - Local resource loading
+  - Approved domain access
+  - CDS transport usage
 
----
+❌ Invalid Patterns
+  - Forbidden CDN domains
+  - Dynamic script creation
+  - External fetch without CDS
 
-## 🧩 **Suggested Next Actions**
+Test Scenarios:
+  - Import statements with external URLs
+  - Script tag patterns in strings
+  - Dynamic import() calls
+  - createElement('script') patterns
+  - Assignment to .src properties
+```
 
-1. **Add Integration Test Layer:**
+#### **require-cds-transport.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - CDS.fetch() usage
+  - Transport configuration
+  - Localhost exceptions
 
-   * `bootstrap.integration.test.js`
-     → Validate full system startup (ServiceRegistry, policies, metrics).
-2. **Add Policy Enforcement Test Suite:**
+❌ Invalid Patterns
+  - Raw fetch() to external domains
+  - XMLHttpRequest without transport
+  - WebSocket connections bypassing CDS
 
-   * Validate `SystemPolicies.update()` rollback behavior.
-   * Test `TenantPolicyService` cache invalidation.
-3. **Add RenderContext + Policy Tests:**
+Test Scenarios:
+  - Network API detection (fetch, XMLHttpRequest, WebSocket)
+  - URL analysis (external vs local)
+  - Transport pattern recognition
+  - Strict vs permissive modes
+```
 
-   * Simulate multiple roles + policies in adaptive UI contexts.
-4. **Add `ManifestPluginSystem.test.js`:**
+#### **require-forensic-envelope.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - forensicLogger.createEnvelope() calls
+  - Signed envelope creation
+  - Conditional forensics for sensitive data
 
-   * Validate plugin manifest structure against `PluginManifestSchema`.
-5. **Add Metrics Validation:**
+❌ Invalid Patterns
+  - Auditable operations without envelopes
+  - Enterprise operations without signed envelopes
+  - Sensitive data operations untracked
 
-   * Spy-based checks on `metricsRegistry.increment()` and `.timer()` calls.
+Test Scenarios:
+  - Storage operations (put, set, update, delete)
+  - Policy operations (updatePolicy, setPolicy)
+  - System control operations
+  - Security operations (authenticate, authorize)
+  - Sensitive data pattern detection
+```
 
----
+### 2.3 Enterprise Feature Rules
 
-Would you like me to now generate a **`TEST_COVERAGE_SUMMARY.md` file** (with a readable table and short descriptions per subsystem) that you can drop straight into `/docs/` or `/tests/` in your repo? It’ll include ✅/⚠️/❌ icons, coverage %, and recommended next test files for v8 readiness.
+#### **require-license-validation.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - license.hasFeature() checks
+  - Enterprise feature gating
+  - Conditional license validation
 
+❌ Invalid Patterns
+  - Enterprise features without license checks
+  - Enterprise class instantiation unprotected
+  - Method calls bypassing validation
 
+Test Scenarios:
+  - Enterprise feature mappings
+  - Enterprise class detection
+  - License check pattern recognition
+  - Strict vs normal mode enforcement
+```
 
+#### **require-signed-plugins.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - validatePluginSignature() calls
+  - Signed plugin registration
+  - Community plugin patterns
+
+❌ Invalid Patterns
+  - Enterprise plugins without signatures
+  - System access without signing
+  - Missing license validation
+
+Test Scenarios:
+  - Plugin operation detection
+  - Enterprise vs community plugin classification
+  - Signature validation pattern recognition
+  - Development environment exceptions
+```
+
+### 2.4 Observability & Performance Rules
+
+#### **require-observability-compliance.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - Automatic instrumentation paths
+  - Orchestrator usage
+  - Policy engine integration
+
+❌ Invalid Patterns
+  - Manual logging in business logic
+  - Operations bypassing orchestrator
+  - Missing auto-instrumentation
+
+Test Scenarios:
+  - Observable operation detection
+  - Manual vs automatic instrumentation
+  - Orchestrator pattern recognition
+  - Policy engine integration
+```
+
+#### **require-performance-budget.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - Performance budget comments
+  - O(1) operations
+  - Bounded collections
+
+❌ Invalid Patterns
+  - Missing performance budgets
+  - O(n) anti-patterns
+  - Unbounded operations
+
+Test Scenarios:
+  - Performance-critical operation detection
+  - Budget comment parsing
+  - Anti-pattern recognition
+  - Bounded vs unbounded collection usage
+```
+
+#### **require-policy-compliance.js**
+```
+Test Categories:
+✅ Valid Patterns
+  - policies.getPolicy() checks
+  - Policy domain validation
+  - Enterprise license integration
+
+❌ Invalid Patterns
+  - Policy-sensitive operations without checks
+  - Missing domain validation
+  - Enterprise features without compliance
+
+Test Scenarios:
+  - Policy-sensitive operation mapping
+  - Policy check pattern recognition
+  - Enterprise vs basic enforcement levels
+```
+
+## 3. Integration Tests
+
+### 3.1 Plugin Configuration Tests
+```
+Test Scenarios:
+  - Plugin loading and rule registration
+  - Recommended vs enterprise config application
+  - Rule precedence and overrides
+  - Meta information validation
+  - Error handling for malformed configs
+```
+
+### 3.2 Cross-Rule Interaction Tests
+```
+Test Scenarios:
+  - Multiple rules triggering on same code
+  - Rule exemption hierarchies
+  - Performance impact of rule combinations
+  - Error message clarity with multiple violations
+```
+
+### 3.3 File Context Tests
+```
+Test Scenarios:
+  - Different rule sets for different file types
+  - Enterprise vs core file handling
+  - Test file exemptions
+  - Development environment overrides
+```
+
+## 4. Configuration Tests
+
+### 4.1 Environment-Specific Configurations
+```
+Development Environment:
+  - Unsigned plugins allowed
+  - Relaxed performance requirements
+  - Debugging-friendly error messages
+
+Enterprise Environment:
+  - Strict license validation
+  - Mandatory signed plugins
+  - Full observability compliance
+
+Production Environment:
+  - Maximum security enforcement
+  - Performance optimization required
+  - Complete audit trail
+
+CI/CD Environment:
+  - Tolerant mode for gradual adoption
+  - Progressive rule enforcement
+  - Build failure handling
+```
+
+### 4.2 Rule Option Tests
+```
+Test Scenarios:
+  - allowIn array functionality
+  - enforceLevel configurations
+  - strictMode vs permissive modes
+  - Custom domain allowlists
+  - Performance budget thresholds
+```
+
+## 5. Enterprise Feature Tests
+
+### 5.1 License Validation Tests
+```
+Test Scenarios:
+  - Feature flag detection and validation
+  - License expiration handling
+  - Invalid license responses
+  - License type detection (basic vs enterprise)
+  - Graceful degradation for missing licenses
+```
+
+### 5.2 Compliance Tests
+```
+Test Scenarios:
+  - Audit event generation
+  - Forensic envelope creation
+  - Data classification handling
+  - Retention policy compliance
+  - Regulatory requirement mapping
+```
+
+### 5.3 Security Tests
+```
+Test Scenarios:
+  - Signature validation accuracy
+  - Cryptographic verification
+  - Certificate chain validation
+  - Tamper detection
+  - Malicious plugin prevention
+```
+
+## 6. Performance Tests
+
+### 6.1 Rule Execution Performance
+```
+Test Scenarios:
+  - Individual rule execution time
+  - Large file processing efficiency
+  - Memory usage optimization
+  - Concurrent rule execution
+  - Cache effectiveness
+```
+
+### 6.2 Scale Tests
+```
+Test Scenarios:
+  - 1000+ file projects
+  - Complex nested code structures
+  - Large configuration objects
+  - High-frequency CI/CD runs
+  - Multi-environment deployments
+```
+
+## 7. Error Handling & Edge Cases
+
+### 7.1 Malformed Code Tests
+```
+Test Scenarios:
+  - Syntax errors in target files
+  - Incomplete code structures
+  - Missing dependencies
+  - Circular imports
+  - Invalid AST nodes
+```
+
+### 7.2 Edge Case Scenarios
+```
+Test Scenarios:
+  - Empty files
+  - Comment-only files
+  - Dynamic imports with variables
+  - Conditional code paths
+  - Minified code
+  - Generated code patterns
+```
+
+## 8. User Experience Tests
+
+### 8.1 Error Message Quality
+```
+Test Scenarios:
+  - Message clarity and actionability
+  - Suggested fixes accuracy
+  - Context-appropriate suggestions
+  - Internationalization support
+  - Consistent terminology
+```
+
+### 8.2 Documentation Tests
+```
+Test Scenarios:
+  - Rule description accuracy
+  - Example code validation
+  - Configuration option documentation
+  - Migration guide completeness
+  - Troubleshooting guide effectiveness
+```
+
+## 9. Regression Tests
+
+### 9.1 Version Compatibility
+```
+Test Scenarios:
+  - ESLint version compatibility
+  - Node.js version support
+  - Plugin dependency compatibility
+  - Configuration migration
+  - Backward compatibility
+```
+
+### 9.2 Known Issue Prevention
+```
+Test Scenarios:
+  - Previously fixed bugs
+  - Performance regressions
+  - Configuration breaking changes
+  - Rule interaction issues
+  - Platform-specific problems
+```
+
+## 10. Test Execution Strategy
+
+### 10.1 Test Priorities
+```
+P0 - Critical:
+  - Core rule functionality
+  - Security rule enforcement
+  - Enterprise license validation
+
+P1 - High:
+  - Performance optimization
+  - Error message quality
+  - Configuration handling
+
+P2 - Medium:
+  - Edge cases
+  - Advanced configurations
+  - Documentation tests
+
+P3 - Low:
+  - Nice-to-have features
+  - Extended compatibility
+  - Optimization edge cases
+```
+
+### 10.2 Automation Strategy
+```
+Unit Tests: 
+  - 100% automated
+  - Fast execution (< 5 minutes)
+  - Part of pre-commit hooks
+
+Integration Tests:
+  - 95% automated
+  - Medium execution time (< 15 minutes)
+  - Required for PR merge
+
+Performance Tests:
+  - Automated benchmarks
+  - Nightly execution
+  - Performance regression detection
+
+Manual Tests:
+  - User experience validation
+  - Complex scenario verification
+  - Documentation accuracy
+```
+
+### 10.3 Test Data Management
+```
+Test Fixtures:
+  - Representative code samples
+  - Real-world project structures
+  - Edge case scenarios
+  - Performance test data
+
+Mock Data:
+  - License server responses
+  - Plugin manifests
+  - Configuration variations
+  - Error scenarios
+```
+
+This comprehensive test plan ensures thorough validation of all aspects of the Nodus ESLint plugin, from individual rule functionality to enterprise compliance requirements and performance characteristics.

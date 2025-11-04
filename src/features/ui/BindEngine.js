@@ -2,6 +2,8 @@
 // Lightweight reactive binding engine with security, forensic, and metrics integration
 // Vanilla ESM. No frameworks. Safe rendering only.
 
+import { constantTimeCheck } from "../../platform/security/ct.js";
+
 /**
  * @file BindEngine_v2.js
  * @version 2.0.0
@@ -16,15 +18,14 @@
  *  - Access decisions use constant-time padding to mitigate timing channels.
  */
 
-import { constantTimeCheck } from "@core/security/ct.js";
-
 /**
  * @typedef {Object} BindEngineDeps
- * @property {import('../HybridStateManager.js').HybridStateManager} stateManager
- * @property {{ canRead?: (label: { level:string, compartments:Set<string> }|string, path?: string)=>Promise<boolean>, label?: (obj:any)=>{level:string, compartments:Set<string>} }} [securityManager]
- * @property {{ createEnvelope:(type:string,payload:any)=>Promise<any>, commitEnvelope:(env:any)=>Promise<void> }} forensicLogger
- * @property {{ record?:(name:string,data?:any)=>void, increment?:(name:string,delta?:number)=>void }} [metrics]
- * @property {{ renderRestriction:(el:Element, info:any)=>void }} [securityExplainer]
+ * @property {import('../state/HybridStateManager.js').default} stateManager
+ * @property {import('../../core/security/SecurityManager.js').default} [securityManager]
+ * @property {import('../../core/security/ForensicLogger.js').ForensicLogger} forensicLogger
+ * @property {import('../../utils/MetricsRegistry.js').MetricsRegistry} [metrics]
+ * @property {any} [securityExplainer]
+ * @property {import('../../core/ai/EmbeddingManager.js').default} [embeddingManager]
  * @property {{ on:(evt:string,cb:(data:any)=>void)=>void, off?:(evt:string,cb:(data:any)=>void)=>void }} [eventBus]
  */
 
@@ -98,9 +99,23 @@ export default class BindEngine {
 	 */
 
 	constructor(deps) {
-		this.#deps = deps;
-		if (!deps?.stateManager)
+		if (!deps?.stateManager) {
 			throw new Error("BindEngine requires stateManager");
+		}
+
+		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from the stateManager.
+		const sm = deps.stateManager;
+		this.#deps = {
+			stateManager: sm,
+			forensicLogger: sm.managers.forensicLogger,
+			metrics: sm.metricsRegistry?.namespace("bindEngine"),
+			securityManager: sm.managers.securityManager,
+			securityExplainer: sm.managers.securityExplainer,
+			embeddingManager: sm.managers.embeddingManager,
+			eventBus: sm.managers.eventBus,
+			...deps, // Allow explicit overrides for testing
+		};
+
 		this.#sanitizer = this.#getSanitizer();
 	}
 
@@ -116,26 +131,89 @@ export default class BindEngine {
 	 */
 
 	async start(root = document) {
-		if (this.#started) return;
-		this.#started = true;
+		const orchestrator =
+			this.#deps.stateManager?.managers?.asyncOrchestrator;
+		if (orchestrator) {
+			await orchestrator.run(
+				async () => {
+					if (this.#started) return;
+					this.#started = true;
 
-		// Reactivity: listen to state changes
-		const events = ["stateChanged", "state:changed", "stateChange"];
-		for (const evtName of events) {
-			const maybeUnsub = this.#deps.stateManager.on?.(evtName, (evt) => {
-				try {
-					this.#onStateChanged(evt);
-				} catch {
-					/* swallow to avoid UI lock */
+					// Reactivity: listen to state changes
+					const events = [
+						"stateChanged",
+						"state:changed",
+						"stateChange",
+					];
+					for (const evtName of events) {
+						const maybeUnsub = this.#deps.stateManager.on?.(
+							evtName,
+							(evt) => {
+								try {
+									this.#onStateChanged(evt);
+								} catch {
+									/* swallow to avoid UI lock */
+								}
+							}
+						);
+						if (typeof maybeUnsub === "function") {
+							this.#stateUnsubscribes.push(maybeUnsub);
+						}
+					}
+
+					// Initial scan
+					await this.bindAll(root);
+
+					// If a StateUIBridge exists on the state manager, attach this BindEngine
+					// so the bridge can delegate coarse-grained updates to us.
+					try {
+						this.#deps.stateManager?.managers?.stateUIBridge?.attachBindEngine?.(
+							this
+						);
+					} catch {
+						// best-effort
+						void 0;
+					}
+				},
+				{
+					label: "BindEngine.start",
+					eventType: "BIND_ENGINE_START",
+					actorId: "system.bindEngine",
+					meta: { root: root.nodeName },
 				}
-			});
-			if (typeof maybeUnsub === "function") {
-				this.#stateUnsubscribes.push(maybeUnsub);
+			);
+		} else {
+			// Fallback if no orchestrator is available (e.g., during early bootstrap or testing)
+			if (this.#started) return;
+			this.#started = true;
+
+			const events = ["stateChanged", "state:changed", "stateChange"];
+			for (const evtName of events) {
+				const maybeUnsub = this.#deps.stateManager.on?.(
+					evtName,
+					(evt) => {
+						try {
+							this.#onStateChanged(evt);
+						} catch {
+							/* swallow to avoid UI lock */
+						}
+					}
+				);
+				if (typeof maybeUnsub === "function") {
+					this.#stateUnsubscribes.push(maybeUnsub);
+				}
+			}
+
+			await this.bindAll(root);
+
+			try {
+				this.#deps.stateManager?.managers?.stateUIBridge?.attachBindEngine?.(
+					this
+				);
+			} catch {
+				void 0;
 			}
 		}
-
-		// Initial scan
-		await this.bindAll(root);
 	}
 
 	/**
@@ -173,18 +251,51 @@ export default class BindEngine {
 	 * @returns {Promise<void>}
 	 */
 	async bindAll(root = document) {
-		const list = root.querySelectorAll?.("[data-bind]") ?? [];
-		for (const el of list) {
-			const path = el.getAttribute("data-bind");
-			if (!path) continue;
-			/** @type {BindingOptions} */
-			const opts = {
-				format: el.getAttribute("data-bind-format") || undefined,
-				twoWay: el.getAttribute("data-bind-two-way") === "true",
-				attr: el.getAttribute("data-bind-attr") || undefined,
-				fallback: el.getAttribute("data-bind-fallback") || "",
-			};
-			await this.registerBinding(el, path, opts);
+		const orchestrator =
+			this.#deps.stateManager?.managers?.asyncOrchestrator;
+		if (orchestrator) {
+			await orchestrator.run(
+				async () => {
+					const list = root.querySelectorAll?.("[data-bind]") ?? [];
+					for (const el of list) {
+						const path = el.getAttribute("data-bind");
+						if (!path) continue;
+						/** @type {BindingOptions} */
+						const opts = {
+							format:
+								el.getAttribute("data-bind-format") ||
+								undefined,
+							twoWay:
+								el.getAttribute("data-bind-two-way") === "true",
+							attr:
+								el.getAttribute("data-bind-attr") || undefined,
+							fallback:
+								el.getAttribute("data-bind-fallback") || "",
+						};
+						await this.registerBinding(el, path, opts);
+					}
+				},
+				{
+					label: "BindEngine.bindAll",
+					eventType: "BIND_ENGINE_BIND_ALL",
+					actorId: "system.bindEngine",
+					meta: { root: root.nodeName },
+				}
+			);
+		} else {
+			const list = root.querySelectorAll?.("[data-bind]") ?? [];
+			for (const el of list) {
+				const path = el.getAttribute("data-bind");
+				if (!path) continue;
+				/** @type {BindingOptions} */
+				const opts = {
+					format: el.getAttribute("data-bind-format") || undefined,
+					twoWay: el.getAttribute("data-bind-two-way") === "true",
+					attr: el.getAttribute("data-bind-attr") || undefined,
+					fallback: el.getAttribute("data-bind-fallback") || "",
+				};
+				await this.registerBinding(el, path, opts);
+			}
 		}
 	}
 
@@ -201,26 +312,69 @@ export default class BindEngine {
 	 * @returns {Promise<void>}
 	 */
 	async registerBinding(el, path, opts = {}) {
-		// Unregister any existing
-		this.unregisterBinding(el);
+		await this.#run(
+			async (errorHelpers) => {
+				// Unregister any existing
+				this.unregisterBinding(el);
 
-		// Subscribe to fine-grained path updates if supported
-		const unsub = this.#deps.stateManager.subscribe
-			? this.#deps.stateManager.subscribe(path, (value) =>
-					this.#safeRender(el, path, value, opts)
-				)
-			: undefined;
+				// Support simple "query:" bindings that use QueryService for complex queries
+				if (typeof path === "string" && path.startsWith("query:")) {
+					const q = path.slice(6);
+					const qs = this.#deps.stateManager?.managers?.queryService;
+					if (qs && typeof qs.search === "function") {
+						const results = await errorHelpers.tryOr(
+							() => qs.search(q, { limit: 5 }),
+							null,
+							{
+								component: "BindEngine",
+								operation: "queryService.search",
+								path,
+								query: q,
+							}
+						);
+						if (results) {
+							const payload = results?.[0] ?? {
+								count: results?.length ?? 0,
+							};
+							await this.#safeRender(el, path, payload, opts);
+						} else {
+							// fallback to empty
+							await this.#safeRender(el, path, null, opts);
+						}
+						// No subscription for query-based bindings by default
+						this.#bindings.set(el, {
+							path,
+							opts,
+							unsub: undefined,
+						});
+						return;
+					}
+				}
 
-		this.#bindings.set(el, { path, opts, unsub });
+				// Subscribe to fine-grained path updates if supported
+				const unsub = this.#deps.stateManager.subscribe
+					? this.#deps.stateManager.subscribe(path, (value) =>
+							this.#safeRender(el, path, value, opts)
+						)
+					: undefined;
 
-		// Initial render
-		const current = this.#deps.stateManager.get?.(path);
-		await this.#safeRender(el, path, current, opts);
+				this.#bindings.set(el, { path, opts, unsub });
 
-		// Two-way
-		if (opts.twoWay) {
-			this.#wireTwoWay(el, path, opts);
-		}
+				// Initial render
+				const current = this.#deps.stateManager.get?.(path);
+				await this.#safeRender(el, path, current, opts);
+
+				// Two-way
+				if (opts.twoWay) {
+					this.#wireTwoWay(el, path, opts);
+				}
+			},
+			{
+				label: "BindEngine.registerBinding",
+				eventType: "BIND_ENGINE_REGISTER",
+				meta: { path, element: el.tagName },
+			}
+		);
 	}
 
 	/**
@@ -252,28 +406,32 @@ export default class BindEngine {
 	 * @param {any} value - Optional value override; when omitted the current state value is used.
 	 * @returns {Promise<void>}
 	 */
-	async updateBinding(path, value) {
+	// eslint-disable-next-line copilotGuard/require-forensic-envelope
+	updateBinding(path, value) {
 		if (!path) return;
 
-		await this.#withForensicEnvelope(
-			"UI_BIND_UPDATE_COARSE",
-			{
-				path,
-				source: "StateUIBridge",
-			},
-			async () => {
+		// Orchestrate the coarse-grained event, but do not hold forensic
+		// envelopes across async work — schedule per-element renders and
+		// let each `#safeRender` handle its own orchestration and DOM
+		// mutation envelopes.
+		return this.#run(
+			() => {
 				for (const [el, meta] of this.#bindings) {
 					if (meta.path !== path) continue;
 					const nextVal =
 						value !== undefined
 							? value
 							: this.#deps.stateManager.get?.(path);
-					try {
-						await this.#safeRender(el, path, nextVal, meta.opts);
-					} catch {
-						/* noop - rendering is best-effort */
-					}
+					// Fire-and-forget safe renders; each call is best-effort.
+					this.#safeRender(el, path, nextVal, meta.opts).catch(
+						() => {}
+					);
 				}
+			},
+			{
+				label: "BindEngine.updateBinding",
+				eventType: "BIND_ENGINE_UPDATE",
+				meta: { path },
 			}
 		);
 	}
@@ -288,57 +446,9 @@ export default class BindEngine {
 	 * @param {() => Promise<T>|T} operation Operation to execute while the envelope is active.
 	 * @returns {Promise<T>} Resolves with the operation result.
 	 */
-	async #withForensicEnvelope(type, payload, operation) {
-		/* copilotGuard:require-forensic-envelope */
-		const logger = this.#deps.forensicLogger;
-		if (!logger?.createEnvelope || !logger?.commitEnvelope) {
-			return await operation();
-		}
-
-		const label =
-			payload?.path != null
-				? this.#labelForPath(payload.path)
-				: { level: "unclassified", compartments: new Set() };
-
-		const envelopePayload = {
-			...payload,
-			classification: {
-				level: label.level,
-				compartments: Array.from(label.compartments || []),
-			},
-		};
-
-		let envelopeTask;
-		try {
-			envelopeTask = logger.createEnvelope(type, envelopePayload);
-		} catch {
-			return await operation();
-		}
-		if (!envelopeTask) {
-			return await operation();
-		}
-
-		let result;
-		try {
-			result = await operation();
-		} catch (error) {
-			try {
-				const env = await envelopeTask;
-				await logger.commitEnvelope(env);
-			} catch {
-				/* envelope commit best-effort */
-			}
-			throw error;
-		}
-
-		try {
-			const env = await envelopeTask;
-			await logger.commitEnvelope(env);
-		} catch {
-			/* commit best-effort */
-		}
-		return result;
-	}
+	// Forensic envelopes are intentionally handled at the point of synchronous
+	// DOM mutation via `#mutate`. Avoid wrapping long-running async operations
+	// with forensic envelopes to prevent holding envelopes open across awaits.
 
 	// ---------------------------------------------------------------------------
 	// Internal: Rendering & Security
@@ -372,90 +482,169 @@ export default class BindEngine {
 	 * @returns {Promise<void>}
 	 */
 	async #safeRender(el, path, value, opts) {
-		const t0 = globalThis.performance?.now?.() ?? Date.now();
+		return await this.#run(
+			async () => {
+				const t0 = globalThis.performance?.now?.() ?? Date.now();
 
-		// Security decision. If no security manager or MAC engine is provided we
-		// can short-circuit to `allowed=true` synchronously to avoid microtask
-		// delays that would make UI updates race with tests. When a security
-		// manager is present, perform the constant-time check.
-		let allowed;
-		if (!this.#deps.securityManager && !this.#deps.stateManager?.mac) {
-			allowed = true;
-		} else {
-			allowed = await constantTimeCheck(
-				async () => {
+				// Security decision. If no security manager or MAC engine is provided we
+				// can short-circuit to `allowed=true` synchronously to avoid microtask
+				// delays that would make UI updates race with tests. When a security
+				// manager is present, perform the constant-time check.
+				let allowed = true;
+				// Prefer the securityManager attached to the state manager if available
+				const policySecurityManager =
+					this.#deps.stateManager?.managers?.securityManager ??
+					this.#deps.securityManager; // Fallback to direct dependency
+
+				if (policySecurityManager) {
+					const orchestrator =
+						this.#deps.stateManager?.managers?.asyncOrchestrator;
 					const label = this.#labelForPath(path);
-					if (this.#deps.securityManager?.canRead) {
-						return !!(await this.#deps.securityManager.canRead(
-							label,
-							path
-						));
+					let checkResult = true;
+					if (policySecurityManager?.canRead) {
+						if (orchestrator) {
+							checkResult = await orchestrator.run(
+								() =>
+									policySecurityManager.canRead(label, path),
+								{
+									label: "BindEngine.securityCheck",
+									eventType: "BIND_SECURITY_CHECK",
+									actorId: "system.bindEngine",
+									meta: { path },
+								}
+							);
+						} else {
+							checkResult = await policySecurityManager.canRead(
+								label,
+								path
+							);
+						}
+						checkResult = !!checkResult;
 					}
-					// Default allow if no security manager present (dev mode)
-					return true;
-				},
-				{ minDurationMs: this.#deps.ctMinDurationMs ?? 0 }
-			);
-		}
 
-		if (!allowed) {
-			// Render restriction via explainer
-			if (this.#deps.securityExplainer) {
-				this.#deps.securityExplainer.renderRestriction(el, {
-					reason: "no-read-up",
-					path,
-				});
-			} else {
-				// Fallback minimal safe rendering
-				this.#mutate(
-					el,
-					() => {
-						el.textContent = opts.fallback ?? "Restricted";
+					allowed = await constantTimeCheck(
+						checkResult,
+						{ minDurationMs: this.#deps.ctMinDurationMs ?? 0 },
+						{ minDurationMs: this.#deps.ctMinDurationMs ?? 0 }
+					);
+				}
+
+				if (!allowed) {
+					// Render restriction via explainer
+					if (this.#deps.securityExplainer) {
+						this.#deps.securityExplainer.renderRestriction(el, {
+							reason: "no-read-up",
+							path,
+						});
+					} else {
+						// Fallback minimal safe rendering
+						this.#mutate(
+							el,
+							() => {
+								el.textContent = opts.fallback ?? "Restricted";
+							},
+							{
+								type: "UI_BIND_DENIED",
+								path,
+							}
+						);
+					}
+					await this.#run(
+						async () => {
+							this.#deps.metrics?.record?.("bind.render.denied", {
+								count: 1,
+							});
+						},
+						{
+							label: "BindEngine.metrics",
+							eventType: "BIND_ENGINE_METRICS",
+							meta: { path },
+						}
+					);
+					return;
+				}
+
+				// Optional mapping/formatting
+				let out = value;
+				if (typeof opts.map === "function") out = opts.map(out);
+				if (
+					opts.format &&
+					typeof this.#deps.stateManager.format === "function"
+				) {
+					out = this.#deps.stateManager.format(opts.format, out);
+				}
+				out = this.#sanitizeOutbound(out);
+
+				// Mutate DOM safely under forensic envelope
+				if (opts.attr) {
+					this.#mutate(
+						el,
+						() => {
+							el.setAttribute(
+								opts.attr,
+								out == null ? "" : String(out)
+							);
+						},
+						{
+							type: "UI_BIND_ATTR",
+							path,
+							attr: opts.attr,
+							value: out,
+						}
+					);
+				} else {
+					this.#mutate(
+						el,
+						() => {
+							// textContent only – prevents HTML injection
+							el.textContent = out == null ? "" : String(out);
+						},
+						{ type: "UI_BIND_TEXT", path, value: out }
+					);
+				}
+
+				const dt = (globalThis.performance?.now?.() ?? Date.now()) - t0;
+				await this.#run(
+					async () => {
+						this.#deps.metrics?.record?.("bind.render.time", {
+							path,
+							ms: dt,
+						});
+						this.#deps.metrics?.record?.("bind.render.count", {
+							count: 1,
+						});
 					},
 					{
-						type: "UI_BIND_DENIED",
-						path,
+						label: "BindEngine.metrics",
+						eventType: "BIND_ENGINE_METRICS",
+						meta: { path },
 					}
 				);
+
+				// V8.0 Parity: Optional embedding for UI semantic analytics.
+				if (
+					this.#deps.embeddingManager &&
+					this.#deps.stateManager?.getPolicy?.(
+						"observability",
+						"embedding_depth"
+					) !== "none"
+				) {
+					this.#deps.embeddingManager
+						.createEmbedding({
+							source: `ui-bind:${path}`,
+							content: String(out),
+						})
+						.catch(() => {
+							/* best-effort */
+						});
+				}
+			},
+			{
+				label: "BindEngine.safeRender",
+				eventType: "BIND_SAFE_RENDER",
+				meta: { path },
 			}
-			this.#deps.metrics?.increment?.("bind.render.denied", 1);
-			return;
-		}
-
-		// Optional mapping/formatting
-		let out = value;
-		if (typeof opts.map === "function") out = opts.map(out);
-		if (
-			opts.format &&
-			typeof this.#deps.stateManager.format === "function"
-		) {
-			out = this.#deps.stateManager.format(opts.format, out);
-		}
-		out = this.#sanitizeOutbound(out);
-
-		// Mutate DOM safely under forensic envelope
-		if (opts.attr) {
-			this.#mutate(
-				el,
-				() => {
-					el.setAttribute(opts.attr, out == null ? "" : String(out));
-				},
-				{ type: "UI_BIND_ATTR", path, attr: opts.attr, value: out }
-			);
-		} else {
-			this.#mutate(
-				el,
-				() => {
-					// textContent only – prevents HTML injection
-					el.textContent = out == null ? "" : String(out);
-				},
-				{ type: "UI_BIND_TEXT", path, value: out }
-			);
-		}
-
-		const dt = (globalThis.performance?.now?.() ?? Date.now()) - t0;
-		this.#deps.metrics?.record?.("bind.render.time", { path, ms: dt });
-		this.#deps.metrics?.increment?.("bind.render.count", 1);
+		);
 	}
 
 	/**
@@ -486,11 +675,39 @@ export default class BindEngine {
 	#getSanitizer() {
 		const stateManager = this.#deps.stateManager;
 		const managerSanitizer =
-			stateManager?.managers?.sanitizer || stateManager?.sanitizer || null;
+			stateManager?.managers?.sanitizer ||
+			stateManager?.sanitizer ||
+			null;
 		if (managerSanitizer && managerSanitizer !== this.#sanitizer) {
 			this.#sanitizer = managerSanitizer;
 		}
 		return this.#sanitizer;
+	}
+
+	/**
+	 * Run an operation under the async orchestrator when available so
+	 * auditing/metrics/policy metadata are attached. Falls back to calling
+	 * the operation directly and passing errorHelpers when provided.
+	 * @private
+	 * @template T
+	 * @param {() => Promise<T>|((errorHelpers:any)=>Promise<T>)} operation
+	 * @param {{label?:string,eventType?:string,meta?:any}} [opts]
+	 * @returns {Promise<T>}
+	 */
+	async #run(operation, opts = {}) {
+		const orchestrator =
+			this.#deps.stateManager?.managers?.asyncOrchestrator;
+		const runOpts = {
+			label: opts.label ?? "BindEngine.run",
+			eventType: opts.eventType ?? "BIND_ENGINE_OP",
+			actorId: "system.bindEngine",
+			meta: opts.meta ?? {},
+		};
+		if (orchestrator) {
+			return await orchestrator.run(operation, runOpts);
+		}
+		// If the operation expects errorHelpers, pass them; otherwise call directly.
+		return await operation(this.#deps.stateManager?.managers?.errorHelpers);
 	}
 
 	/**
@@ -538,7 +755,8 @@ export default class BindEngine {
 	 */
 	#sanitizeInbound(value) {
 		const sanitizer = this.#getSanitizer();
-		if (!sanitizer) return value ?? (typeof value === "string" ? "" : value);
+		if (!sanitizer)
+			return value ?? (typeof value === "string" ? "" : value);
 		try {
 			if (typeof value === "string" && sanitizer.cleanseText) {
 				const cleaned = sanitizer.cleanseText(value);
@@ -579,33 +797,42 @@ export default class BindEngine {
 	 */
 	async #mutate(el, fn, meta) {
 		/* copilotGuard:require-forensic-envelope */
-		// Start creating the forensic envelope but don't await it — perform the
-		// mutation synchronously so callers and tests see immediate updates.
-		const envPromise = this.#deps.forensicLogger.createEnvelope(
-			"DOM_MUTATION",
-			{
-				target: el.tagName,
-				...meta,
-			}
+		return await this.#run(
+			() => {
+				// Start creating the forensic envelope but don't await it — perform the
+				// mutation synchronously so callers and tests see immediate updates.
+				const envPromise = this.#deps.forensicLogger.createEnvelope(
+					"DOM_MUTATION",
+					{
+						target: el.tagName,
+						...meta,
+					}
+				);
+				try {
+					fn();
+					// When the envelope is available, commit it. Fire-and-forget; swallow
+					// errors to avoid disrupting the UI path. Chain commitEnvelope so
+					// promise nesting is avoided.
+					envPromise
+						.then((env) =>
+							this.#deps.forensicLogger.commitEnvelope(env)
+						)
+						.catch(() => {
+							/* envelope creation or commit failed — swallow to avoid UI disruption */
+						});
+				} catch (e) {
+					// If the mutation itself throws, attempt to commit any envelope when
+					// available and then rethrow to surface the error.
+					envPromise
+						.then((env) =>
+							this.#deps.forensicLogger.commitEnvelope(env)
+						)
+						.catch(() => {});
+					throw e;
+				}
+			},
+			{ label: "BindEngine.mutate", eventType: "DOM_MUTATION", meta }
 		);
-		try {
-			fn();
-			// When the envelope is available, commit it. Fire-and-forget; swallow
-			// errors to avoid disrupting the UI path. Chain commitEnvelope so
-			// promise nesting is avoided.
-			envPromise
-				.then((env) => this.#deps.forensicLogger.commitEnvelope(env))
-				.catch(() => {
-					/* envelope creation or commit failed — swallow to avoid UI disruption */
-				});
-		} catch (e) {
-			// If the mutation itself throws, attempt to commit any envelope when
-			// available and then rethrow to surface the error.
-			envPromise
-				.then((env) => this.#deps.forensicLogger.commitEnvelope(env))
-				.catch(() => {});
-			throw e;
-		}
 	}
 
 	// ---------------------------------------------------------------------------
@@ -623,25 +850,33 @@ export default class BindEngine {
 	 */
 	#wireTwoWay(el, path, opts) {
 		const handler = async (e) => {
-			const rawVal =
-				/** @type {HTMLInputElement|any} */ (e.target).value;
+			const rawVal = /** @type {HTMLInputElement|any} */ (e.target).value;
 			const newVal = this.#sanitizeInbound(rawVal);
 			/* copilotGuard:require-forensic-envelope */
-			const env = await this.#deps.forensicLogger.createEnvelope(
-				"UI_BIND_MUTATION",
+			await this.#run(
+				async () => {
+					const env = await this.#deps.forensicLogger.createEnvelope(
+						"UI_BIND_MUTATION",
+						{
+							path,
+							value: newVal,
+							source: "input",
+						}
+					);
+					try {
+						await this.#deps.stateManager.set?.(path, newVal);
+						await this.#deps.forensicLogger.commitEnvelope(env);
+					} catch (err) {
+						await this.#deps.forensicLogger.commitEnvelope(env);
+						throw err;
+					}
+				},
 				{
-					path,
-					value: newVal,
-					source: "input",
+					label: "BindEngine.wireTwoWay",
+					eventType: "UI_BIND_MUTATION",
+					meta: { path },
 				}
 			);
-			try {
-				await this.#deps.stateManager.set?.(path, newVal);
-				await this.#deps.forensicLogger.commitEnvelope(env);
-			} catch (err) {
-				await this.#deps.forensicLogger.commitEnvelope(env);
-				throw err;
-			}
 		};
 
 		el.addEventListener("input", handler);
@@ -672,6 +907,37 @@ export default class BindEngine {
  */
 export async function createBindEngineService(deps) {
 	/* copilotGuard:require-forensic-envelope */
+	const orchestrator = deps.stateManager?.managers?.asyncOrchestrator;
+	if (orchestrator) {
+		return await orchestrator.run(
+			async () => {
+				/* ForensicLogger.createEnvelope */
+				const env = await deps.forensicLogger.createEnvelope(
+					"SERVICE_START",
+					{
+						service: "BindEngine",
+						context: "bootstrap",
+					}
+				);
+				try {
+					const engine = new BindEngine(deps);
+					await engine.start(document);
+					await deps.forensicLogger.commitEnvelope(env);
+					return engine;
+				} catch (err) {
+					await deps.forensicLogger.commitEnvelope(env);
+					throw err;
+				}
+			},
+			{
+				label: "BindEngine.serviceStart",
+				eventType: "BIND_ENGINE_SERVICE_START",
+				actorId: "system.bindEngine",
+				meta: { context: "bootstrap" },
+			}
+		);
+	}
+
 	/* ForensicLogger.createEnvelope */
 	const env = await deps.forensicLogger.createEnvelope("SERVICE_START", {
 		service: "BindEngine",

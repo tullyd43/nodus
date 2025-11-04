@@ -1,5 +1,7 @@
+/* eslint-disable nodus/no-direct-dom-access */
+/* eslint-disable no-unused-vars */
 /* eslint-env node */
-// eslint.config.js  — ESLint v9+  (Vanilla JS | Node 22 | ESM)
+// eslint.config.js — ESLint v9+ (Enterprise Observability Edition)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -11,7 +13,10 @@ import pluginPromise from "eslint-plugin-promise";
 import pluginSecurity from "eslint-plugin-security";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
 
-import nodusPlugin from "#tools/eslint/eslint-plugin-nodus/index.js";
+// Use a static import for the in-repo nodus plugin so the plugin object is
+// synchronously available to ESLint when it loads this config. Dynamic
+// top-level await imports can be fragile in some ESLint integrations.
+import nodusPlugin from "./tools/eslint/eslint-plugin-nodus/index.js";
 
 // V8.0 Parity: Correctly resolve paths relative to this config file's location.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -19,43 +24,35 @@ const overrideCIPath = path.resolve(
 	__dirname,
 	"tools/eslint/.eslint-override.ci.json"
 );
-const overrideCI = JSON.parse(fs.readFileSync(overrideCIPath, "utf8"));
+const overrideCI = {
+	...JSON.parse(fs.readFileSync(overrideCIPath, "utf8")),
+	plugins: {
+		nodus: nodusPlugin,
+	},
+};
 
 // Dynamically import the exception file from the correct relative path.
-const exceptions = (await import("#tools/eslint/.eslint.config.exception.js"))
-	.default;
+import exceptions from "./tools/eslint/.eslint.config.exception.js";
 
 // Force modern parser
 process.env.ESLINT_USE_FLAT_CONFIG = "true";
 
-// V8.0 Parity: Mandate 1.3 - Custom ESLint rule to prevent direct instantiation of core services.
-const FORBIDDEN_CORE_CLASSES = new Set([
-	"SecurityManager",
-	"MetricsRegistry",
-	"EventFlowEngine",
-	"ForensicLogger",
-	"ErrorHelpers",
-	"IdManager",
-	"CacheManager",
-	"SystemPolicies",
-	"DatabaseOptimizer",
-	"ManifestPluginSystem",
-	"QueryService",
-	"EmbeddingManager",
-	"ValidationLayer",
-	"ComponentDefinitionRegistry",
-	"ConditionRegistry",
-	"ActionHandlerRegistry",
-	"AdaptiveRenderer",
-	"BuildingBlockRenderer",
-	"ExtensionManager",
-]);
+// Enterprise license detection for rule enforcement
+const isEnterpriseEnvironment =
+	process.env.NODUS_LICENSE_TYPE === "enterprise" ||
+	process.env.NODE_ENV === "production";
 
 export default [
 	js.configs.recommended,
 
 	{
-		ignores: ["dist/**", "node_modules/**", "coverage/**"],
+		ignores: [
+			"dist/**",
+			"node_modules/**",
+			"coverage/**",
+			"docs/**",
+			"tools/vite/**",
+		],
 	},
 
 	{
@@ -118,15 +115,10 @@ export default [
 			promise: pluginPromise,
 			security: pluginSecurity,
 			"unused-imports": pluginUnusedImports,
-			// Register the local 'nodus' plugin (tools/eslint-plugin-nodus)
+			// Register the updated nodus plugin with enterprise rules
 			nodus: nodusPlugin,
-			// Backwards-compatible alias: some configs/tests reference 'nodus-rules/*'
+			// Backwards-compatible alias
 			"nodus-rules": nodusPlugin,
-			copilotGuard: (
-				await import(
-					"#tools/eslint/eslint-plugin-copilot-guard/index.js"
-				)
-			).default,
 		},
 		rules: {
 			// --- General Quality ---
@@ -190,23 +182,115 @@ export default [
 			"no-control-regex": "off",
 			"no-empty": "warn",
 
-			// --- Custom Project Rules ---
+			// --- Core Architecture Rules ---
 			"nodus/no-direct-core-instantiation": "error",
-			// Enforce new orchestration model
 			"nodus/require-async-orchestration": "error",
-			"nodus/no-manual-forensics": "error",
+			"nodus/require-action-dispatcher": "error",
 			"nodus/prefer-alias-imports": "error",
+
+			// --- Security & Access Control Rules ---
 			"nodus/no-direct-dom-access": "error",
+			"nodus/no-external-scripts": "error",
 			"nodus/enforce-canonical-sanitizer": "error",
 			"nodus/no-security-string-literals": "error",
+			"nodus/require-cds-transport": "error",
 
-			// --- Copilot Rules ---
-			"copilotGuard/no-insecure-api": "error",
-			"copilotGuard/require-jsdoc-and-tests": "off",
-			"copilotGuard/require-forensic-envelope": "error",
-			"copilotGuard/no-runtime-dependencies": "error",
+			// --- Platform Integration Rules ---
+			"nodus/no-manual-platform-calls": "error",
+			"nodus/require-observability-compliance": "error",
+			"nodus/require-policy-gate": "warn",
+			"nodus/require-policy-compliance": "error",
+
+			// --- Performance & Quality Rules ---
+			"nodus/require-performance-budget": "warn",
 		},
 	},
-	exceptions, // Apply exception overrides as a separate config object
-	process.env.ESLINT_MODE === "tolerant" ? overrideCI : {},
+
+	// Enterprise-specific configuration
+	{
+		files: ["src/platform/enterprise/**/*.js", "src/enterprise/**/*.js"],
+		rules: {
+			// Stricter rules for enterprise code
+			"nodus/require-license-validation": "error",
+			"nodus/require-signed-plugins": "error",
+			"nodus/require-observability-compliance": "error",
+			"nodus/require-performance-budget": "error",
+			"nodus/require-policy-compliance": [
+				"error",
+				{ enforceLevel: "enterprise" },
+			],
+		},
+	},
+
+	// Performance-critical files
+	{
+		files: [
+			"src/platform/performance/**/*.js",
+			"src/platform/cache/**/*.js",
+			"src/platform/storage/**/*.js",
+			"src/grid/**/*.js",
+		],
+		rules: {
+			"nodus/require-performance-budget": "error",
+			"nodus/require-policy-compliance": "error",
+			// Extra strict performance rules
+			"no-unused-expressions": "error",
+			"prefer-template": "error",
+		},
+	},
+
+	// Security-sensitive files
+	{
+		files: [
+			"src/platform/security/**/*.js",
+			"src/platform/crypto/**/*.js",
+			"src/platform/auth/**/*.js",
+		],
+		rules: {
+			"nodus/require-observability-compliance": "error",
+			"nodus/no-security-string-literals": "error",
+			"nodus/require-policy-gate": "error",
+			"security/detect-object-injection": "error",
+		},
+	},
+
+	// Development and testing - more lenient rules
+	{
+		files: [
+			"tests/**/*.js",
+			"src/devtools/**/*.js",
+			"scripts/**/*.js",
+			"tools/**/*.js",
+		],
+		rules: {
+			"nodus/require-license-validation": "off",
+			"nodus/require-observability-compliance": "warn",
+			"nodus/require-performance-budget": "off",
+			"nodus/require-signed-plugins": "off",
+			"no-console": "off",
+		},
+	},
+
+	{
+		...exceptions,
+		plugins: {
+			nodus: nodusPlugin,
+		},
+	},
+
+	// CI tolerant mode for gradual adoption
+	process.env.ESLINT_MODE === "tolerant"
+		? {
+				...overrideCI,
+				rules: {
+					...overrideCI.rules,
+					// Gradually introduce new rules in CI
+					"nodus/require-policy-compliance": "warn",
+					"nodus/require-performance-budget": "warn",
+					"nodus/require-license-validation": "warn",
+					"nodus/require-signed-plugins": "warn",
+					"nodus/require-observability-compliance": "warn",
+				},
+			}
+		: {},
 ];

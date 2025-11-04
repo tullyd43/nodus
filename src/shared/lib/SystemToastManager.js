@@ -4,9 +4,10 @@
  * It integrates with the `EventFlowEngine` to react to all major system events and provides
  * user feedback for errors, performance alerts, and other operations.
  */
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
+import { ForensicLogger } from "@shared/security/ForensicLogger.js";
 
 import { DateCore } from "./DateUtils.js";
+import { SafeDOM } from "./SafeDOM.js";
 
 /**
  * @class SystemToastManager
@@ -22,6 +23,7 @@ export class SystemToastManager {
 	#stateManager;
 	#policiesManager;
 	#metricsRegistry;
+	#uiBridge;
 	#container = null;
 	#maxToasts = 4;
 	#defaultDuration = 2500;
@@ -44,6 +46,7 @@ export class SystemToastManager {
 		// V8.0 Parity: Derive managers and store them for internal use.
 		this.#policiesManager = this.#stateManager?.managers?.policies;
 		this.#metricsRegistry = this.#stateManager?.metricsRegistry;
+		this.#uiBridge = this.#stateManager?.managers?.uiBridge;
 
 		this.#setupContainer();
 		this.#setupEventListeners();
@@ -55,7 +58,9 @@ export class SystemToastManager {
 	 */
 	#setupContainer() {
 		// Create toast container if it doesn't exist
-		this.#container = document.getElementById("system-toast-container");
+		this.#container = this.#uiBridge?.getElementById(
+			"system-toast-container"
+		);
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -65,23 +70,13 @@ export class SystemToastManager {
 		 */
 
 		if (!this.#container) {
-			this.#container = document.createElement("div");
-			this.#container.id = "system-toast-container";
-			this.#container.className = "system-toast-container";
-			this.#container.setAttribute("aria-live", "polite");
-			this.#container.setAttribute("aria-label", "Grid notifications");
-
-			// Position container
-			this.#container.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        z-index: 10000;
-        pointer-events: none;
-        max-width: 300px;
-      `;
-
-			document.body.appendChild(this.#container);
+			this.#container = SafeDOM.createElement("div", {
+				id: "system-toast-container",
+				className: "system-toast-container",
+				"aria-live": "polite",
+				"aria-label": "Grid notifications",
+			});
+			SafeDOM.appendChild(this.#uiBridge?.getBody(), this.#container);
 		}
 	}
 
@@ -238,7 +233,7 @@ export class SystemToastManager {
 		const toast = this.#createToastElement(id, message, type);
 
 		// Add to DOM
-		this.#container.appendChild(toast);
+		SafeDOM.appendChild(this.#container, toast);
 		this.#toasts.set(id, { element: toast, type });
 
 		// Limit number of toasts
@@ -273,60 +268,30 @@ export class SystemToastManager {
 			operation: "createToastElement",
 			context: { id, type },
 		}).catch(() => {});
-		const toast = document.createElement("div");
-		toast.className = `system-toast system-toast-${type}`;
-		toast.setAttribute("data-toast-id", id);
-		toast.setAttribute("role", "status");
-		toast.setAttribute("aria-atomic", "true");
-
-		// Set initial styles for animation
-		toast.style.cssText = `
-      background: ${this.#getBackgroundColor(type)};
-      color: ${this.#getTextColor(type)};
-      padding: 12px 16px;
-      border-radius: 6px;
-      margin-bottom: 8px;
-      font-size: 14px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      border-left: 4px solid ${this.#getBorderColor(type)};
-      transform: translateX(100%);
-      opacity: 0;
-      transition: all ${SystemToastManager.#ANIMATION_DURATION}ms ease;
-      pointer-events: auto;
-      cursor: pointer;
-      user-select: none;
-      position: relative;
-      overflow: hidden;
-    `;
+		const toast = SafeDOM.createElement("div", {
+			className: `system-toast system-toast-${type}`,
+			"data-toast-id": id,
+			role: "status",
+			"aria-atomic": "true",
+		});
 
 		// Add content
-		const content = document.createElement("div");
-		content.textContent = message;
-		toast.appendChild(content);
+		const content = SafeDOM.createElement("div");
+		SafeDOM.setText(content, message);
+		SafeDOM.appendChild(toast, content);
 
 		// Add close button
-		const closeBtn = document.createElement("button");
-		closeBtn.textContent = "×";
-		closeBtn.className = "toast-close";
-		closeBtn.setAttribute("aria-label", "Close notification");
-		closeBtn.style.cssText = `
-      position: absolute;
-      top: 4px;
-      right: 8px;
-      background: none;
-      border: none;
-      color: inherit;
-      font-size: 18px;
-      cursor: pointer;
-      opacity: 0.7;
-      line-height: 1;
-    `;
+		const closeBtn = SafeDOM.createElement("button", {
+			className: "toast-close",
+			"aria-label": "Close notification",
+		});
+		SafeDOM.setText(closeBtn, "×");
 
-		closeBtn.addEventListener("click", () => {
+		SafeDOM.addEventListener(closeBtn, "click", () => {
 			this.#removeToast(id);
 		});
 
-		toast.appendChild(closeBtn);
+		SafeDOM.appendChild(toast, closeBtn);
 
 		// Click to dismiss
 		toast.addEventListener("click", (e) => {
@@ -344,54 +309,6 @@ export class SystemToastManager {
 		});
 
 		return toast;
-	}
-
-	/**
-	 * Gets the background color for a toast based on its type.
-	 * @private
-	 * @param {string} type - The type of the toast.
-	 * @returns {string} The CSS color value.
-	 */
-	#getBackgroundColor(type) {
-		const colors = {
-			success: "#d4edda",
-			error: "#f8d7da",
-			warning: "#fff3cd",
-			info: "#d1ecf1",
-		};
-		return colors[type] || colors.info;
-	}
-
-	/**
-	 * Gets the text color for a toast based on its type.
-	 * @private
-	 * @param {string} type - The type of the toast.
-	 * @returns {string} The CSS color value.
-	 */
-	#getTextColor(type) {
-		const colors = {
-			success: "#155724",
-			error: "#721c24",
-			warning: "#856404",
-			info: "#0c5460",
-		};
-		return colors[type] || colors.info;
-	}
-
-	/**
-	 * Gets the border color for a toast based on its type.
-	 * @private
-	 * @param {string} type - The type of the toast.
-	 * @returns {string} The CSS color value.
-	 */
-	#getBorderColor(type) {
-		const colors = {
-			success: "#28a745",
-			error: "#dc3545",
-			warning: "#ffc107",
-			info: "#17a2b8",
-		};
-		return colors[type] || colors.info;
 	}
 
 	/**
@@ -418,10 +335,7 @@ export class SystemToastManager {
 			 * @memberof AutoGenerated
 
 			 */
-
-			if (element.parentNode) {
-				element.parentNode.removeChild(element);
-			}
+			SafeDOM.removeChild(element.parentNode, element);
 			this.#toasts.delete(toastId);
 		}, SystemToastManager.#ANIMATION_DURATION);
 	}
@@ -565,7 +479,7 @@ export class SystemToastManager {
 		 */
 
 		if (this.#container && this.#container.parentNode) {
-			this.#container.parentNode.removeChild(this.#container);
+			SafeDOM.removeChild(this.#container.parentNode, this.#container);
 		}
 	}
 }

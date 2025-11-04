@@ -1,4 +1,4 @@
-import { CDS } from "@core/security/CDS.js";
+import { CDS } from "@platform/security/CDS.js";
 // core/sync/SyncLayer.js
 // Bidirectional sync with conflict resolution - separate from validation
 
@@ -80,8 +80,7 @@ export class SyncLayer {
 
 	constructor({ stateManager }) {
 		this.#stateManager = stateManager;
-		this.#sanitizer =
-			this.#stateManager?.managers?.sanitizer ?? null;
+		this.#sanitizer = this.#stateManager?.managers?.sanitizer ?? null;
 
 		// V8.0 Parity: All configuration is derived from the stateManager.
 		const options = this.#stateManager?.config?.syncLayerConfig || {};

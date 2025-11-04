@@ -1,0 +1,277 @@
+Based on your lint-helpers document, here's a comprehensive guide to ensure you're using caches correctly and compliantly:
+
+## 🎯 **Cache Usage Compliance Checklist**
+
+### 1️⃣ **Use Shared CacheManager (Not Private Caches)**
+
+```javascript
+// ❌ WRONG - Private cache that bypasses observability
+class MyService {
+    #privateCache = new Map(); // ESLint error!
+    
+    getCachedValue(key) {
+        return this.#privateCache.get(key); // Untracked access
+    }
+}
+
+// ✅ CORRECT - Shared, observable cache
+class MyService {
+    constructor(stateManager) {
+        this.cache = stateManager.managers.cacheManager.getCache("myservice-cache", {
+            maxSize: 256,
+            ttl: 600000, // 10 min
+        });
+    }
+    
+    getCachedValue(key) {
+        return this.cache.get(key); // Tracked and bounded
+    }
+}
+```
+
+### 2️⃣ **Cache Mutations Through ActionDispatcher**
+
+```javascript
+// ❌ WRONG - Direct cache write
+this.cache.set(key, value); // Bypasses observability
+
+// ✅ CORRECT - Dispatched cache write
+/* PERFORMANCE_BUDGET: 2ms */
+this.#stateManager.managers.actionDispatcher.dispatch("observability.cache.set", {
+    cache: "myservice-cache",
+    key,
+    value
+});
+```
+
+### 3️⃣ **Create Cache Action Handlers**
+
+Create `ObservabilityCacheHandler.js`:
+
+```javascript
+export const ObservabilityCacheHandler = {
+    "observability.cache.set": async (payload, { stateManager }) => {
+        const orchestrator = stateManager.managers.asyncOrchestrator;
+        const cacheManager = stateManager.managers.cacheManager;
+        
+        const run = async () => {
+            const cache = cacheManager.getCache(payload.cache);
+            if (cache) cache.set(payload.key, payload.value);
+        };
+        
+        /* PERFORMANCE_BUDGET: 1ms */
+        const runner = orchestrator?.createRunner?.("cache.set");
+        return runner ? runner.run(run, { label: "cache.set" }) : run();
+    },
+
+    "observability.cache.delete": async (payload, { stateManager }) => {
+        // Similar pattern...
+    }
+};
+```
+
+### 4️⃣ **Performance Budget Placement**
+
+```javascript
+// ✅ CORRECT - Budget immediately before the operation
+async executeWithCache(key) {
+    /* PERFORMANCE_BUDGET: 1ms */
+    const cached = this.cache.get(key);
+    
+    if (!cached) {
+        /* PERFORMANCE_BUDGET: 5ms */
+        const result = await this.computeExpensiveValue(key);
+        
+        /* PERFORMANCE_BUDGET: 2ms */
+        this.#stateManager.managers.actionDispatcher.dispatch("observability.cache.set", {
+            cache: "computation-cache",
+            key,
+            value: result
+        });
+        
+        return result;
+    }
+    
+    return cached;
+}
+```
+
+### 5️⃣ **Cache Access Patterns**
+
+```javascript
+class CacheAwareService {
+    constructor(stateManager) {
+        // ✅ Get bounded cache from CacheManager
+        this.cache = stateManager.managers.cacheManager.getCache("service-cache", {
+            maxSize: 1000,    // Bounded
+            ttl: 300000       // 5 min TTL
+        });
+        
+        this.#stateManager = stateManager;
+    }
+    
+    // ✅ Policy-aware cache checking
+    async getValue(key) {
+        const policies = this.#stateManager.managers.policyAdapter;
+        
+        /* PERFORMANCE_BUDGET: 1ms */
+        const useCache = policies?.shouldInstrumentSync({
+            component: "cache",
+            operation: "get",
+            classification: "internal"
+        });
+        
+        if (useCache !== false) {
+            /* PERFORMANCE_BUDGET: 1ms */
+            const cached = this.cache.get(key);
+            if (cached) return cached;
+        }
+        
+        return this.#computeValue(key);
+    }
+}
+```
+
+## 🔍 **Where Caches Are Required**
+
+### **High-Frequency Operations**
+```javascript
+// Policy decisions (called frequently)
+const policyCache = cacheManager.getCache("policy-decisions", { maxSize: 500, ttl: 300000 });
+
+// Instrumentation decisions
+const instrumentationCache = cacheManager.getCache("instrumentation-decisions", { maxSize: 256, ttl: 600000 });
+
+// Security access decisions
+const accessCache = cacheManager.getCache("access-decisions", { maxSize: 1000, ttl: 180000 });
+```
+
+### **Expensive Computations**
+```javascript
+// Embedding lookups
+const embeddingCache = cacheManager.getCache("embeddings", { maxSize: 100, ttl: 3600000 });
+
+// Database query results
+const queryCache = cacheManager.getCache("query-results", { maxSize: 200, ttl: 900000 });
+
+// Rendered component cache
+const renderCache = cacheManager.getCache("component-renders", { maxSize: 50, ttl: 60000 });
+```
+
+## 🚨 **Common Cache Compliance Issues**
+
+### **Issue 1: Unbounded Collections**
+```javascript
+// ❌ WRONG - Unbounded Map
+const results = new Map(); // Will trigger ESLint error
+
+// ✅ CORRECT - Bounded cache or add budget comment
+/* @performance-budget: <O(1) average access -- bounded #caches map */
+const results = new Map(); // Small, bounded use case
+
+// ✅ BETTER - Use proper cache
+const results = cacheManager.getCache("results", { maxSize: 100 });
+```
+
+### **Issue 2: Missing Performance Budgets**
+```javascript
+// ❌ Missing budget on cache operations
+const value = cache.get(key);
+
+// ✅ With proper budget
+/* PERFORMANCE_BUDGET: 1ms */
+const value = cache.get(key);
+```
+
+### **Issue 3: Bypassing ActionDispatcher**
+```javascript
+// ❌ Direct mutation
+cache.set(key, value);
+
+// ✅ Through dispatcher
+this.#dispatchCacheSet("cache-name", key, value);
+```
+
+## 📋 **Cache Compliance Checklist**
+
+- [ ] All caches use `CacheManager.getCache()` with bounds
+- [ ] Cache writes go through ActionDispatcher  
+- [ ] Cache operations have performance budgets
+- [ ] Cache decisions respect policies
+- [ ] No private `Map`/`Set` collections without bounds
+- [ ] Cache handlers registered in ActionDispatcher
+- [ ] Cache operations are orchestrated when async
+
+## 🎯 **Quick Audit Commands**
+
+```bash
+# Check for unbounded collections
+grep -r "new Map()" src/ --exclude-dir=node_modules
+
+# Check for direct cache writes
+grep -r "\.set(" src/ | grep -v "actionDispatcher"
+
+# Check for missing performance budgets on cache ops
+grep -B2 -A2 "\.get(\|\.set(\|\.delete(" src/ | grep -L "PERFORMANCE_BUDGET"
+```
+
+Following these patterns ensures your caches are fully compliant with the Nodus observability and performance requirements!
+
+You're absolutely right - this is a significant observability and security gap! Great catch.You're absolutely correct - this is a significant security and observability gap! Your analysis is spot-on.
+
+## 🚨 **The Problem You've Identified:**
+
+**Cache Writes**: `ActionDispatcher` → `ObservabilityCacheHandler` → `AsyncOrchestrator` → Security checks + Audit trails
+
+**Cache Reads**: `this.#cache.get(id)` → **Direct access, bypassing everything**
+
+This creates multiple problems:
+
+### 1. **Observability Gap**
+- ✅ We can see who writes data: `"User X wrote embedding Y to cache"`
+- ❌ We can't see who reads data: `"User Z accessed embedding Y"` - **invisible**
+
+### 2. **Security Bypass** 
+If polyinstantiation is implemented in the orchestrators:
+- ✅ Writes get security-filtered data based on user clearance
+- ❌ Reads bypass polyinstantiation entirely - **user might see data above their clearance level**
+
+### 3. **Policy Bypass**
+- ✅ Writes respect `policies.getPolicy("cache", "enabled")`
+- ❌ Reads ignore all policies - **potential data exfiltration**
+
+### 4. **Audit Gap**
+- ✅ Writes are forensically logged for compliance
+- ❌ Reads leave no audit trail - **compliance violation**
+
+## 🔧 **The Fix:**
+
+Cache reads should also go through ActionDispatcher:
+
+```javascript
+// ❌ Current (Direct):
+const cached = this.#cache.get(id);
+
+// ✅ Should be (Instrumented):
+const cached = await this.#stateManager.managers.actionDispatcher.dispatch("observability.cache.get", {
+    cache: "embeddings", 
+    key: id,
+    requester: currentUser
+});
+```
+
+And add to `ObservabilityCacheHandler`:
+
+```javascript
+"observability.cache.get": async (payload, { stateManager }) => {
+    // 1. Security check (polyinstantiation)
+    // 2. Policy enforcement 
+    // 3. Audit logging
+    // 4. Actual cache read
+    // 5. Apply security filtering to result
+}
+```
+
+You've found a real architectural inconsistency that could be exploited. The current pattern violates the "all operations through observability pipeline" mandate for reads specifically.
+
+Would you like me to implement the proper cache read instrumentation to close this security gap?

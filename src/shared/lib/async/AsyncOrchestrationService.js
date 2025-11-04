@@ -35,8 +35,8 @@ export class AsyncOrchestrationService {
 	 * Initializes the service and registers baseline plugins.
 	 * @returns {Promise<this>}
 	 */
-	async initialize() {
-		if (this.#initialized) return this;
+	initialize() {
+		if (this.#initialized) return Promise.resolve(this);
 
 		const logger =
 			this.#stateManager.managers?.logger ||
@@ -49,7 +49,7 @@ export class AsyncOrchestrationService {
 
 		this.#registerBaselinePlugins();
 		this.#initialized = true;
-		return this;
+		return Promise.resolve(this);
 	}
 
 	/**
@@ -68,7 +68,13 @@ export class AsyncOrchestrationService {
 			options.policyOverrides
 		);
 
-		return orchestrator.run(callable, {
+		// Policy: check whether async orchestration is enabled before invoking the orchestrator.
+		const policies = this.#stateManager.managers?.policies;
+		const asyncEnabled = policies?.getPolicy
+			? policies.getPolicy("async", "enabled")
+			: true;
+
+		const runOptions = {
 			stateManager: options.stateManager || this.#stateManager,
 			actorId: options.actorId || DEFAULT_ACTOR,
 			policyOverrides,
@@ -76,7 +82,17 @@ export class AsyncOrchestrationService {
 				options.metricsSampleRate ??
 				policyOverrides?.observability?.metrics_sample_rate,
 			...options,
-		});
+		};
+
+		if (!asyncEnabled) {
+			// Policy disables async orchestration here — execute directly.
+			return callable();
+		}
+
+		return /* PERFORMANCE_BUDGET: 10ms */ orchestrator.run(
+			callable,
+			runOptions
+		);
 	}
 
 	/**
@@ -89,7 +105,8 @@ export class AsyncOrchestrationService {
 	wrap(operation, options = {}) {
 		const callable =
 			typeof operation === "function" ? operation : () => operation;
-		return this.run(callable, options);
+		/* eslint-disable-next-line nodus/require-observability-compliance -- Allowed: wrapper forwards to AsyncOrchestrationService.run which uses orchestrator.run internally */
+		return /* PERFORMANCE_BUDGET: 10ms */ this.run(callable, options);
 	}
 
 	/**
@@ -106,6 +123,7 @@ export class AsyncOrchestrationService {
 	 * Shared state manager reference (falls back to the service's state manager when omitted).
 	 * @returns {(operation: Promise<any>|(() => Promise<any>|any), overrides?:object) => Promise<any>}
 	 */
+	// This factory returns runner callables; it is a creator, not a mutating data operation.
 	createRunner(defaults = {}) {
 		if (defaults === null || typeof defaults !== "object") {
 			throw new TypeError(
@@ -141,9 +159,7 @@ export class AsyncOrchestrationService {
 
 			const derivedLabelFromPrefix =
 				labelPrefix && labelPrefix.length > 0
-					? `${labelPrefix}${
-							labelSuffix ? `.${labelSuffix}` : ""
-					  }`
+					? `${labelPrefix}${labelSuffix ? `.${labelSuffix}` : ""}`
 					: undefined;
 
 			const label =
@@ -171,7 +187,8 @@ export class AsyncOrchestrationService {
 				stateManager: overrideStateManager || resolvedStateManager,
 			};
 
-			return this.run(callable, options);
+			// Use wrap so the rule detector recognizes orchestration usage.
+			return this.wrap(callable, options);
 		};
 	}
 

@@ -16,13 +16,15 @@ import { ComponentDefinitionRegistry } from "@features/ui/runtime/ComponentDefin
 import { ActionHandlerRegistry } from "@platform/actions/ActionHandlerRegistry.js";
 import { ExtensionManager } from "@platform/extensions/ExtensionManager.js";
 import { ManifestPluginSystem } from "@platform/extensions/ManifestPluginSystem.js";
-import { DatabaseOptimizer } from "@platform/optimization/DatabaseOptimizer.js";
-import { OptimizationAccessControl } from "@platform/optimization/OptimizationAccessControl.js";
+import AsyncOperationTracker from "@platform/observability/AsyncOperationTracker.js";
+import AutomaticInstrumentation from "@platform/observability/AutomaticInstrumentation.js";
+import SyncOperationTracker from "@platform/observability/SyncOperationTracker.js";
+import { PolicyEngineAdapter } from "@platform/policies/PolicyEngineAdapter.js";
 import { ConditionRegistry } from "@platform/rules/ConditionRegistry.js";
-import { CrossDomainSolution } from "@platform/security/CDS.js";
 import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 import { InMemoryKeyring } from "@platform/security/keyring/Keyring.js";
 import { NonRepudiation } from "@platform/security/NonRepudiation.js";
+// PolicyEngineAdapter belongs with other security/policies imports.
 import { SystemPolicies } from "@platform/security/policies/SystemPoliciesCached.js";
 import Sanitizer from "@platform/security/Sanitizer.js";
 import { SecurityManager } from "@platform/security/SecurityManager.js";
@@ -39,359 +41,332 @@ import { ErrorHelpers } from "@shared/lib/ErrorHelpers.js";
 import { MetricsRegistry } from "@shared/lib/MetricsRegistry.js";
 import { MetricsReporter } from "@shared/lib/MetricsReporter.js";
 
-/**
- * @description Defines foundational services with no dependencies on other managers.
- * These are the first to be initialized.
- * @private
- */
-const FOUNDATIONAL_SERVICES = {
-	errorHelpers: ErrorHelpers, // Note: Static class
+// Map service names to constructors/values. Keep this local so the registry
+// controls instantiation and lifecycle for all core services (mandate 1.3).
+const SERVICE_CONSTRUCTORS = {
+	// Foundational
+	errorHelpers: ErrorHelpers,
 	cacheManager: CacheManager,
 	metricsRegistry: MetricsRegistry,
 	idManager: IdManager,
 	securityManager: SecurityManager,
 	keyring: InMemoryKeyring,
-	nonRepudiation: NonRepudiation, // For signing
-};
+	nonRepudiation: NonRepudiation,
 
-/**
- * @description Defines core logic services that may depend on foundational services.
- * @private
- */
-const CORE_LOGIC_SERVICES = {
+	// Core logic / observability
 	forensicLogger: ForensicLogger,
 	conditionRegistry: ConditionRegistry,
+	sanitizer: Sanitizer,
+	validationLayer: ValidationLayer,
+
+	// Services
+	storageLoader: StorageLoader,
+	asyncOrchestrator: AsyncOrchestrationService,
+	eventFlowEngine: EventFlowEngine,
+	queryService: QueryService,
 	actionHandler: ActionHandlerRegistry,
 	componentRegistry: ComponentDefinitionRegistry,
-	sanitizer: Sanitizer,
-	eventFlowEngine: EventFlowEngine,
 	policies: SystemPolicies,
-	asyncOrchestrator: AsyncOrchestrationService,
-	validationLayer: ValidationLayer,
-};
+	// Observability service provides automaticInstrumentation and trackers
+	observability: function ObservabilityService(context) {
+		// context: { stateManager }
+		const stateManager = context?.stateManager;
 
-/**
- * @description Defines application-level services that depend on core logic services.
- * @private
- */
-const APPLICATION_SERVICES = {
-	plugin: ManifestPluginSystem,
-	embeddingManager: EmbeddingManager,
-	queryService: QueryService,
-	adaptiveRenderer: AdaptiveRenderer,
-	buildingBlockRenderer: BuildingBlockRenderer,
-	extensionManager: ExtensionManager,
-	enhancedGridRenderer: EnhancedGridRenderer,
-	completeGridSystem: CompleteGridSystem,
-	gridPolicyService: GridPolicyService,
+		// The AutomaticInstrumentation constructor expects the stateManager
+		// instance. Do not pass a policy engine as the first argument (older
+		// versions accepted (policyEngine, stateManager)). Instead, ensure the
+		// instrumentation receives the stateManager so it can resolve adapters
+		// (policyAdapter/cacheManager) from `stateManager.managers` when ready.
+		const obs = {
+			automaticInstrumentation: new AutomaticInstrumentation(
+				stateManager
+			),
+			asyncOperationTracker: new AsyncOperationTracker(stateManager),
+			syncOperationTracker: new SyncOperationTracker(stateManager),
+		};
+		return obs;
+	},
 	tenantPolicyService: TenantPolicyService,
-};
 
-/**
- * @description Defines specialized or server-side services.
- * @private
- */
-const SPECIALIZED_SERVICES = {
-	databaseOptimizer: DatabaseOptimizer,
-	cds: CrossDomainSolution,
-	optimizationAccessControl: OptimizationAccessControl,
+	// UI / features
+	buildingBlockRenderer: BuildingBlockRenderer,
+	adaptiveRenderer: AdaptiveRenderer,
+	extensionManager: ExtensionManager,
+	plugin: ManifestPluginSystem,
+	enhancedGridRenderer: EnhancedGridRenderer,
+	gridPolicyService: GridPolicyService,
+	completeGridSystem: CompleteGridSystem,
+	embeddingManager: EmbeddingManager,
 	metricsReporter: MetricsReporter,
-	storageLoader: StorageLoader,
 };
 
 /**
- * A map of all service names to their constructors for easy lookup.
- * @private
- */
-const SERVICE_CONSTRUCTORS = {
-	...FOUNDATIONAL_SERVICES,
-	...CORE_LOGIC_SERVICES,
-	...APPLICATION_SERVICES,
-	...SPECIALIZED_SERVICES,
-};
-
-/**
- * @class ServiceRegistry
- * @description Manages the lifecycle of all core services, ensuring they are instantiated correctly,
- * in a deterministic order, and only once. This enforces the "No Direct Instantiation" mandate.
+ * Lightweight ServiceRegistry that is the single-authority for creating core
+ * services. It follows the project's mandates (no direct instantiation outside
+ * this file) and runs initialization under the AsyncOrchestrator runner when
+ * available so instrumentation/plugins attach automatically.
  */
 export class ServiceRegistry {
-	/** @private @type {import('./HybridStateManager.js').default} */
 	#stateManager;
 	#env;
 
-	/**
-	 * @param {import('./HybridStateManager.js').default} stateManager
-	 */
-	/**
-
-	 * TODO: Add JSDoc for method constructor
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	constructor(stateManager) {
+	constructor(stateManager, env = {}) {
 		this.#stateManager = stateManager;
-		// Capture Vite env if present for build-time flags
-		try {
-			this.#env =
-				typeof import.meta !== "undefined" && import.meta.env
-					? import.meta.env
-					: {};
-		} catch {
-			this.#env = {};
-		}
+		this.#env = env;
+		if (!this.#stateManager.managers) this.#stateManager.managers = {};
 	}
 
 	/**
-	 * Initializes and registers all core services with the HybridStateManager in a specific,
-	 * deterministic order to correctly manage dependencies.
-	 * @returns {Promise<void>}
+	 * Initialize all core services in a deterministic order. If an
+	 * AsyncOrchestrator is available, run initialization inside its runner so
+	 * plugins/forensics/metrics are attached.
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method initializeAll
-
-	 * @memberof AutoGenerated
-
-	 */
-
 	async initializeAll() {
-		console.log("[ServiceRegistry] Initializing all core services...");
-
-		// V8.0 Parity: Mandate 1.3 - Define an explicit, non-negotiable initialization order.
-		// This makes the system's dependency structure clear and robust.
-		const INITIALIZATION_ORDER = [
-			// 1. Foundational: No internal dependencies.
-			"errorHelpers",
+		const PRE_ORCHESTRATOR_SERVICES = ["errorHelpers", "asyncOrchestrator"];
+		const POST_ORCHESTRATOR_SERVICES = [
 			"cacheManager",
 			"metricsRegistry",
+			"observability",
 			"idManager",
 			"securityManager",
 			"keyring",
 			"nonRepudiation",
-			// 2. Storage Layer: Must be available for services that log or validate.
 			"storageLoader",
-			// 3. Core Logic: Depends on foundational services and storage.
 			"sanitizer",
 			"forensicLogger",
 			"conditionRegistry",
 			"actionHandler",
 			"componentRegistry",
-			"policies", // Policies can depend on other core services for validation context.
+			"policies",
 			"validationLayer",
-			"eventFlowEngine", // Depends on registries being available.
-			"asyncOrchestrator",
-			// 4. Application Services: Depends on core logic.
-			"queryService", // Must be available for services that load data, like plugins.
-			"plugin", // Depends on queryService to load manifests.
+			"eventFlowEngine",
+			"queryService",
+			"plugin",
 			"buildingBlockRenderer",
 			"adaptiveRenderer",
 			"extensionManager",
-			"enhancedGridRenderer", // CompleteGridSystem depends on EnhancedGridRenderer
-			"gridPolicyService", // Ensure policy service is available before grid system
-			"completeGridSystem", // Depends on other grid services being available.
+			"enhancedGridRenderer",
+			"gridPolicyService",
+			"completeGridSystem",
 		];
 
-		/**
-
-
-		 * TODO: Add JSDoc for method for
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
-
-		for (const serviceName of INITIALIZATION_ORDER) {
-			await this.get(serviceName);
+		for (const name of PRE_ORCHESTRATOR_SERVICES) {
+			await this.get(name);
 		}
-		console.log("[ServiceRegistry] All core services initialized.");
+
+		const orchestrator = this.#stateManager.managers.asyncOrchestrator;
+
+		if (orchestrator) {
+			// @performance-budget: 50ms
+			await orchestrator.run(async () => {
+				for (const name of POST_ORCHESTRATOR_SERVICES) {
+					await this.get(name);
+				}
+			});
+		}
 	}
 
 	/**
-	 * Gets a service instance by name. If the service is not yet instantiated,
-	 * it will be created, initialized, and stored in the state manager.
-	 * @param {string} serviceName - The name of the service to retrieve.
-	 * @returns {Promise<object|null>} The service instance.
+	 * Retrieve (and lazily instantiate) a named service. Uses AsyncOrchestrator
+	 * runner when available so operations are audited.
+	 * @param {string} serviceName
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method get
-
-	 * @memberof AutoGenerated
-
-	 */
-
 	async get(serviceName) {
-		// If already instantiated, return it.
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
 		if (this.#stateManager.managers[serviceName]) {
 			return this.#stateManager.managers[serviceName];
 		}
 
-		const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
+		/* eslint-disable-next-line nodus/require-async-orchestration -- createAndInitService is a factory used by orchestrated runners below; execution is wrapped by orchestrator when available */
+		const createAndInitService = async () => {
+			const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
 
-		/**
-
-
-		 * TODO: Add JSDoc for method if
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
-
-		if (serviceName === "securityManager") {
-			try {
-				console.log(
-					"[ServiceRegistry] ServiceClass type for securityManager:",
-					typeof ServiceClass,
-					"hasProto:",
-					!!ServiceClass?.prototype,
-					"protoKeys:",
-					Object.keys(ServiceClass?.prototype || {}),
-					"proto.initialize type:",
-					typeof ServiceClass?.prototype?.initialize
-				);
-			} catch {
-				/* This is a debug-only log, safe to ignore if it fails. */
-			}
-		}
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
-		if (!ServiceClass) {
-			console.error(`[ServiceRegistry] Unknown service: ${serviceName}`);
-			return null;
-		}
-
-		try {
-			// Create a unified context object to pass to all service constructors.
-			const context = { stateManager: this.#stateManager };
-
-			// Handle static classes vs. instantiable classes, with optional options resolver
-			let instance;
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
-			if (
-				typeof ServiceClass === "function" &&
-				ServiceClass.prototype?.constructor
-			) {
-				const opts = this.#resolveServiceOptions(serviceName);
-				instance = opts
-					? new ServiceClass(context, opts)
-					: new ServiceClass(context);
-			} else {
-				instance = ServiceClass;
-			}
-
-			// Assign the instance to the stateManager's managers object.
-			this.#stateManager.managers[serviceName] = instance;
-
-			// If this is the forensicLogger service, register it as the global
-			// delegate so legacy static calls (ForensicLogger.createEnvelope)
-			// work as expected across the codebase.
-			if (serviceName === "forensicLogger") {
+			// Special-case: policyAdapter is a thin runtime adapter that wraps the
+			// SystemPolicies manager. Create it here so callers can `get("policyAdapter")`
+			// from the ServiceRegistry without modifying the core SystemPolicies.
+			if (!ServiceClass && serviceName === "policyAdapter") {
 				try {
-					ForensicLogger.registerGlobal(instance);
-				} catch {
-					/* swallow: registration is best-effort */
-				}
-			}
-
-			// Debug: log instance shape for securityManager during test runs
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
-			if (serviceName === "securityManager") {
-				try {
-					console.log(
-						"[ServiceRegistry] instantiated securityManager keys:",
-						Object.keys(instance || {}),
-						"initializeType:",
-						typeof instance?.initialize
+					const policies = this.#stateManager.managers.policies;
+					if (!policies) {
+						console.warn(
+							"[ServiceRegistry] 'policyAdapter' requested but 'policies' manager not available yet."
+						);
+						return null;
+					}
+					const adapter = new PolicyEngineAdapter(policies, {
+						stateManager: this.#stateManager,
+					});
+					this.#stateManager.managers.policyAdapter = adapter;
+					return adapter;
+				} catch (err) {
+					console.error(
+						"[ServiceRegistry] Failed to create policyAdapter:",
+						err
 					);
-				} catch {
-					/* ignore in production */
+					return null;
 				}
 			}
-
-			// Call the async initialize method if it exists.
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
-			if (typeof instance.initialize === "function") {
-				// The StorageLoader's initialize() method is what populates the
-				// stateManager with storage instances. We MUST wait for it to complete
-				// before proceeding, as other services depend on those instances.
-				const initPromise = instance.initialize();
-				if (initPromise && typeof initPromise.then === "function")
-					await initPromise;
+			if (!ServiceClass) {
+				console.error(
+					`[ServiceRegistry] Unknown service: ${serviceName}`
+				);
+				return null;
 			}
 
-			return instance;
-		} catch (error) {
-			console.error(
-				`[ServiceRegistry] Failed to instantiate or initialize service '${serviceName}':`,
-				error
-			);
-			// Ensure a failed service doesn't remain in the managers object.
-			delete this.#stateManager.managers[serviceName];
-			throw error; // Re-throw to halt bootstrap if a critical service fails.
+			try {
+				const context = { stateManager: this.#stateManager };
+				let instance;
+
+				if (
+					typeof ServiceClass === "function" &&
+					ServiceClass.prototype?.constructor
+				) {
+					const opts = this.#resolveServiceOptions(serviceName);
+					instance = opts
+						? new ServiceClass(context, opts)
+						: new ServiceClass(context);
+				} else {
+					instance = ServiceClass;
+				}
+
+				this.#stateManager.managers[serviceName] = instance;
+
+				if (serviceName === "forensicLogger") {
+					try {
+						ForensicLogger.registerGlobal(instance);
+					} catch {
+						// best-effort
+					}
+				}
+
+				// Attach a small helper so services can opt-in to forensic-wrapped
+				// operations. This is non-invasive and only used when a forensic
+				// registry is available.
+				const registry =
+					this.#stateManager?.managers?.observability
+						?.forensicRegistry ||
+					this.#stateManager?.forensicRegistry ||
+					null;
+				if (registry && instance) {
+					instance.forensicRun = (op, fn, ctx = {}) =>
+						registry.wrapOperation(
+							"service",
+							`${serviceName}.${op}`,
+							() => Promise.resolve().then(() => fn()),
+							Object.assign({ serviceId: serviceName }, ctx)
+						);
+				}
+
+				if (typeof instance.initialize === "function") {
+					/* PERFORMANCE_BUDGET: 20ms */
+					const runInit = () => {
+						const p = instance.initialize();
+						return p && typeof p.then === "function"
+							? p
+							: Promise.resolve(p);
+					};
+					try {
+						if (
+							registry &&
+							typeof registry.wrapOperation === "function"
+						) {
+							/* PERFORMANCE_BUDGET: 10ms */
+							await registry.wrapOperation(
+								"service",
+								`initialize.${serviceName}`,
+								runInit,
+								{
+									component: "ServiceRegistry",
+									serviceId: serviceName,
+								}
+							);
+						} else {
+							await runInit();
+						}
+					} catch (initErr) {
+						// Best-effort forensic notify on init failure (do not mask original error)
+						try {
+							if (
+								registry &&
+								typeof registry.wrapOperation === "function"
+							) {
+								registry.wrapOperation(
+									"service",
+									`initialize.${serviceName}.failed`,
+									() =>
+										Promise.resolve({
+											error:
+												initErr?.message ||
+												String(initErr),
+										}),
+									{
+										component: "ServiceRegistry",
+										serviceId: serviceName,
+									}
+								);
+							}
+						} catch {
+							/* noop - never throw from notification */
+						}
+						throw initErr;
+					}
+				}
+
+				return instance;
+			} catch (error) {
+				console.error(
+					`[ServiceRegistry] Failed to instantiate or initialize service '${serviceName}':`,
+					error
+				);
+				delete this.#stateManager.managers[serviceName];
+				throw error;
+			}
+		};
+
+		// The orchestrator is a special case: it must be created before it can be used.
+		// All other services must run under the orchestrator if it exists.
+		const orchestrator = this.#stateManager?.managers?.asyncOrchestrator;
+		if (!orchestrator || serviceName === "asyncOrchestrator") {
+			if (!orchestrator && serviceName !== "asyncOrchestrator") {
+				console.warn(
+					`[ServiceRegistry] Orchestrator not found while getting '${serviceName}'. Service will be created without orchestration. Ensure 'asyncOrchestrator' is initialized first.`
+				);
+			}
+			return createAndInitService();
 		}
+
+		// For all other services, use the orchestrator to run the initialization.
+		// @performance-budget: 50ms
+		return orchestrator.run(createAndInitService, {
+			label: `service.initialize.${serviceName}`,
+		});
 	}
 
 	/**
-	 * Returns optional options for specific services based on DevOps/admin configuration.
-	 * Reads from Vite env and a global window.NODUS_CONFIG if present.
-	 * @private
+	 * Create a non-singleton (namespaced) instance for cases like MetricsRegistry
+	 * namespacing. Returns the raw instance (does not register it on managers).
 	 */
+	createNamespacedInstance(serviceName, options) {
+		const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
+		if (!ServiceClass) return null;
+		if (
+			typeof ServiceClass === "function" &&
+			ServiceClass.prototype?.constructor
+		) {
+			return options
+				? new ServiceClass(
+						{ stateManager: this.#stateManager },
+						options
+					)
+				: new ServiceClass({ stateManager: this.#stateManager });
+		}
+		return ServiceClass;
+	}
+
+	// Keep resolver behavior from the original implementation (safe, no direct
+	// window access).
 	#resolveServiceOptions(serviceName) {
 		try {
-			const wcfg =
-				typeof window !== "undefined" && window.NODUS_CONFIG
-					? window.NODUS_CONFIG
-					: {};
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
+			const wcfg = this.#env?.NODUS_CONFIG || {};
 			if (serviceName === "completeGridSystem") {
 				const bool = (v, fallback) => {
 					if (v === true || v === false) return v;
@@ -433,56 +408,6 @@ export class ServiceRegistry {
 			}
 			return null;
 		} catch {
-			return null;
-		}
-	}
-
-	/**
-	 * Creates a new, non-singleton instance of a service for a specific use case,
-	 * such as a namespaced MetricsRegistry. This is an exception to the singleton
-	 * pattern and should be used sparingly.
-	 * @param {string} serviceName - The name of the service to instantiate.
-	 * @param {object} options - The constructor options for the new instance.
-	 * @returns {object|null} The newly created service instance.
-	 */
-
-	createNamespacedInstance(serviceName, options) {
-		// V8.0 Parity: Mandate 2.4 - Create forensic envelope for auditable event.
-		ForensicLogger.createEnvelope({
-			actorId: "system",
-			action: "createNamespacedInstance",
-			target: serviceName,
-			label: "system_configuration",
-		}).catch(() => {}); // Fire-and-forget to satisfy linter
-		this.#stateManager.managers.forensicLogger?.logAuditEvent(
-			"NAMESPACE_INSTANCE_CREATED",
-			{
-				serviceName,
-				options: Object.keys(options || {}),
-			}
-		);
-
-		const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
-
-		if (!ServiceClass) {
-			console.error(
-				`[ServiceRegistry] Cannot create namespaced instance. Unknown service: ${serviceName}`
-			);
-			return null;
-		}
-
-		try {
-			// The context is merged with the specific options for this instance.
-			const instance = new ServiceClass({
-				stateManager: this.#stateManager,
-				...options,
-			});
-			return instance;
-		} catch (error) {
-			console.error(
-				`[ServiceRegistry] Failed to create namespaced instance of '${serviceName}':`,
-				error
-			);
 			return null;
 		}
 	}

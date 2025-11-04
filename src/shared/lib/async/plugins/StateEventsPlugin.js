@@ -36,7 +36,7 @@ export class StateEventsPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	beforeRun(context) {
+	before(context) {
 		const manager = this.#resolveManager(context);
 		if (!manager?.emit) return;
 		manager.emit("async:start", {
@@ -51,7 +51,7 @@ export class StateEventsPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	afterRun(context) {
+	settled(context) {
 		const manager =
 			context.getAttachment(MANAGER_SLOT) || this.#resolveManager(context);
 		if (!manager?.emit) return;

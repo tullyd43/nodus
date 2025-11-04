@@ -6,9 +6,11 @@
  * @see {@link d:\Development Files\repositories\nodus\src\docs\feature_development_philosophy.md} for architectural principles.
  **/
 
-import { ServiceRegistry } from "@core/bootstrap/ServiceRegistry.js";
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
-import { BoundedStack } from "@utils/BoundedStack.js";
+import { ServiceRegistry } from "@platform/bootstrap/ServiceRegistry.js";
+import { ForensicRegistry } from "@platform/observability/ForensicRegistry.js";
+import { StorageForensicPlugin } from "@platform/observability/plugins/StorageForensicPlugin.js";
+import { ForensicLogger } from "@platform/security/ForensicLogger.js";
+import { BoundedStack } from "@shared/lib/BoundedStack.js";
 
 /**
  * @class HybridStateManager
@@ -108,6 +110,25 @@ export class HybridStateManager {
 			loader: this.#storage.loader,
 			instance: this.#storage.instance,
 		});
+
+		// Initialize forensic instrumentation registry and register storage plugin
+		try {
+			this.forensicRegistry = new ForensicRegistry(this);
+			this.forensicRegistry.register(
+				"storage",
+				new StorageForensicPlugin(this)
+			);
+			// Prefer emitting a forensic audit event instead of direct console logging
+			this.#managers.forensicLogger?.logAuditEvent(
+				"FORENSIC_INIT_SUCCESS",
+				{ message: "Forensic instrumentation initialized" }
+			);
+		} catch (err) {
+			this.#managers.forensicLogger?.logAuditEvent(
+				"FORENSIC_INIT_FAILED",
+				{ error: err?.message || String(err) }
+			);
+		}
 	}
 	get clientState() {
 		return this.#clientState;
@@ -968,7 +989,8 @@ export class HybridStateManager {
 			}
 		);
 
-		this.storage.ready = true;
+		// Mark internal storage ready flag (use private field for consistency)
+		this.#storage.ready = true;
 		this.emit("storageReady", {
 			loader: this.#storage.loader,
 			instance: this.#storage.instance,

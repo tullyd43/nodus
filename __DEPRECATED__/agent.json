@@ -3,7 +3,7 @@
 	"meta": {
 		"description": "Copilot Agent alignment profile for the Nodus Core system.",
 		"maintainer": "Nodus Security Engineering Group",
-		"last_updated": "2025-11-01"
+		"last_updated": "2025-11-02"
 	},
 
 	"objectives": {
@@ -11,7 +11,9 @@
 			"Preserve compliance with Developer Mandates and Forensic Security Addendum.",
 			"Maintain composability, modularity, and low coupling in all generated code.",
 			"Ensure all code is deterministic, auditable, and compatible with offline-first operation.",
-			"Automatically promote correct forensic envelopes, MAC enforcement, and cryptographic labeling in all state mutations."
+			"Automatically promote correct forensic envelopes, MAC enforcement, and cryptographic labeling in synchronous state mutations.",
+			"Keep observability instrumentation centralized at ActionDispatcher and AsyncOrchestrationService (→ AsyncOrchestrator) gateways so helpers inherit their execution context.",
+			"Enforce the boundary contract: async work executes only under orchestrator runners (no direct ForensicLogger), synchronous work routes through ActionDispatcher/ActionHandler with forensic envelopes."
 		],
 		"secondary": [
 			"Assist with refactoring to modern ESM syntax and eliminate legacy imports.",
@@ -23,17 +25,20 @@
 
 	"enforcement": {
 		"mandatory_rules": [
-			"All functions must include JSDoc with parameter and return type annotations.",
-			"All state mutations must be wrapped in forensic envelopes via ForensicLogger.",
-			"All async operations must be executed through AsyncOrchestrationService.createRunner (or an injected orchestrator.wrap/run) rather than raw async functions.",
+			"All functions must include JSDoc with parameter and return type annotations. All imports must be imported here with direct private declarations",
+			"All synchronous state mutations must be wrapped in forensic envelopes via ForensicLogger at the ActionDispatcher/ActionHandler layer; async contexts must never call ForensicLogger directly.",
+			"All async operations must execute through AsyncOrchestrationService.run()/wrap()/createRunner (or orchestrator-provided runners) rather than unscoped async functions, and async callbacks must rely on orchestrator metadata for auditing.",
 			"Imports must use canonical aliases (e.g. '@shared/...') or explicit file paths with extensions; no index barrels or legacy shims.",
 			"All network calls must use SecureFetch wrapper (never raw fetch).",
 			"All data-bound DOM updates must pass through BindEngine or StateUIBridge.",
+			"Observability signals (metrics, traces, embeddings, forensic events) must originate only from ActionDispatcher or AsyncOrchestrationService/AsyncOrchestrator boundaries; never instrument leaf helpers directly.",
+			"Low-level initialization helpers may make tightly-scoped direct calls for bootstrapping or early startup; such calls must be explicitly documented, limited in scope, and must not be used for application logic or to bypass orchestration/forensic controls.",
 			"No usage of innerHTML, eval, Function(), or unescaped template literals."
 		],
 		"lint_integrations": [
 			"nodus/prefer-alias-imports",
 			"nodus/require-async-orchestration",
+			"nodus/no-manual-platform-calls",
 			"copilotGuard/require-jsdoc-and-tests",
 			"copilotGuard/require-forensic-envelope",
 			"copilotGuard/no-insecure-api"
@@ -46,9 +51,12 @@
 			"HybridStateManager.js": "Preserve reactive, event-driven sync between domains.",
 			"ComposableSecurity.js": "Always call MAC.enforceNoWriteDown() and MAC.enforceNoReadUp() before writes/reads.",
 			"AsyncOrchestrationService.js": "Generate runners with AsyncOrchestrationService.createRunner for any orchestration-aware helpers; ensure metadata includes label prefixes and actor IDs.",
-			"Project Imports": "Prefer '@' aliases with explicit filenames (e.g. '@shared/lib/SafeDOM.js'); fallback to relative paths only when pointing at a concrete file.",
+			"ActionDispatcher.js": "Treat as the synchronous gateway; every public action must dispatch through here to attach forensic, policy, and observability context.",
+			"AsyncOrchestrator.js": "Treat as the async kernel; ensure runs originate via AsyncOrchestrationService so labels, metadata, and plugins stay aligned.",
+			"Project Imports": "Prefer '@' aliases with explicit filenames (e.g. '@shared/lib/SafeDOM.js'); fallback to relative paths only when pointing at a concrete file. import in JSDoc private declarations.",
 			"ForensicLogger.js": "Every audit trail must include a classification label and cryptographic signature placeholder.",
-			"BindEngine_v2.js": "Respect forensic logging for every DOM change; avoid direct state mutations."
+			"BindEngine_v2.js": "Respect forensic logging for every DOM change; avoid direct state mutations.",
+			"MetricsReporter.js": "Wrap async work in orchestrator.run() only; do not apply ForensicLogger inside async reporters—surface synchronous threshold updates through ActionHandler paths."
 		},
 		"frontend": {
 			"StateUIBridge.js": "Treat as the main reactive binding layer; never bypass it for UI updates.",
@@ -102,12 +110,13 @@
 	},
 
 	"documentation": {
-		"requirement": "Every exported class or function must include a top-level JSDoc summary, usage example, and forensic note.",
+		"requirement": "Every exported class or function must include a top-level JSDoc summary, usage example, and forensic note. imports in canonical form with direct path fallback only. no legacy or shims",
 		"ai_assist_behavior": {
 			"refactor_mode": "Prefer pure functions and explicit dependencies.",
-			"generate_mode": "Default to secure and auditable patterns (ForensicLogger, MAC enforcement, envelope wrapping).",
-			"completion_style": "Descriptive, minimal boilerplate, inline JSDoc-first."
-		}
+			"generate_mode": "Default to secure and auditable patterns (ForensicLogger, MAC enforcement, asynch orchestration, synchronous action dispatch).",
+			"completion_style": "Descriptive, minimal boilerplate, inline JSDoc-first. Direct, private canonical imports."
+		},
+		"references": ["docs/architecture/ObservabilityGuide.md"]
 	},
 
 	"developer_guidance": {
@@ -121,7 +130,7 @@
 			]
 		},
 		"training_data_bias_protection": {
-			"goal": "Avoid generic web-framework boilerplate. Copilot should align with Nodus’ zero-framework, hybrid-kernel approach.",
+			"goal": "Avoid generic web-framework boilerplate. Copilot and Gemini should align with Nodus’ zero-framework, hybrid-kernel approach.",
 			"disallow": [
 				"React hooks",
 				"Vue reactivity",

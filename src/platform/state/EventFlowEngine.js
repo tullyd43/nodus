@@ -725,6 +725,38 @@ export class EventFlowEngine {
 			},
 		});
 
+		// UI action dispatch flow: convert UI-dispatched actions into EventFlow actions
+		// This lets UI components emit a simple `ui.action.dispatched` event and have
+		// the EventFlowEngine route it to appropriate handlers (save_entity, delete_entity, etc).
+		this.registerFlow({
+			id: "ui_action_dispatch",
+			name: "UI Action Dispatch",
+			trigger: { events: ["ui.action.dispatched"] },
+			conditions: {
+				save: {
+					type: "property_equals",
+					property: "data.action",
+					value: "save",
+				},
+				delete: {
+					type: "property_equals",
+					property: "data.action",
+					value: "delete",
+				},
+			},
+			actions: {
+				save: [{ type: "save_entity" }],
+				delete: [{ type: "delete_entity" }],
+				default: [
+					{
+						type: "log_event",
+						level: "info",
+						message: "Unhandled UI action",
+					},
+				],
+			},
+		});
+
 		console.log("[EventFlowEngine] Registered default system event flows.");
 	}
 

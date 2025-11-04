@@ -41,7 +41,7 @@ export class ForensicPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	beforeRun(context) {
+	before(context) {
 		const forensicLogger =
 			this.#logger ||
 			context.options?.forensicLogger ||
@@ -49,6 +49,40 @@ export class ForensicPlugin {
 			context.options?.stateManager?.managers?.forensicLogger;
 		if (!forensicLogger?.createEnvelope || !forensicLogger.commitEnvelope) {
 			return;
+		}
+
+		// Policy gate: consult shared policy adapter (fast sync path) before creating envelopes.
+		try {
+			const stateManager =
+				context.options?.stateManager ||
+				context.orchestrator?._stateManager ||
+				null;
+			const adapter = stateManager?.managers?.policyAdapter;
+			if (adapter?.shouldInstrumentSync) {
+				let allowed = true;
+				try {
+					allowed = Boolean(
+						adapter.shouldInstrumentSync({
+							component: "async",
+							operation: "forensic",
+							classification:
+								context.classification?.level || "internal",
+							tenantId: context.tenantId,
+							data: context.meta,
+						})
+					);
+				} catch {
+					allowed = true; // fail-open on adapter error
+				}
+				if (!allowed) return; // policy denied forensic envelopes
+			}
+		} catch (policyErr) {
+			// fail-open: log via console to avoid requiring a logger
+			/* eslint-disable-next-line no-console */
+			console.warn(
+				"[ForensicPlugin] Policy check failed, proceeding with forensic envelope",
+				policyErr
+			);
 		}
 
 		const payload = {
@@ -85,7 +119,7 @@ export class ForensicPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	onSuccess(context) {
+	after(context) {
 		const slot = context.getAttachment(ENVELOPE_SLOT);
 		if (!slot) return;
 		slot.payload.status = "success";
@@ -98,7 +132,7 @@ export class ForensicPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	onError(context) {
+	error(context) {
 		const slot = context.getAttachment(ENVELOPE_SLOT);
 		if (!slot) return;
 		slot.payload.status = "error";
@@ -117,7 +151,7 @@ export class ForensicPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	onSkip(context) {
+	skip(context) {
 		const slot = context.getAttachment(ENVELOPE_SLOT);
 		if (!slot) return;
 		slot.payload.status = "skipped";
@@ -130,7 +164,7 @@ export class ForensicPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {Promise<void>}
 	 */
-	async afterRun(context) {
+	async settled(context) {
 		const slot = context.getAttachment(ENVELOPE_SLOT);
 		if (!slot) return;
 		context.deleteAttachment(ENVELOPE_SLOT);

@@ -5,7 +5,11 @@
 import { HybridStateManager } from "@core/state/HybridStateManager.js";
 import { StorageLoader } from "@core/storage/StorageLoader.js";
 import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
-import { describe, it, beforeEach, expect, vi } from "vitest";
+
+import { createContainer } from "../_helpers.js";
+
+/* global describe,it,beforeEach,vi,MouseEvent */
+/* eslint-disable nodus/no-direct-dom-access, nodus/require-async-orchestration */
 
 // Mock StorageLoader to avoid real IndexedDB access
 vi.mock("@core/storage/StorageLoader.js");
@@ -16,12 +20,7 @@ describe("EnhancedGridRenderer - undo/redo integration", () => {
 	let container;
 
 	beforeEach(async () => {
-		document.body.innerHTML = "";
-		container = document.createElement("div");
-		container.className = "grid-container";
-		container.style.width = "600px";
-		container.style.height = "400px";
-		document.body.appendChild(container);
+		container = createContainer({ width: 600, height: 400 });
 
 		mockStorageInstance = {
 			init: vi.fn().mockResolvedValue(true),
@@ -113,9 +112,7 @@ describe("EnhancedGridRenderer - undo/redo integration", () => {
 		// At this point, a layout change should have been recorded
 		expect(hsm.getHistoryInfo().undoSize).toBeGreaterThan(0);
 
-		// Capture current layout after change
-		const after = renderer.getCurrentLayout();
-
+		// Capture current layout after change (value intentionally unused)
 		// Undo
 		hsm.undo();
 

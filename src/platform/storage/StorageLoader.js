@@ -1,5 +1,16 @@
 import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 
+// High-value sensitive stores to instrument on read. Keep this set small to
+// avoid telemetry noise while still capturing security/compliance events.
+const SENSITIVE_STORES = new Set([
+	"objects_polyinstantiated",
+	"encrypted_fields",
+	"security_events",
+	"audit_logs",
+	"configurations",
+	"user_permissions",
+]);
+
 import {
 	CanonicalResolver,
 	DEFAULT_LEGACY_MAP,
@@ -556,99 +567,35 @@ export class StorageLoader {
 			 * Minimal in-memory IndexedDB adapter used when the runtime does not
 			 * expose a native IndexedDB implementation (e.g., Node-based tests).
 			 */
-			class InMemoryIndexedDBAdapter {
-				constructor() {
-					this._store = new Map();
-				}
-
-				/**
-				 * Initializes the adapter.
-				 * @returns {Promise<boolean>} Resolves immediately for compatibility.
-				 */
-				async init() {
-					return true;
-				}
-
-				/**
-				 * Persists an object in memory.
-				 * @param {string} storeName Name of the logical store.
-				 * @param {object} obj Object to persist.
-				 * @returns {Promise<string>} Generated key for the stored object.
-				 */
-				async put(storeName, obj) {
-					const key =
-						obj.id ||
-						`${storeName}:${Math.random().toString(36).slice(2)}`;
-					this._store.set(key, obj);
-					return key;
-				}
-
-				/**
-				 * Retrieves an object by primary key.
-				 * @param {string} storeName Name of the logical store.
-				 * @param {string} id Primary key to locate.
-				 * @returns {Promise<object|null>} Stored entity or null.
-				 */
-				async get(storeName, id) {
-					return this._store.get(id) || null;
-				}
-
-				/**
-				 * Returns all stored objects.
-				 * @param {string} storeName Name of the logical store.
-				 * @returns {Promise<object[]>} Array of stored entities.
-				 */
-				async getAll(storeName) {
-					return Array.from(this._store.values());
-				}
-
-				/**
-				 * Removes an object by key.
-				 * @param {string} storeName Name of the logical store.
-				 * @param {string} id Primary key to remove.
-				 * @returns {Promise<boolean>} Whether the entry existed.
-				 */
-				async delete(storeName, id) {
-					// Emit a static forensic envelope for in-memory adapter deletes.
-					try {
-						ForensicLogger.createEnvelope(
-							"INMEM_INDEXEDDB_DELETE",
-							{
-								storeName,
-								id,
-							}
-						).catch(() => {});
-					} catch {
-						/* noop */
+				class InMemoryIndexedDBAdapter {
+					constructor() {
+						this._store = new Map();
 					}
-					return this._store.delete(id);
+
+					async init() {
+						return true;
+					}
+
+					async put(storeName, obj) {
+						const key =
+							obj.id || `${storeName}:${Math.random().toString(36).slice(2)}`;
+						this._store.set(key, obj);
+						return key;
+					}
+
+					async get(storeName, id) {
+						return this._store.get(id) || null;
+					}
+
+					async getAll(storeName) {
+						return Array.from(this._store.values());
+					}
+
+					async delete(storeName, id) {
+						const existed = this._store.delete(id);
+						return existed;
+					}
 				}
-
-				/**
-				 * Retrieves the in-memory history for a logical identifier.
-				 * @param {string} storeName Name of the logical store.
-				 * @param {string} logicalId Logical identifier to match.
-				 * @returns {Promise<object[]>} Matching historical rows.
-				 */
-				async getHistory(storeName, logicalId) {
-					// For tests, return any entries whose logical_id matches
-					return Array.from(this._store.values()).filter(
-						(v) => v.logical_id === logicalId
-					);
-				}
-			}
-			return new InMemoryIndexedDBAdapter({
-				stateManager: this.#stateManager,
-			});
-		}
-
-		// Require at least the adapter and return an instance
-		const name = req[0] || "indexeddb-adapter";
-		const AdapterClass = await this.#loadModule(name);
-		return new AdapterClass({ stateManager: this.#stateManager });
-	}
-
-	// ---------------------------------------------------------------------------
 	// Single module loader (+ cache)
 	/**
 	 * Dynamically imports a module by name, with caching.
@@ -665,8 +612,7 @@ export class StorageLoader {
 		console.log("[StorageLoader] Loading module:", moduleName);
 		const result = await this.#resolver.import(moduleName);
 		const mod = result.module;
-		const Klass =
-			mod.default || mod[this.#toPascalCase(moduleName)];
+		const Klass = mod.default || mod[this.#toPascalCase(moduleName)];
 		if (!Klass) throw new Error("No default or named export found");
 		if (this.#config.cacheModules)
 			this.#loadedModules.set(moduleName, Klass);
@@ -1048,78 +994,91 @@ class ModularOfflineStorage {
 	 * @throws {Error} When MAC enforcement or the adapter prevents the write.
 	 */
 	async put(storeName, item) {
-		return this.#trace("put", async () => {
-			const idx = this.indexeddb;
-			if (!idx?.put) throw new Error("IndexedDB adapter not loaded");
+		const registry = this.#stateManager?.forensicRegistry;
+		const operation = () =>
+			this.#trace("put", async () => {
+				const idx = this.indexeddb;
+				if (!idx?.put) throw new Error("IndexedDB adapter not loaded");
 
-			// MAC write (no write down)
-			const mac = this.#mac;
-			if (!this.#isDemoMode && mac) {
-				const canWrite = mac.canWrite(
-					this.#subject(),
-					this.#getLabel(item, { storeName })
-				);
-				if (!canWrite) {
-					throw new Error(
-						"MAC_WRITE_DENIED: Insufficient clearance to write at this level."
+				// MAC write (no write down)
+				const mac = this.#mac;
+				if (!this.#isDemoMode && mac) {
+					const canWrite = mac.canWrite(
+						this.#subject(),
+						this.#getLabel(item, { storeName })
 					);
+					if (!canWrite) {
+						throw new Error(
+							"MAC_WRITE_DENIED: Insufficient clearance to write at this level."
+						);
+					}
 				}
-			}
 
-			let record = { ...item };
+				let record = { ...item };
 
-			// Polyinstantiation Write Logic
-			if (storeName === "objects_polyinstantiated") {
-				record.id = `${item.logical_id}-${item.classification_level}`;
-			}
-
-			const crypto = this.#crypto;
-			if (!this.#isDemoMode && crypto) {
-				const isPoly = storeName === "objects_polyinstantiated";
-				const label = this.#getLabel(item, { storeName });
-
-				if (isPoly && record.instance_data) {
-					const pt = new TextEncoder().encode(
-						JSON.stringify(record.instance_data)
-					);
-					const aadPayload = {
-						...label,
-						logical_id: record.logical_id,
-						id: record.id,
-					};
-					const aad = new TextEncoder().encode(
-						JSON.stringify(aadPayload)
-					);
-					const env = await crypto.encrypt(label, pt, aad);
-					record = {
-						...record,
-						encrypted: true,
-						ciphertext: env.ciphertext,
-						iv: env.iv,
-						alg: env.alg,
-						kid: env.kid,
-						tag: env.tag,
-					};
-					delete record.instance_data;
-				} else {
-					const pt = new TextEncoder().encode(JSON.stringify(record));
-					const aadPayload = { ...label, id: record.id };
-					const aad = new TextEncoder().encode(
-						JSON.stringify(aadPayload)
-					);
-					const env = await crypto.encrypt(label, pt, aad);
-					record.envelope = env;
-					record.encrypted = true;
+				// Polyinstantiation Write Logic
+				if (storeName === "objects_polyinstantiated") {
+					record.id = `${item.logical_id}-${item.classification_level}`;
 				}
-			}
 
-			const res = await idx.put(storeName, record);
-			this.#stateManager.emit("entitySaved", {
-				store: storeName,
-				item: record,
+				const crypto = this.#crypto;
+				if (!this.#isDemoMode && crypto) {
+					const isPoly = storeName === "objects_polyinstantiated";
+					const label = this.#getLabel(item, { storeName });
+
+					if (isPoly && record.instance_data) {
+						const pt = new TextEncoder().encode(
+							JSON.stringify(record.instance_data)
+						);
+						const aadPayload = {
+							...label,
+							logical_id: record.logical_id,
+							id: record.id,
+						};
+						const aad = new TextEncoder().encode(
+							JSON.stringify(aadPayload)
+						);
+						const env = await crypto.encrypt(label, pt, aad);
+						record = {
+							...record,
+							encrypted: true,
+							ciphertext: env.ciphertext,
+							iv: env.iv,
+							alg: env.alg,
+							kid: env.kid,
+							tag: env.tag,
+						};
+						delete record.instance_data;
+					} else {
+						const pt = new TextEncoder().encode(
+							JSON.stringify(record)
+						);
+						const aadPayload = { ...label, id: record.id };
+						const aad = new TextEncoder().encode(
+							JSON.stringify(aadPayload)
+						);
+						const env = await crypto.encrypt(label, pt, aad);
+						record.envelope = env;
+						record.encrypted = true;
+					}
+				}
+
+				const res = await idx.put(storeName, record);
+				this.#stateManager.emit("entitySaved", {
+					store: storeName,
+					item: record,
+				});
+				return res;
 			});
-			return res;
-		});
+
+		if (registry && typeof registry.wrapOperation === "function") {
+			return registry.wrapOperation("storage", "put", operation, {
+				storeName,
+				args: [item],
+			});
+		}
+
+		return operation();
 	}
 
 	// -------------------------------------------------------------------------
@@ -1134,42 +1093,66 @@ class ModularOfflineStorage {
 	 * @throws {Error} When the adapter is missing or MAC denies access.
 	 */
 	async get(storeName, id) {
-		return this.#trace("get", async () => {
-			const idx = this.indexeddb;
-			if (!idx?.get) throw new Error("IndexedDB adapter not loaded");
+		const registry =
+			this.#stateManager?.forensicRegistry ||
+			this.#stateManager?.managers?.observability?.forensicRegistry;
 
-			// Poly store: read all rows for logical_id and MAC-filter them
-			if (storeName === "objects_polyinstantiated") {
-				const rows = await idx.queryByIndex(
-					storeName,
-					"logical_id",
-					id
-				);
-				const readable = this.#filterReadable(rows || [], storeName);
-				const dec = await Promise.all(
-					readable.map((r) => this.#maybeDecryptPoly(r))
-				);
-				return this.#mergePolyRows(dec);
-			}
+		const operation = async () =>
+			this.#trace("get", async () => {
+				const idx = this.indexeddb;
+				if (!idx?.get) throw new Error("IndexedDB adapter not loaded");
 
-			// Normal store
-			const raw = await idx.get(storeName, id);
-			if (!raw) return null;
-
-			// MAC read (no read up)
-			const mac = this.#mac;
-			if (!this.#isDemoMode && mac) {
-				const canRead = mac.canRead(
-					this.#subject(),
-					this.#getLabel(raw, { storeName })
-				);
-				if (!canRead) {
-					// In a constant-time check, this will just return null after a delay.
-					throw new Error("MAC_READ_DENIED");
+				// Poly store: read all rows for logical_id and MAC-filter them
+				if (storeName === "objects_polyinstantiated") {
+					const rows = await idx.queryByIndex(
+						storeName,
+						"logical_id",
+						id
+					);
+					const readable = this.#filterReadable(
+						rows || [],
+						storeName
+					);
+					const dec = await Promise.all(
+						readable.map((r) => this.#maybeDecryptPoly(r))
+					);
+					return this.#mergePolyRows(dec);
 				}
-			}
-			return this.#maybeDecryptNormal(raw);
-		});
+
+				// Normal store
+				const raw = await idx.get(storeName, id);
+				if (!raw) return null;
+
+				// MAC read (no read up)
+				const mac = this.#mac;
+				if (!this.#isDemoMode && mac) {
+					const canRead = mac.canRead(
+						this.#subject(),
+						this.#getLabel(raw, { storeName })
+					);
+					if (!canRead) {
+						// In a constant-time check, this will just return null after a delay.
+						throw new Error("MAC_READ_DENIED");
+					}
+				}
+				return this.#maybeDecryptNormal(raw);
+			});
+
+		// Selective instrumentation: only instrument reads for sensitive stores to
+		// minimize telemetry noise while preserving high-value audit trails.
+		if (
+			SENSITIVE_STORES.has(storeName) &&
+			registry &&
+			typeof registry.wrapOperation === "function"
+		) {
+			return registry.wrapOperation("storage", "get", operation, {
+				storeName,
+				args: [id],
+				sensitive: true,
+			});
+		}
+
+		return operation();
 	}
 
 	/**
@@ -1197,6 +1180,15 @@ class ModularOfflineStorage {
 			}
 			return all[all.length - 1] || null;
 		});
+
+		if (registry && typeof registry.wrapOperation === "function") {
+			return registry.wrapOperation("storage", "get", operation, {
+				storeName,
+				args: [id],
+			});
+		}
+
+		return operation();
 	}
 
 	/**
@@ -1208,90 +1200,102 @@ class ModularOfflineStorage {
 	 * @throws {Error} When MAC policies or the adapter prevent the delete.
 	 */
 	async delete(storeName, id) {
-		return this.#trace("delete", async () => {
-			const idx = this.indexeddb;
-			if (!idx?.delete) throw new Error("IndexedDB adapter not loaded");
+		const registry = this.#stateManager?.forensicRegistry;
+		const operation = () =>
+			this.#trace("delete", async () => {
+				const idx = this.indexeddb;
+				if (!idx?.delete)
+					throw new Error("IndexedDB adapter not loaded");
 
-			if (storeName === "objects_polyinstantiated") {
-				const logicalId = id;
-				const rows = await idx.queryByIndex(
-					storeName,
-					"logical_id",
-					logicalId
-				);
-				const readableRows = this.#filterReadable(
-					rows || [],
-					storeName
-				);
+				if (storeName === "objects_polyinstantiated") {
+					const logicalId = id;
+					const rows = await idx.queryByIndex(
+						storeName,
+						"logical_id",
+						logicalId
+					);
+					const readableRows = this.#filterReadable(
+						rows || [],
+						storeName
+					);
 
-				if (readableRows.length === 0) return;
+					if (readableRows.length === 0) return;
+
+					const mac = this.#mac;
+					if (!this.#isDemoMode && mac) {
+						const subject = this.#subject();
+						for (const row of readableRows) {
+							const canDelete = mac.canWrite(
+								subject,
+								this.#getLabel(row, { storeName })
+							);
+							if (!canDelete) {
+								throw new Error(
+									"MAC_DELETE_DENIED: Cannot delete an object you don't dominate."
+								);
+							}
+						}
+					}
+
+					// Emit a static forensic envelope for polyinstantiated deletions.
+					try {
+						ForensicLogger.createEnvelope("ENTITY_DELETE_POLY", {
+							store: storeName,
+							logicalId,
+							count: readableRows.length,
+						}).catch(() => {});
+					} catch {
+						/* noop */
+					}
+					await Promise.all(
+						readableRows.map((row) => idx.delete(storeName, row.id))
+					);
+
+					this.#stateManager.emit("entityDeleted", {
+						store: storeName,
+						id: logicalId,
+					});
+					return;
+				}
+
+				const item = await this.get(storeName, id);
+				if (!item) return;
 
 				const mac = this.#mac;
 				if (!this.#isDemoMode && mac) {
-					const subject = this.#subject();
-					for (const row of readableRows) {
-						const canDelete = mac.canWrite(
-							subject,
-							this.#getLabel(row, { storeName })
-						);
-						if (!canDelete) {
-							throw new Error(
-								"MAC_DELETE_DENIED: Cannot delete an object you don't dominate."
-							);
-						}
+					const canDelete = mac.canWrite(
+						this.#subject(),
+						this.#getLabel(item, { storeName })
+					);
+					if (!canDelete) {
+						throw new Error("MAC_DELETE_DENIED");
 					}
 				}
 
-				// Emit a static forensic envelope for polyinstantiated deletions.
+				// Emit a static forensic envelope for single-entity deletions.
 				try {
-					ForensicLogger.createEnvelope("ENTITY_DELETE_POLY", {
+					ForensicLogger.createEnvelope("ENTITY_DELETE", {
 						store: storeName,
-						logicalId,
-						count: readableRows.length,
+						id,
 					}).catch(() => {});
 				} catch {
 					/* noop */
 				}
-				await Promise.all(
-					readableRows.map((row) => idx.delete(storeName, row.id))
-				);
-
+				await idx.delete(storeName, id);
 				this.#stateManager.emit("entityDeleted", {
 					store: storeName,
-					id: logicalId,
-				});
-				return;
-			}
-
-			const item = await this.get(storeName, id);
-			if (!item) return;
-
-			const mac = this.#mac;
-			if (!this.#isDemoMode && mac) {
-				const canDelete = mac.canWrite(
-					this.#subject(),
-					this.#getLabel(item, { storeName })
-				);
-				if (!canDelete) {
-					throw new Error("MAC_DELETE_DENIED");
-				}
-			}
-
-			// Emit a static forensic envelope for single-entity deletions.
-			try {
-				ForensicLogger.createEnvelope("ENTITY_DELETE", {
-					store: storeName,
 					id,
-				}).catch(() => {});
-			} catch {
-				/* noop */
-			}
-			await idx.delete(storeName, id);
-			this.#stateManager.emit("entityDeleted", {
-				store: storeName,
-				id,
+				});
 			});
-		});
+
+		if (registry && typeof registry.wrapOperation === "function") {
+			return registry.wrapOperation("storage", "delete", operation, {
+				storeName,
+				args: [id],
+			});
+		}
+
+		return operation();
 	}
 
 	/**
@@ -1303,20 +1307,31 @@ class ModularOfflineStorage {
 	 * @throws {Error} When the adapter is not available.
 	 */
 	async putBulk(storeName, items) {
-		return this.#trace("putBulk", async () => {
-			const idx = this.indexeddb;
-			if (!idx) throw new Error("IndexedDB adapter not loaded");
-			if (typeof idx.putBulk === "function") {
-				return idx.putBulk(storeName, items);
-			}
-			// Fallback: sequential puts
-			const keys = [];
-			for (const item of items) {
-				const k = await idx.put(storeName, item);
-				keys.push(k);
-			}
-			return keys;
-		});
+		const registry = this.#stateManager?.forensicRegistry;
+		const operation = () =>
+			this.#trace("putBulk", async () => {
+				const idx = this.indexeddb;
+				if (!idx) throw new Error("IndexedDB adapter not loaded");
+				if (typeof idx.putBulk === "function") {
+					return idx.putBulk(storeName, items);
+				}
+				// Fallback: sequential puts
+				const keys = [];
+				for (const item of items) {
+					const k = await idx.put(storeName, item);
+					keys.push(k);
+				}
+				return keys;
+			});
+
+		if (registry && typeof registry.wrapOperation === "function") {
+			return registry.wrapOperation("storage", "putBulk", operation, {
+				storeName,
+				args: [items],
+			});
+		}
+
+		return operation();
 	}
 
 	/**
@@ -1345,6 +1360,22 @@ class ModularOfflineStorage {
 			);
 			return decrypted;
 		});
+
+		// Selective instrumentation: only instrument reads for sensitive stores to
+		// minimize telemetry noise while preserving high-value audit trails.
+		if (
+			SENSITIVE_STORES.has(storeName) &&
+			registry &&
+			typeof registry.wrapOperation === "function"
+		) {
+			return registry.wrapOperation("storage", "get", operation, {
+				storeName,
+				args: [id],
+				sensitive: true,
+			});
+		}
+
+		return operation();
 	}
 
 	/**

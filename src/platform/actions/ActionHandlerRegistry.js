@@ -300,6 +300,43 @@ export class ActionHandlerRegistry {
 			}
 		);
 
+		// Data manipulation action: Delete an entity by id
+		this.register(
+			"delete_entity",
+			async (action, event, flow, stateManager) => {
+				await this.#errorHelpers?.tryOr(
+					async () => {
+						const entityId =
+							action.entityId ||
+							event.data?.entityId ||
+							event.data?.id;
+						if (!entityId) {
+							console.warn(
+								`[ActionHandlerRegistry] 'delete_entity' action in flow ${flow.id} is missing entity id.`
+							);
+							return;
+						}
+						await stateManager.deleteEntity(entityId);
+						this.#metrics?.increment(
+							"actions.executed.delete_entity"
+						);
+					},
+					(error) => {
+						stateManager.emit("action_execution_error", {
+							action,
+							event,
+							flow,
+							error,
+						});
+					},
+					{
+						component: "ActionHandlerRegistry",
+						operation: "delete_entity",
+					}
+				);
+			}
+		);
+
 		// Data manipulation action: Create or update an entity
 		this.register(
 			"save_entity",

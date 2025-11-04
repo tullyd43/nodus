@@ -1,7 +1,8 @@
 // tests/unit/security/NonRepudiation.test.js
 
 import { NonRepudiation } from "@core/security/NonRepudiation.js";
-import { describe, test, expect, beforeEach, vi } from "vitest";
+/* global describe,test,beforeEach,expect,vi */
+/* eslint-disable nodus/require-async-orchestration */
 
 describe("NonRepudiation", () => {
 	let signer;

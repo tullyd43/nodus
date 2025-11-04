@@ -39,7 +39,7 @@ export class MetricsPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	beforeRun(context) {
+	before(context) {
 		const sampled = this.#shouldSample(context);
 		context.attach(SAMPLE_SLOT, sampled);
 		if (!sampled) return;
@@ -53,7 +53,7 @@ export class MetricsPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	onSuccess(context) {
+	after(context) {
 		if (!this.#isSampled(context)) return;
 		this.#metrics?.increment?.("async.success", 1);
 		this.#metrics?.increment?.(`async.${context.label}.success`, 1);
@@ -64,7 +64,7 @@ export class MetricsPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	onError(context) {
+	error(context) {
 		if (!this.#isSampled(context)) return;
 		const errorKey =
 			context.error && context.error.name
@@ -82,7 +82,7 @@ export class MetricsPlugin {
 	 * @param {AsyncRunContext} context
 	 * @returns {void}
 	 */
-	afterRun(context) {
+	settled(context) {
 		if (!this.#isSampled(context)) return;
 
 		this.#metrics?.increment?.("async.completed", 1);

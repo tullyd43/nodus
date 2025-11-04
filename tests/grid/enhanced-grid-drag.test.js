@@ -2,78 +2,34 @@
  * @vitest-environment jsdom
  */
 import { EnhancedGridRenderer } from "@features/grid/EnhancedGridRenderer.js";
-import { describe, it, beforeEach, expect, vi } from "vitest";
 
+import {
+	createContainer,
+	makeMockStateManager,
+	makeAppViewModel,
+	addBlockElement,
+	setupRenderer,
+} from "../_helpers.js";
 
-function makeMockStateManager() {
-	const listeners = new Map();
-	const fm = {
-		managers: {
-			policies: { getPolicy: () => true },
-			errorHelpers: { handleError: () => {} },
-			gridToastManager: {
-				warning: vi.fn(),
-				success: vi.fn(),
-				info: vi.fn(),
-			},
-			forensicLogger: { logAuditEvent: vi.fn(async () => {}) },
-		},
-		eventFlowEngine: {
-			on: (k, fn) => {
-				if (!listeners.has(k)) listeners.set(k, []);
-				listeners.get(k).push(fn);
-				return () => {
-					const arr = listeners.get(k) || [];
-					listeners.set(
-						k,
-						arr.filter((f) => f !== fn)
-					);
-				};
-			},
-			emit: (k, d) => (listeners.get(k) || []).forEach((fn) => fn(d)),
-		},
-		metricsRegistry: { namespace: () => ({ increment: vi.fn() }) },
-		metricsRegistryRaw: vi.fn(),
-		recordOperation: vi.fn(),
-		transaction: vi.fn((fn) => fn()),
-		undo: vi.fn(),
-		redo: vi.fn(),
-	};
-	return fm;
-}
+/* global describe,it,beforeEach,MouseEvent */
+/* eslint-disable nodus/no-direct-dom-access, nodus/require-async-orchestration */
 
 describe("EnhancedGridRenderer - drag start/end persistence", () => {
-	let container, stateManager, renderer, appViewModel;
+	/* eslint-disable-next-line no-unused-vars -- renderer instance is used for side-effects during init */
+	let container, stateManager, _renderer, appViewModel;
 
 	beforeEach(() => {
-		document.body.innerHTML = "";
-		container = document.createElement("div");
-		container.className = "grid-container";
-		container.style.width = "600px";
-		container.style.height = "400px";
-		document.body.appendChild(container);
-
-		const a = document.createElement("div");
-		a.className = "grid-block";
-		a.dataset.blockId = "A";
-		container.appendChild(a);
+		container = createContainer({ width: 600, height: 400 });
+		addBlockElement(container, "A");
 
 		stateManager = makeMockStateManager();
 
-		appViewModel = {
-			gridLayoutViewModel: {
-				getCurrentLayout: () => ({
-					blocks: [
-						{ blockId: "A", position: { x: 0, y: 0, w: 2, h: 1 } },
-					],
-				}),
-				updatePositions: vi.fn(),
-			},
-			getCurrentUser: () => ({ id: "tester" }),
-		};
+		appViewModel = makeAppViewModel([
+			{ blockId: "A", position: { x: 0, y: 0, w: 2, h: 1 } },
+		]);
 
-		renderer = new EnhancedGridRenderer({ stateManager });
-		renderer.initialize({
+		_renderer = setupRenderer(EnhancedGridRenderer, {
+			stateManager,
 			container,
 			appViewModel,
 			options: { testMode: true },

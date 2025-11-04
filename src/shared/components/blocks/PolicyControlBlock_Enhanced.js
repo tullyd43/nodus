@@ -1,4 +1,4 @@
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
+import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 // ui/blocks/PolicyControlBlock.js
 // Enhanced with permission/domain restriction tooltips
 
@@ -35,7 +35,7 @@ class PolicyControlBlock_V2 {
 
 	 */
 
-		constructor({ context, config = {} }) {
+	constructor({ context, config = {} }) {
 		this.#context = context;
 		this.#config = config;
 
@@ -107,7 +107,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (this.#canEditGlobal) {
+		if (this.#canEditGlobal) {
 			this.#container.appendChild(this.#createActionButtons());
 		}
 	}
@@ -232,7 +232,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (!this.#canEditGlobal || this.#allowedDomains.length < 5) {
+		if (!this.#canEditGlobal || this.#allowedDomains.length < 5) {
 			const helpText = document.createElement("div");
 			helpText.style.cssText = `
                 margin-top: 0.5rem;
@@ -252,7 +252,7 @@ class PolicyControlBlock_V2 {
 
 			 */
 
-						if (!this.#canEditGlobal) {
+			if (!this.#canEditGlobal) {
 				helpMessage =
 					"💡 You have read-only access. Contact an administrator to modify policies.";
 			} else if (this.#allowedDomains.length < 5) {
@@ -363,7 +363,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (!this.#canEditGlobal) {
+		if (!this.#canEditGlobal) {
 			restrictionReason = "Insufficient permissions to manage policies";
 		} else if (!isDomainAllowed) {
 			restrictionReason = `Role "${this.#userRole}" cannot access "${sectionKey}" domain`;
@@ -421,7 +421,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (restrictionReason) {
+		if (restrictionReason) {
 			this.#addTooltip(header, restrictionReason);
 			this.#addTooltip(accessBadge, restrictionReason);
 		} else {
@@ -450,7 +450,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (!isDomainAllowed && !this.#canEditGlobal) {
+		if (!isDomainAllowed && !this.#canEditGlobal) {
 			content.appendChild(this.#createNoAccessMessage(restrictionReason));
 		} else {
 			if (Object.keys(sectionPolicies).length === 0) {
@@ -568,7 +568,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (editable) {
+		if (editable) {
 			row.addEventListener("mouseenter", () => {
 				row.style.backgroundColor = this.#theme["--surface-elevated"];
 			});
@@ -621,7 +621,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (!editable) {
+		if (!editable) {
 			const restrictionIcon = document.createElement("span");
 			restrictionIcon.textContent = "🔒";
 			restrictionIcon.style.cssText = `font-size: 0.8rem; opacity: 0.7; cursor: help;`;
@@ -641,7 +641,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (dependencies.length > 0) {
+		if (dependencies.length > 0) {
 			const depIcon = document.createElement("span");
 			depIcon.textContent = "🔗";
 			depIcon.style.cssText = `font-size: 0.8rem; opacity: 0.7; cursor: help; margin-left: 0.25rem;`;
@@ -661,7 +661,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (editable) {
+		if (editable) {
 			toggle.addEventListener("change", async () => {
 				await this.#handlePolicyToggle(section, key, toggle.checked);
 				statusText.textContent = toggle.checked ? "ON" : "OFF";
@@ -713,7 +713,7 @@ class PolicyControlBlock_V2 {
 
 			 */
 
-						if (tooltipRect.right > window.innerWidth - 10) {
+			if (tooltipRect.right > window.innerWidth - 10) {
 				tooltip.style.left = `${window.innerWidth - tooltipRect.width - 10}px`;
 			}
 
@@ -729,7 +729,7 @@ class PolicyControlBlock_V2 {
 
 			 */
 
-						if (element._tooltip) {
+			if (element._tooltip) {
 				element._tooltip.remove();
 				element._tooltip = null;
 			}
@@ -830,7 +830,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (this.#userRole === "super_admin") {
+		if (this.#userRole === "super_admin") {
 			const importBtn = this.#createButton(
 				"Import",
 				"📥",
@@ -894,7 +894,7 @@ class PolicyControlBlock_V2 {
 
 		 */
 
-				if (tooltipText) {
+		if (tooltipText) {
 			this.#addTooltip(button, tooltipText);
 		}
 
@@ -923,7 +923,7 @@ class PolicyControlBlock_V2 {
 
 			 */
 
-						if (this.#eventFlow) {
+			if (this.#eventFlow) {
 				this.#eventFlow.emit("policy_updated", {
 					section,
 					key,
@@ -955,7 +955,7 @@ class PolicyControlBlock_V2 {
 
 			 */
 
-						if (toggle) {
+			if (toggle) {
 				toggle.checked = !enabled;
 			}
 
@@ -970,7 +970,7 @@ class PolicyControlBlock_V2 {
 
 			 */
 
-						if (this.#eventFlow) {
+			if (this.#eventFlow) {
 				this.#eventFlow.emit("error", {
 					message: `Failed to update policy: ${error.message}`,
 					level: "medium",
@@ -1024,7 +1024,7 @@ class PolicyControlBlock_V2 {
 
 			 */
 
-						if (file) {
+			if (file) {
 				const reader = new FileReader();
 				reader.onload = async (e) => {
 					try {
@@ -1037,7 +1037,7 @@ class PolicyControlBlock_V2 {
 
 						 */
 
-												if (imported && imported.policies) {
+						if (imported && imported.policies) {
 							await this.#policyManager.importPolicies(
 								imported.policies
 							);
@@ -1163,7 +1163,7 @@ class PolicyControlBlock_V2 {
 
 	 */
 
-		render() {
+	render() {
 		return this.#container;
 	}
 }
