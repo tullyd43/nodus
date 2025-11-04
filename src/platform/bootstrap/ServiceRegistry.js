@@ -175,8 +175,7 @@ export class ServiceRegistry {
 		if (this.#stateManager.managers[serviceName]) {
 			return this.#stateManager.managers[serviceName];
 		}
-
-		/* eslint-disable-next-line nodus/require-async-orchestration -- createAndInitService is a factory used by orchestrated runners below; execution is wrapped by orchestrator when available */
+		
 		const createAndInitService = async () => {
 			const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
 

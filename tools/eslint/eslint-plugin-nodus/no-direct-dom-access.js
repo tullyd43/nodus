@@ -4,11 +4,6 @@ const FORBIDDEN_GLOBALS = new Set([
 	"localStorage",
 	"sessionStorage",
 ]);
-const ALLOWED_FILES = [
-	"src/features/ui/",
-	"src/shared/lib/SafeDOM.js",
-	"src/app/main.js", // Entry point
-];
 
 export default {
 	meta: {
@@ -16,6 +11,21 @@ export default {
 		docs: {
 			description: "Disallow direct DOM/BOM access from platform code.",
 		},
+		schema: [
+			{
+				type: "object",
+				properties: {
+					allowIn: {
+						type: "array",
+						items: {
+							type: "string",
+						},
+						default: [],
+					},
+				},
+				additionalProperties: false,
+			},
+		],
 		messages: {
 			noDirectDOM:
 				"Direct access to '{{name}}' is forbidden. Use a canonical UI service or SafeDOM.",
@@ -23,7 +33,10 @@ export default {
 	},
 	create(context) {
 		const filename = context.getFilename().replace(/\\/g, "/");
-		const isAllowed = ALLOWED_FILES.some((path) => filename.includes(path));
+		const options = context.options[0] || {};
+		const allowedFiles = options.allowIn || [];
+
+		const isAllowed = allowedFiles.some((path) => filename.includes(path));
 
 		if (isAllowed) {
 			return {};

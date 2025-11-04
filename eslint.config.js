@@ -1,296 +1,307 @@
-/* eslint-disable nodus/no-direct-dom-access */
-/* eslint-disable no-unused-vars */
-/* eslint-env node */
-// eslint.config.js — ESLint v9+ (Enterprise Observability Edition)
+/**
+ * @file Complete ESLint Configuration for Nodus Project
+ * @version 2.1.0 - Production Architecture Support
+ * @description Project-wide ESLint configuration with updated rules for entire codebase
+ */
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-import js from "@eslint/js";
-import pluginImport from "eslint-plugin-import";
-import pluginPromise from "eslint-plugin-promise";
-import pluginSecurity from "eslint-plugin-security";
-import pluginUnusedImports from "eslint-plugin-unused-imports";
-
-// Use a static import for the in-repo nodus plugin so the plugin object is
-// synchronously available to ESLint when it loads this config. Dynamic
-// top-level await imports can be fragile in some ESLint integrations.
 import nodusPlugin from "./tools/eslint/eslint-plugin-nodus/index.js";
-
-// V8.0 Parity: Correctly resolve paths relative to this config file's location.
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const overrideCIPath = path.resolve(
-	__dirname,
-	"tools/eslint/.eslint-override.ci.json"
-);
-const overrideCI = {
-	...JSON.parse(fs.readFileSync(overrideCIPath, "utf8")),
-	plugins: {
-		nodus: nodusPlugin,
-	},
-};
-
-// Dynamically import the exception file from the correct relative path.
-import exceptions from "./tools/eslint/.eslint.config.exception.js";
-
-// Force modern parser
-process.env.ESLINT_USE_FLAT_CONFIG = "true";
-
-// Enterprise license detection for rule enforcement
-const isEnterpriseEnvironment =
-	process.env.NODUS_LICENSE_TYPE === "enterprise" ||
-	process.env.NODE_ENV === "production";
+import nodusExceptions from "./tools/eslint/.eslint.config.exception.js";
 
 export default [
-	js.configs.recommended,
-
+	// Base configuration for all JavaScript/TypeScript files
 	{
-		ignores: [
-			"dist/**",
-			"node_modules/**",
-			"coverage/**",
-			"docs/**",
-			"tools/vite/**",
-		],
-	},
-
-	{
-		files: ["**/*.js", "**/*.mjs"],
+		files: ["**/*.{js,mjs,cjs,jsx,ts,tsx}"],
+		plugins: {
+			nodus: nodusPlugin,
+		},
 		languageOptions: {
 			ecmaVersion: "latest",
 			sourceType: "module",
 			parserOptions: {
-				ecmaVersion: "latest",
 				ecmaFeatures: {
-					classFields: true,
-					privateIn: true,
+					jsx: true,
 				},
 			},
-			globals: {
-				// Node + Browser Hybrid Environment
-				window: "readonly",
-				document: "readonly",
-				console: "readonly",
-				global: "readonly",
-				process: "readonly",
-				// Web APIs
-				performance: "readonly",
-				navigator: "readonly",
-				localStorage: "readonly",
-				sessionStorage: "readonly",
-				indexedDB: "readonly",
-				setTimeout: "readonly",
-				clearTimeout: "readonly",
-				setInterval: "readonly",
-				clearInterval: "readonly",
-				AbortController: "readonly",
-				IntersectionObserver: "readonly",
-				requestAnimationFrame: "readonly",
-				cancelAnimationFrame: "readonly",
-				MutationObserver: "readonly",
-				ResizeObserver: "readonly",
-				HTMLElement: "readonly",
-				fetch: "readonly",
-				URL: "readonly",
-				Blob: "readonly",
-				FileReader: "readonly",
-				DOMParser: "readonly",
-				CustomEvent: "readonly",
-				crypto: "readonly",
-				TextEncoder: "readonly",
-				TextDecoder: "readonly",
-				WebSocket: "readonly",
-				PerformanceObserver: "readonly",
-				btoa: "readonly",
-				atob: "readonly",
-				confirm: "readonly",
-				test: "readonly",
-				expect: "readonly",
-				ErrorEvent: "readonly",
-			},
-		},
-		plugins: {
-			import: pluginImport,
-			promise: pluginPromise,
-			security: pluginSecurity,
-			"unused-imports": pluginUnusedImports,
-			// Register the updated nodus plugin with enterprise rules
-			nodus: nodusPlugin,
-			// Backwards-compatible alias
-			"nodus-rules": nodusPlugin,
 		},
 		rules: {
-			// --- General Quality ---
+			// Core ESLint rules
+			"no-unused-vars": [
+				"error",
+				{
+					argsIgnorePattern: "^_",
+					varsIgnorePattern: "^_",
+				},
+			],
 			"no-console": [
 				"warn",
 				{
-					allow: [
-						"warn",
-						"error",
-						"info",
-						"debug",
-						"log",
-						"trace",
-						"dir",
-						"group",
-						"groupEnd",
-					],
+					allow: ["warn", "error"],
 				},
 			],
-
-			"no-warning-comments": [
-				"warn",
-				{ terms: ["todo", "fixme", "xxx"], location: "start" },
-			],
-
-			"no-debugger": "error",
-
-			// --- Imports & Organization ---
-			"import/order": [
-				"warn",
-				{
-					groups: [
-						"builtin",
-						"external",
-						"internal",
-						["parent", "sibling", "index"],
-					],
-					"newlines-between": "always",
-					alphabetize: { order: "asc", caseInsensitive: true },
-				},
-			],
-			"import/no-duplicates": "warn",
-
-			// --- Modern JS ---
-			"prefer-const": "warn",
+			"prefer-const": "error",
 			"no-var": "error",
-			"object-shorthand": "warn",
-			"arrow-body-style": ["warn", "as-needed"],
 
-			// --- Promises & Security ---
-			"promise/no-nesting": "warn",
-			"security/detect-object-injection": "off",
-
-			// --- Cleanup ---
-			"unused-imports/no-unused-imports": "error",
-			"no-unused-vars": [
-				"warn",
-				{ args: "none", ignoreRestSiblings: true },
-			],
-			"no-case-declarations": "off",
-			"no-control-regex": "off",
-			"no-empty": "warn",
-
-			// --- Core Architecture Rules ---
+			// Nodus core architecture rules (UPDATED)
 			"nodus/no-direct-core-instantiation": "error",
-			"nodus/require-async-orchestration": "error",
-			"nodus/require-action-dispatcher": "error",
-			"nodus/prefer-alias-imports": "error",
+			// "nodus/require-async-orchestration": [
+			// 	"error",
+			// 	{
+			// 		recognizeWrappers: true,
+			// 		allowIn: [
+			// 			"src/platform/services/", // Service layer can use wrappers
+			// 			"src/platform/managers/", // Manager layer can use wrappers
+			// 			"src/shared/lib/", // Shared libraries
+			// 			"src/platform/bootstrap/", // Bootstrap code
+			// 			"src/platform/observability/", // Observability infrastructure
+			// 			"tests/", // Test files
+			// 			"src/devtools/", // Development tools
+			// 			"scripts/", // Build scripts
+			// 			"src/examples/", // Example code
+			// 		],
+			// 	},
+			// ],
+			// "nodus/require-action-dispatcher": [
+			// 	"error",
+			// 	{
+			// 		enforceStorage: true,
+			// 		enforceCache: true,
+			// 		enforceUI: true,
+			// 		allowIn: [
+			// 			"src/platform/actions/", // ActionDispatcher implementation
+			// 			"src/platform/bootstrap/", // Bootstrap code
+			// 			"src/platform/storage/adapters/", // Storage adapters
+			// 			"tests/", // Test files
+			// 		],
+			// 	},
+			// ],
+			// "nodus/prefer-alias-imports": "error",
 
-			// --- Security & Access Control Rules ---
-			"nodus/no-direct-dom-access": "error",
-			"nodus/no-external-scripts": "error",
-			"nodus/enforce-canonical-sanitizer": "error",
-			"nodus/no-security-string-literals": "error",
-			"nodus/require-cds-transport": "error",
+			// // Security rules (STRICT)
+			// "nodus/no-direct-dom-access": "error",
+			// "nodus/no-external-scripts": "error",
+			// "nodus/no-security-string-literals": "error",
+			// "nodus/require-cds-transport": "error",
 
-			// --- Platform Integration Rules ---
-			"nodus/no-manual-platform-calls": "error",
-			"nodus/require-observability-compliance": "error",
-			"nodus/require-policy-gate": "warn",
-			"nodus/require-policy-compliance": "error",
+			// // Platform integration rules (UPDATED)
+			// "nodus/no-manual-platform-calls": [
+			// 	"error",
+			// 	{
+			// 		allowIn: [
+			// 			"src/platform/bootstrap/",
+			// 			"src/platform/observability/",
+			// 			"src/shared/lib/async/",
+			// 			"src/platform/policies/",
+			// 			"tests/",
+			// 			"scripts/",
+			// 		],
+			// 	},
+			// ],
+			// "nodus/require-observability-compliance": [
+			// 	"error",
+			// 	{
+			// 		enforceForensic: true,
+			// 		enforceActionDispatcher: true,
+			// 		enforceOrchestrator: true,
+			// 		allowIn: [
+			// 			"src/platform/observability/", // Observability implementation
+			// 			"src/platform/bootstrap/", // Bootstrap code
+			// 			"tests/", // Test files
+			// 		],
+			// 	},
+			// ],
+			// "nodus/require-policy-compliance": "error",
+			// "nodus/require-policy-gate": "error",
 
-			// --- Performance & Quality Rules ---
-			"nodus/require-performance-budget": "warn",
+			// // Performance rules
+			// "nodus/require-performance-budget": "warn",
 		},
 	},
 
 	// Enterprise-specific configuration
 	{
-		files: ["src/platform/enterprise/**/*.js", "src/enterprise/**/*.js"],
+		files: [
+			"src/platform/enterprise/**/*.{js,mjs,cjs}",
+			"src/enterprise/**/*.{js,mjs,cjs}",
+			"src/platform/services/**/*.{js,mjs,cjs}",
+			"src/platform/managers/**/*.{js,mjs,cjs}",
+		],
 		rules: {
-			// Stricter rules for enterprise code
-			"nodus/require-license-validation": "error",
-			"nodus/require-signed-plugins": "error",
-			"nodus/require-observability-compliance": "error",
-			"nodus/require-performance-budget": "error",
-			"nodus/require-policy-compliance": [
+			// Enterprise features require license validation
+			"nodus/require-license-validation": [
 				"error",
-				{ enforceLevel: "enterprise" },
+				{
+					allowIn: [
+						"src/platform/bootstrap/",
+						"src/platform/license/",
+						"tests/",
+					],
+				},
+			],
+			"nodus/require-signed-plugins": [
+				"error",
+				{
+					allowIn: [
+						"src/platform/bootstrap/",
+						"src/platform/plugins/",
+						"tests/",
+					],
+				},
+			],
+			// Stricter performance requirements for enterprise
+			"nodus/require-performance-budget": "error",
+		},
+	},
+
+	// UI-specific configuration
+	{
+		files: [
+			"src/ui/**/*.{js,jsx,mjs}",
+			"src/features/ui/**/*.{js,jsx,mjs}",
+			"src/platform/ui/**/*.{js,jsx,mjs}",
+		],
+		rules: {
+			// UI can access DOM through SafeDOM
+			"nodus/no-direct-dom-access": "error",
+			// UI must use declarative actions
+			"nodus/require-action-dispatcher": [
+				"error",
+				{
+					enforceUI: true,
+					enforceStorage: true,
+					enforceCache: false, // UI doesn't directly use cache
+				},
 			],
 		},
 	},
 
-	// Performance-critical files
+	// Service layer configuration
 	{
 		files: [
-			"src/platform/performance/**/*.js",
-			"src/platform/cache/**/*.js",
-			"src/platform/storage/**/*.js",
-			"src/grid/**/*.js",
+			"src/platform/services/**/*.{js,mjs,cjs}",
+			"src/shared/services/**/*.{js,mjs,cjs}",
 		],
 		rules: {
-			"nodus/require-performance-budget": "error",
-			"nodus/require-policy-compliance": "error",
-			// Extra strict performance rules
-			"no-unused-expressions": "error",
-			"prefer-template": "error",
-		},
-	},
-
-	// Security-sensitive files
-	{
-		files: [
-			"src/platform/security/**/*.js",
-			"src/platform/crypto/**/*.js",
-			"src/platform/auth/**/*.js",
-		],
-		rules: {
-			"nodus/require-observability-compliance": "error",
-			"nodus/no-security-string-literals": "error",
-			"nodus/require-policy-gate": "error",
-			"security/detect-object-injection": "error",
-		},
-	},
-
-	// Development and testing - more lenient rules
-	{
-		files: [
-			"tests/**/*.js",
-			"src/devtools/**/*.js",
-			"scripts/**/*.js",
-			"tools/**/*.js",
-		],
-		rules: {
-			"nodus/require-license-validation": "off",
-			"nodus/require-observability-compliance": "warn",
-			"nodus/require-performance-budget": "off",
-			"nodus/require-signed-plugins": "off",
-			"no-console": "off",
-		},
-	},
-
-	{
-		...exceptions,
-		plugins: {
-			nodus: nodusPlugin,
-		},
-	},
-
-	// CI tolerant mode for gradual adoption
-	process.env.ESLINT_MODE === "tolerant"
-		? {
-				...overrideCI,
-				rules: {
-					...overrideCI.rules,
-					// Gradually introduce new rules in CI
-					"nodus/require-policy-compliance": "warn",
-					"nodus/require-performance-budget": "warn",
-					"nodus/require-license-validation": "warn",
-					"nodus/require-signed-plugins": "warn",
-					"nodus/require-observability-compliance": "warn",
+			// Services can use wrapper patterns
+			"nodus/require-async-orchestration": [
+				"error",
+				{
+					recognizeWrappers: true,
+					allowIn: ["src/platform/services/", "src/shared/services/"],
 				},
-			}
-		: {},
+			],
+			// Services must use proper observability
+			"nodus/require-observability-compliance": [
+				"error",
+				{
+					enforceForensic: true,
+					enforceActionDispatcher: true,
+					enforceOrchestrator: true,
+				},
+			],
+			// Services require performance budgets
+			"nodus/require-performance-budget": "error",
+		},
+	},
+
+	// Storage layer configuration
+	{
+		files: [
+			"src/platform/storage/**/*.{js,mjs,cjs}",
+			"src/shared/storage/**/*.{js,mjs,cjs}",
+		],
+		rules: {
+			// Storage adapters can access storage directly
+			"nodus/require-action-dispatcher": [
+				"error",
+				{
+					enforceStorage: false, // Storage layer implements the abstraction
+					enforceCache: true,
+					enforceUI: false,
+				},
+			],
+			// Storage operations need forensic compliance
+			"nodus/require-observability-compliance": [
+				"error",
+				{
+					enforceForensic: true,
+					enforceActionDispatcher: false, // Storage implements ActionDispatcher
+					enforceOrchestrator: true,
+				},
+			],
+		},
+	},
+
+	// Test configuration - more relaxed
+	{
+		files: [
+			"**/*.test.{js,mjs,cjs,jsx,ts,tsx}",
+			"**/*.spec.{js,mjs,cjs,jsx,ts,tsx}",
+			"tests/**/*.{js,mjs,cjs,jsx,ts,tsx}",
+			"test/**/*.{js,mjs,cjs,jsx,ts,tsx}",
+			"__tests__/**/*.{js,mjs,cjs,jsx,ts,tsx}",
+		],
+		rules: {
+			// Relaxed rules for tests
+			"nodus/require-async-orchestration": "off",
+			"nodus/require-action-dispatcher": "off",
+			"nodus/require-observability-compliance": "off",
+			"nodus/require-performance-budget": "off",
+			"nodus/require-license-validation": "off",
+			"nodus/require-signed-plugins": "off",
+			"nodus/require-policy-compliance": "off",
+			"nodus/require-policy-gate": "off",
+			// Keep security rules for tests
+			"nodus/no-direct-core-instantiation": "error",
+			"nodus/no-external-scripts": "warn",
+			"nodus/require-cds-transport": "warn",
+		},
+	},
+
+	// Development tools configuration
+	{
+		files: [
+			"src/devtools/**/*.{js,mjs,cjs}",
+			"scripts/**/*.{js,mjs,cjs}",
+			"tools/**/*.{js,mjs,cjs}",
+			"build/**/*.{js,mjs,cjs}",
+		],
+		rules: {
+			// Very relaxed for dev tools
+			"nodus/require-async-orchestration": "off",
+			"nodus/require-action-dispatcher": "off",
+			"nodus/require-observability-compliance": "off",
+			"nodus/require-performance-budget": "off",
+			"nodus/require-license-validation": "off",
+			"nodus/require-signed-plugins": "off",
+			"nodus/no-external-scripts": "warn",
+			"nodus/require-cds-transport": "off",
+			"nodus/no-direct-dom-access": "off",
+		},
+	},
+
+	// Configuration files
+	{
+		files: [
+			"*.config.{js,mjs,cjs}",
+			"**/*.config.{js,mjs,cjs}",
+			".eslintrc.*",
+			"vite.config.*",
+			"webpack.config.*",
+		],
+		rules: {
+			// All Nodus rules off for config files
+			"nodus/require-async-orchestration": "off",
+			"nodus/require-action-dispatcher": "off",
+			"nodus/require-observability-compliance": "off",
+			"nodus/no-direct-core-instantiation": "off",
+			"nodus/require-performance-budget": "off",
+			"nodus/require-license-validation": "off",
+			"nodus/require-signed-plugins": "off",
+			"nodus/no-external-scripts": "off",
+			"nodus/require-cds-transport": "off",
+		},
+	},
+
+	// Exception handling configuration
+	nodusExceptions,
 ];

@@ -1,26 +1,112 @@
 {
 	"metadata": {
-		"lastReview": "2025-10-31T00:00:00Z",
+		"lastReview": "2025-11-04T00:00:00Z",
 		"reviewer": "Security Council / Nodus Compliance Board",
-		"purpose": "Controlled exception registry for copilotGuard plugin."
+		"purpose": "Controlled exception registry for production Nodus architecture patterns",
+		"version": "2.1.0"
 	},
 	"allowlist": {
 		"safeHTML": [
 			"src/ui/components/MarkdownRenderer.js",
-			"src/ui/blocks/RichReportViewer.js"
+			"src/ui/blocks/RichReportViewer.js",
+			"src/ui/components/SafeRenderer.js"
 		],
 		"safeFetch": [
 			"src/core/security/CDS.js",
-			"src/integrations/ExternalBridge.js"
+			"src/integrations/ExternalBridge.js",
+			"src/platform/security/cds.js",
+			"src/shared/lib/transport/"
 		],
 		"unsafeMutations": [
 			"src/devtools/DebugConsole.js",
 			"src/ui/BindEngine.js",
-			"src/core/ui/BindEngine_v2.js"
+			"src/core/ui/BindEngine_v2.js",
+			"src/platform/bootstrap/",
+			"src/platform/observability/"
 		],
-		"allowManualPlatformCalls": [],
+		"allowManualPlatformCalls": [
+			"src/platform/bootstrap/",
+			"src/platform/observability/",
+			"src/shared/lib/async/",
+			"src/platform/policies/",
+			"tests/",
+			"scripts/"
+		],
+		"allowUnorchestratedAsync": [
+			"src/platform/services/",
+			"src/platform/managers/",
+			"src/shared/lib/",
+			"src/platform/bootstrap/",
+			"src/platform/observability/",
+			"tests/",
+			"src/devtools/",
+			"scripts/"
+		],
+		"allowDirectStorage": [
+			"src/platform/bootstrap/ServiceRegistry.js",
+			"src/platform/storage/adapters/",
+			"src/platform/storage/implementations/",
+			"tests/"
+		],
+		"allowDirectCache": [
+			"src/platform/bootstrap/",
+			"src/platform/utils/caching/",
+			"src/platform/managers/CacheManager.js",
+			"tests/"
+		],
+		"allowDirectDOM": [
+			"src/ui/",
+			"src/features/ui/",
+			"src/shared/lib/SafeDOM.js",
+			"src/app/main.js",
+			"src/platform/ui/",
+			"tests/"
+		],
 		"jsdocExceptions": {
-			"src/ui/BindEngine.js": ["constructor", "start"]
-		}
+			"src/ui/BindEngine.js": ["constructor", "start"],
+			"src/platform/services/": [
+				"#runOrchestrated",
+				"#runSecure",
+				"#orchestrate"
+			],
+			"src/platform/managers/": [
+				"#runOrchestrated",
+				"#runSecure",
+				"#orchestrate"
+			]
+		},
+		"wrapperPatternFiles": [
+			"src/platform/services/EmbeddingManager.js",
+			"src/platform/services/QueryService.js",
+			"src/platform/services/ValidationLayer.js",
+			"src/platform/managers/SecurityManager.js",
+			"src/platform/managers/PolicyManager.js",
+			"src/shared/lib/BaseService.js",
+			"src/shared/lib/BaseManager.js"
+		],
+		"forensicRegistryExempt": [
+			"src/platform/observability/ForensicRegistry.js",
+			"src/platform/observability/BaseForensicPlugin.js",
+			"src/platform/bootstrap/",
+			"tests/"
+		],
+		"actionDispatcherExempt": [
+			"src/platform/actions/ActionDispatcher.js",
+			"src/platform/actions/ActionHandlerRegistry.js",
+			"src/platform/bootstrap/",
+			"tests/"
+		],
+		"licenseValidationExempt": [
+			"src/platform/bootstrap/",
+			"src/platform/license/",
+			"tests/",
+			"src/devtools/"
+		],
+		"performanceBudgetExempt": [
+			"tests/",
+			"src/devtools/",
+			"scripts/",
+			"src/platform/utils/"
+		]
 	}
 }

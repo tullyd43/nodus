@@ -1,7 +1,7 @@
 /**
- * @file Nodus architectural linting rules for enterprise observability platform
- * @copyright 2024 Nodus
- * @version 2.0 - Enterprise Observability Edition
+ * @file Complete Nodus ESLint Plugin Configuration Package
+ * @version 2.2.0 - Production Architecture Support with Individual Rule Allowlist Loading
+ * @description Comprehensive ESLint rules package for entire Nodus codebase with proper allowlist support
  */
 
 import enforceCanonicalSanitizer from "./enforce-canonical-sanitizer.js";
@@ -21,15 +21,9 @@ import requirePolicyCompliance from "./require-policy-compliance.js";
 import requirePolicyGate from "./require-policy-gate.js";
 import requireSignedPlugins from "./require-signed-plugins.js";
 
-const plugin = {
-	meta: {
-		name: "eslint-plugin-nodus",
-		version: "2.0.0",
-		description:
-			"Enterprise observability and security rules for Nodus platform",
-	},
+export default {
 	rules: {
-		// Core Architecture Rules
+		// Core Architecture Rules - Updated with allowlist support in individual rules
 		"no-direct-core-instantiation": noDirectCoreInstantiation,
 		"require-async-orchestration": requireAsyncOrchestration,
 		"require-action-dispatcher": requireActionDispatcher,
@@ -42,7 +36,7 @@ const plugin = {
 		"enforce-canonical-sanitizer": enforceCanonicalSanitizer,
 		"require-cds-transport": requireCdsTransport,
 
-		// Platform Integration Rules
+		// Platform Integration Rules - Updated with allowlist support in individual rules
 		"no-manual-platform-calls": noManualPlatformCalls,
 		"require-observability-compliance": requireObservabilityCompliance,
 		"require-policy-gate": requirePolicyGate,
@@ -55,22 +49,29 @@ const plugin = {
 		// Performance & Quality Rules
 		"require-performance-budget": requirePerformanceBudget,
 	},
+
 	configs: {
 		recommended: {
 			plugins: ["nodus"],
 			rules: {
+				// Architecture rules (ERROR - must fix)
 				"nodus/no-direct-core-instantiation": "error",
 				"nodus/require-async-orchestration": "error",
 				"nodus/require-action-dispatcher": "error",
 				"nodus/prefer-alias-imports": "error",
+
+				// Security rules (ERROR - must fix)
 				"nodus/no-direct-dom-access": "error",
 				"nodus/no-external-scripts": "error",
-				"nodus/enforce-canonical-sanitizer": "error",
 				"nodus/require-cds-transport": "error",
-				"nodus/no-manual-platform-calls": "error",
+				"nodus/no-security-string-literals": "error",
+
+				// Observability rules (ERROR - must fix)
 				"nodus/require-observability-compliance": "error",
-				"nodus/require-policy-gate": "warn",
 				"nodus/require-policy-compliance": "error",
+
+				// Performance rules (WARN - should fix)
+				"nodus/require-performance-budget": "warn",
 			},
 		},
 		enterprise: {
@@ -83,20 +84,19 @@ const plugin = {
 				"nodus/prefer-alias-imports": "error",
 				"nodus/no-direct-dom-access": "error",
 				"nodus/no-external-scripts": "error",
-				"nodus/enforce-canonical-sanitizer": "error",
 				"nodus/require-cds-transport": "error",
-				"nodus/no-manual-platform-calls": "error",
+				"nodus/no-security-string-literals": "error",
 				"nodus/require-observability-compliance": "error",
-				"nodus/require-policy-gate": "error",
 				"nodus/require-policy-compliance": "error",
+				"nodus/require-performance-budget": "warn",
 
-				// Enterprise-specific rules
+				// Additional enterprise rules
 				"nodus/require-license-validation": "error",
 				"nodus/require-signed-plugins": "error",
-				"nodus/require-performance-budget": "warn",
+				"nodus/require-policy-gate": "error",
+				"nodus/enforce-canonical-sanitizer": "error",
+				"nodus/no-manual-platform-calls": "error",
 			},
 		},
 	},
 };
-
-export default plugin;

@@ -10,7 +10,7 @@
  * performance-budget rules here with a narrow file-level exception and a
  * clear justification so the intent is visible during code review.
  */
-/* eslint-disable nodus/require-observability-compliance, nodus/require-performance-budget, nodus/require-async-orchestration */
+
 export class ActionDispatcher {
 	/** @type {import("@shared/lib/async/AsyncOrchestrationService.js").default} */
 	#orchestrationService;

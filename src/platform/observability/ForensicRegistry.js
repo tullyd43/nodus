@@ -17,8 +17,11 @@ export class ForensicRegistry {
 	#sampleRate = 1.0;
 	/** @private @type {PluginSignatureValidator} */
 	#pluginValidator;
+	/** @private @type {object} */
+	#logger;
 
 	constructor(stateManager, enterpriseLicense = {}) {
+		this.#logger = stateManager.managers?.observabilityLogger || console;
 		this.#stateManager = stateManager;
 		// Pass the AsyncOrchestrator from the stateManager into the validator so
 		// plugin validation runs under orchestration and is observable.
@@ -32,7 +35,7 @@ export class ForensicRegistry {
 			enterpriseLicense?.features?.auditPolicy || "optimized";
 		this.#sampleRate = enterpriseLicense?.features?.sampleRate || 1.0;
 
-		console.log(
+		this.#logger.log(
 			`[ForensicRegistry] Initialized with policy: ${this.#auditPolicy}`
 		);
 	}
@@ -54,11 +57,8 @@ export class ForensicRegistry {
 						);
 					}
 
-					/* eslint-disable-next-line nodus/require-action-dispatcher --
-					   Internal in-memory registry mutation; not a global state mutation.
-					*/
 					this.#plugins.set(domain, plugin);
-					console.log(
+					this.#logger.log(
 						`[ForensicRegistry] Registered signed ${domain} plugin`
 					);
 					return true;
@@ -205,7 +205,7 @@ export class ForensicRegistry {
 	updateAuditPolicy(policy, sampleRate = 1.0) {
 		this.#auditPolicy = policy;
 		this.#sampleRate = sampleRate;
-		console.log(
+		this.#logger.log(
 			`[ForensicRegistry] Audit policy updated: ${policy} (${sampleRate})`
 		);
 	}
