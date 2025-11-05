@@ -8,12 +8,6 @@ import {
 	NESTING_POLICY_DEFINITIONS,
 	NESTING_POLICY_VALIDATORS,
 } from "@platform/security/policies/grid/NestingPolicy.js";
-/* eslint-disable security/detect-object-injection --
-	Defensive merging and validation is applied for stored policies; these rules
-	are noisy for controlled merges from persistent storage and produce false
-	positives. The code below restricts merges to known domains/keys and only
-	accepts primitives.
-*/
 /**
  * @file SystemPolicies_Cached.js
  * @description Manages system-wide policies with a multi-tier caching strategy to optimize performance.

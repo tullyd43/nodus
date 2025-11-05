@@ -74,7 +74,7 @@ export default class AESCrypto {
 		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
 		this.#securityManager = this.#stateManager?.managers?.securityManager;
 
-		console.log("[AESCrypto] Loaded for enterprise-grade encryption");
+		console.warn("[AESCrypto] Loaded for enterprise-grade encryption");
 	}
 
 	/**
@@ -83,12 +83,14 @@ export default class AESCrypto {
 	 * @throws {AppError} Thrown when a valid security context is unavailable.
 	 */
 
-	async init() {
+	init() {
 		// V8.0 Parity: The authContext is now derived from the stateManager's securityManager.
-		this.#key = await this.#deriveKey(this.#keyVersion);
-		this.#ready = true;
-		console.log("[AESCrypto] Enterprise crypto initialized");
-		return this;
+		return this.#deriveKey(this.#keyVersion).then((key) => {
+			this.#key = key;
+			this.#ready = true;
+			console.warn("[AESCrypto] Enterprise crypto initialized");
+			return this;
+		});
 	}
 
 	/**
@@ -98,44 +100,43 @@ export default class AESCrypto {
 	 * @throws {AppError} If the crypto module is not initialized or encryption fails.
 	 */
 
-	async encrypt(data) {
+	encrypt(data) {
 		if (!this.#ready)
 			throw new AppError("AESCrypto module is not initialized.");
 
 		const startTime = performance.now();
-		try {
-			const plaintext = new TextEncoder().encode(JSON.stringify(data));
-			const iv = crypto.getRandomValues(new Uint8Array(12));
+		const plaintext = new TextEncoder().encode(JSON.stringify(data));
+		const iv = crypto.getRandomValues(new Uint8Array(12));
 
-			const encryptedData = await crypto.subtle.encrypt(
-				{ name: "AES-GCM", iv },
-				this.#key,
-				plaintext
-			);
+		return crypto.subtle
+			.encrypt({ name: "AES-GCM", iv }, this.#key, plaintext)
+			.then((encryptedData) => {
+				const result = {
+					data: this.#bufferToBase64(encryptedData),
+					iv: this.#bufferToBase64(iv),
+					version: this.#keyVersion,
+					alg: "AES-GCM-256",
+					encrypted: true,
+				};
 
-			const result = {
-				data: this.#bufferToBase64(encryptedData),
-				iv: this.#bufferToBase64(iv),
-				version: this.#keyVersion,
-				alg: "AES-GCM-256",
-				encrypted: true,
-			};
+				this.#metrics?.increment("encryptionCount");
+				this.#metrics?.updateAverage(
+					"latency",
+					performance.now() - startTime
+				);
 
-			this.#metrics?.increment("encryptionCount");
-			this.#metrics?.updateAverage(
-				"latency",
-				performance.now() - startTime
-			);
-
-			return result;
-		} catch (error) {
-			const appError = new AppError("AES encryption failed.", {
-				cause: error,
-				context: { isSerializable: typeof data === "object" },
+				return result;
+			})
+			.catch((error) => {
+				const appError = new AppError("AES encryption failed.", {
+					cause: error,
+					context: {
+						isSerializable: typeof data === "object",
+					},
+				});
+				this.#errorHelpers?.handleError(appError);
+				throw appError;
 			});
-			this.#errorHelpers?.handleError(appError);
-			throw appError;
-		}
 	}
 
 	/**
@@ -145,40 +146,42 @@ export default class AESCrypto {
 	 * @throws {AppError} If the crypto module is not initialized or decryption fails.
 	 */
 
-	async decrypt(encryptedData) {
+	decrypt(encryptedData) {
 		if (!this.#ready)
 			throw new AppError("AESCrypto module is not initialized.");
 
 		const startTime = performance.now();
-		try {
-			const key = await this.#getKeyForVersion(encryptedData.version);
-			const iv = this.#base64ToBuffer(encryptedData.iv);
-			const data = this.#base64ToBuffer(encryptedData.data);
+		return this.#getKeyForVersion(encryptedData.version)
+			.then((key) => {
+				const iv = this.#base64ToBuffer(encryptedData.iv);
+				const data = this.#base64ToBuffer(encryptedData.data);
 
-			const decryptedData = await crypto.subtle.decrypt(
-				{ name: "AES-GCM", iv },
-				key,
-				data
-			);
+				return crypto.subtle.decrypt(
+					{ name: "AES-GCM", iv },
+					key,
+					data
+				);
+			})
+			.then((decryptedData) => {
+				const plaintext = new TextDecoder().decode(decryptedData);
+				const result = JSON.parse(plaintext);
 
-			const plaintext = new TextDecoder().decode(decryptedData);
-			const result = JSON.parse(plaintext);
+				this.#metrics?.increment("decryptionCount");
+				this.#metrics?.updateAverage(
+					"latency",
+					performance.now() - startTime
+				);
 
-			this.#metrics?.increment("decryptionCount");
-			this.#metrics?.updateAverage(
-				"latency",
-				performance.now() - startTime
-			);
-
-			return result;
-		} catch (error) {
-			const appError = new AppError("AES decryption failed.", {
-				cause: error,
-				context: { keyVersion: encryptedData.version },
+				return result;
+			})
+			.catch((error) => {
+				const appError = new AppError("AES decryption failed.", {
+					cause: error,
+					context: { keyVersion: encryptedData.version },
+				});
+				this.#errorHelpers?.handleError(appError);
+				throw appError;
 			});
-			this.#errorHelpers?.handleError(appError);
-			throw appError;
-		}
 	}
 
 	/**
@@ -189,21 +192,25 @@ export default class AESCrypto {
 	 * @returns {Promise<string>} A 12-character hexadecimal hash hint.
 	 */
 
-	async generateAccessHint(classification, compartments = []) {
-		const hintData = {
-			level: this.#getClassificationLevel(classification),
-			compartments: compartments.sort(),
-			timestamp: Math.floor(Date.now() / (24 * 3600000)),
-		};
+	generateAccessHint(classification, compartments = []) {
+		return Promise.resolve().then(() => {
+			const hintData = {
+				level: this.#getClassificationLevel(classification),
+				compartments: compartments.sort(),
+				timestamp: Math.floor(Date.now() / (24 * 3600000)),
+			};
 
-		const hintString = JSON.stringify(hintData);
-		const hintBytes = new TextEncoder().encode(hintString);
-		const hashBuffer = await crypto.subtle.digest("SHA-256", hintBytes);
-
-		return Array.from(new Uint8Array(hashBuffer))
-			.map((b) => b.toString(16).padStart(2, "0"))
-			.join("")
-			.substring(0, 12);
+			const hintString = JSON.stringify(hintData);
+			const hintBytes = new TextEncoder().encode(hintString);
+			return crypto.subtle
+				.digest("SHA-256", hintBytes)
+				.then((hashBuffer) =>
+					Array.from(new Uint8Array(hashBuffer))
+						.map((b) => b.toString(16).padStart(2, "0"))
+						.join("")
+						.substring(0, 12)
+				);
+		});
 	}
 
 	/**
@@ -213,14 +220,14 @@ export default class AESCrypto {
 	 * @returns {Promise<boolean>} True when the signature is valid, otherwise false.
 	 */
 
-	async verifyAuthProof(userId, authProof) {
+	verifyAuthProof(userId, authProof) {
 		if (!authProof || !authProof.signature) return false;
 
-		const expectedSignature = await this.#generateAuthSignature(
-			userId,
-			authProof.timestamp
+		return this.#generateAuthSignature(userId, authProof.timestamp).then(
+			(expectedSignature) => {
+				return authProof.signature === expectedSignature;
+			}
 		);
-		return authProof.signature === expectedSignature;
 	}
 
 	/**
@@ -230,26 +237,28 @@ export default class AESCrypto {
 	 * @throws {AppError} If a new key cannot be derived.
 	 */
 
-	async rotateKeys() {
+	rotateKeys() {
 		const startTime = performance.now();
 		const oldVersion = this.#keyVersion;
 		this.#keyVersion++;
-		this.#key = await this.#deriveKey(this.#keyVersion);
+		return this.#deriveKey(this.#keyVersion).then((key) => {
+			this.#key = key;
 
-		const duration = performance.now() - startTime;
+			const duration = performance.now() - startTime;
 
-		// Mandate 2.4: All Auditable Events MUST Use a Unified Envelope
-		this.#forensicLogger?.logAuditEvent("AES_KEY_ROTATION", {
-			oldVersion,
-			newVersion: this.#keyVersion,
-			duration,
+			// Mandate 2.4: All Auditable Events MUST Use a Unified Envelope
+			this.#forensicLogger?.logAuditEvent("AES_KEY_ROTATION", {
+				oldVersion,
+				newVersion: this.#keyVersion,
+				duration,
+			});
+
+			// Mandate 4.3: Metrics are Not Optional
+			this.#metrics?.increment("keyRotations");
+			this.#metrics?.updateAverage("keyRotationTime", duration);
+
+			return { oldVersion, newVersion: this.#keyVersion };
 		});
-
-		// Mandate 4.3: Metrics are Not Optional
-		this.#metrics?.increment("keyRotations");
-		this.#metrics?.updateAverage("keyRotationTime", duration);
-
-		return { oldVersion, newVersion: this.#keyVersion };
 	}
 	/**
 	 * Gets the current version of the encryption key.
@@ -265,9 +274,11 @@ export default class AESCrypto {
 	 * @returns {Promise<void>}
 	 */
 
-	async destroyKeys() {
-		this.#key = null;
-		this.#ready = false;
+	destroyKeys() {
+		return Promise.resolve().then(() => {
+			this.#key = null;
+			this.#ready = false;
+		});
 	}
 
 	/**
@@ -294,40 +305,44 @@ export default class AESCrypto {
 	 * @param {number} keyVersion - The version of the key to derive.
 	 * @returns {Promise<CryptoKey>} The derived cryptographic key.
 	 */
-	async #deriveKey(keyVersion) {
-		if (!this.#securityManager?.hasValidContext()) {
-			throw new AppError(
-				"A valid security context is required to derive the encryption key."
-			);
-		}
+	#deriveKey(keyVersion) {
+		return Promise.resolve().then(() => {
+			if (!this.#securityManager?.hasValidContext()) {
+				throw new AppError(
+					"A valid security context is required to derive the encryption key."
+				);
+			}
 
-		// In a real system, a more secure secret would be retrieved from the security context,
-		// not a password. For this example, we'll use the user ID as part of the salt.
-		const userId = this.#securityManager.getSubject().userId;
-		const secret = `user-session-secret-for-${userId}`; // Placeholder for a real secret
+			// In a real system, a more secure secret would be retrieved from the security context,
+			// not a password. For this example, we'll use the user ID as part of the salt.
+			const userId = this.#securityManager.getSubject().userId;
+			const secret = `user-session-secret-for-${userId}`; // Placeholder for a real secret
 
-		const keyMaterial = await crypto.subtle.importKey(
-			"raw",
-			new TextEncoder().encode(secret),
-			{ name: "PBKDF2" },
-			false,
-			["deriveKey"]
-		);
-
-		return await crypto.subtle.deriveKey(
-			{
-				name: "PBKDF2",
-				salt: new TextEncoder().encode(
-					`aes-salt-${userId}-v${keyVersion}`
-				),
-				iterations: 100000,
-				hash: "SHA-256",
-			},
-			keyMaterial,
-			{ name: "AES-GCM", length: 256 },
-			false,
-			["encrypt", "decrypt"]
-		);
+			return crypto.subtle
+				.importKey(
+					"raw",
+					new TextEncoder().encode(secret),
+					{ name: "PBKDF2" },
+					false,
+					["deriveKey"]
+				)
+				.then((keyMaterial) => {
+					return crypto.subtle.deriveKey(
+						{
+							name: "PBKDF2",
+							salt: new TextEncoder().encode(
+								`aes-salt-${userId}-v${keyVersion}`
+							),
+							iterations: 100000,
+							hash: "SHA-256",
+						},
+						keyMaterial,
+						{ name: "AES-GCM", length: 256 },
+						false,
+						["encrypt", "decrypt"]
+					);
+				});
+		});
 	}
 
 	/**
@@ -338,14 +353,16 @@ export default class AESCrypto {
 	 * @returns {Promise<CryptoKey>} The cryptographic key for the specified version.
 	 * @throws {AppError} If deriving the key fails.
 	 */
-	async #getKeyForVersion(version) {
-		if (version === this.#keyVersion) {
-			return this.#key;
-		}
-		// For decryption of older data, re-derive the old key.
-		// A real-world implementation might use a KeyRotation manager to cache old keys.
-		this.#metrics?.increment("oldKeyDerivations");
-		return this.#deriveKey(version);
+	#getKeyForVersion(version) {
+		return Promise.resolve().then(() => {
+			if (version === this.#keyVersion) {
+				return this.#key;
+			}
+			// For decryption of older data, re-derive the old key.
+			// A real-world implementation might use a KeyRotation manager to cache old keys.
+			this.#metrics?.increment("oldKeyDerivations");
+			return this.#deriveKey(version);
+		});
 	}
 
 	/**
@@ -372,15 +389,19 @@ export default class AESCrypto {
 	 * @param {number} timestamp - The timestamp for the signature.
 	 * @returns {Promise<string>} A 24-character hexadecimal signature.
 	 */
-	async #generateAuthSignature(userId, timestamp) {
-		const data = `${userId}:${timestamp}:aes-auth`;
-		const dataBytes = new TextEncoder().encode(data);
-		const hashBuffer = await crypto.subtle.digest("SHA-256", dataBytes);
-
-		return Array.from(new Uint8Array(hashBuffer))
-			.map((b) => b.toString(16).padStart(2, "0"))
-			.join("")
-			.substring(0, 24);
+	#generateAuthSignature(userId, timestamp) {
+		return Promise.resolve().then(() => {
+			const data = `${userId}:${timestamp}:aes-auth`;
+			const dataBytes = new TextEncoder().encode(data);
+			return crypto.subtle
+				.digest("SHA-256", dataBytes)
+				.then((hashBuffer) =>
+					Array.from(new Uint8Array(hashBuffer))
+						.map((b) => b.toString(16).padStart(2, "0"))
+						.join("")
+						.substring(0, 24)
+				);
+		});
 	}
 
 	/**

@@ -53,45 +53,50 @@ export class CanonicalResolver {
 	 * @param {boolean} [options.forceRefresh=false] Skip cached entry.
 	 * @returns {Promise<{ module:any, url:string, canonical:boolean, fromLegacy:boolean }>}
 	 */
-	async import(moduleName, options = {}) {
+	import(moduleName, options = {}) {
 		const forceRefresh = options.forceRefresh === true;
 		const cacheKey = moduleName;
 		if (!forceRefresh && this.#cacheResults && this.#cache.has(cacheKey)) {
-			return this.#cache.get(cacheKey);
+			return Promise.resolve(this.#cache.get(cacheKey));
 		}
 
 		const variants = this.#buildNameVariants(moduleName);
 		const candidates = this.#buildCandidates(variants, moduleName);
 
-		let lastError = null;
-		for (const candidate of candidates) {
-			try {
-				const mod = await import(
-					/* @vite-ignore */ candidate.url
+		const tryNextCandidate = (index, lastError) => {
+			if (index >= candidates.length) {
+				this.#recordFailure(moduleName, lastError);
+				return Promise.reject(
+					new Error(
+						`CanonicalResolver: failed to resolve '${moduleName}' (last error: ${
+							lastError?.message || "unknown"
+						})`
+					)
 				);
-				const result = {
-					module: mod,
-					url: candidate.url,
-					canonical: !candidate.fromLegacy,
-					fromLegacy: candidate.fromLegacy,
-				};
-				this.#recordSuccess(moduleName, candidate);
-				if (this.#cacheResults) {
-					this.#cache.set(cacheKey, result);
-				}
-				return result;
-			} catch (error) {
-				lastError = error;
-				this.#recordFailureAttempt(moduleName, candidate, error);
 			}
-		}
 
-		this.#recordFailure(moduleName, lastError);
-		throw new Error(
-			`CanonicalResolver: failed to resolve '${moduleName}' (last error: ${
-				lastError?.message || "unknown"
-			})`
-		);
+			const candidate = candidates[index];
+			return import(/* @vite-ignore */ candidate.url)
+				.then((mod) => {
+					const result = {
+						module: mod,
+						url: candidate.url,
+						canonical: !candidate.fromLegacy,
+						fromLegacy: candidate.fromLegacy,
+					};
+					this.#recordSuccess(moduleName, candidate);
+					if (this.#cacheResults) {
+						this.#cache.set(cacheKey, result);
+					}
+					return result;
+				})
+				.catch((error) => {
+					this.#recordFailureAttempt(moduleName, candidate, error);
+					return tryNextCandidate(index + 1, error);
+				});
+		};
+
+		return tryNextCandidate(0, null);
 	}
 
 	/**
@@ -172,11 +177,7 @@ export class CanonicalResolver {
 		for (const variant of variants) {
 			const isLegacyVariant = variant !== originalName;
 			for (const root of this.#searchPaths) {
-				pushCandidate(
-					`${root}/${variant}.js`,
-					isLegacyVariant,
-					false
-				);
+				pushCandidate(`${root}/${variant}.js`, isLegacyVariant, false);
 			}
 			if (this.#baseURL) {
 				pushCandidate(
@@ -189,11 +190,7 @@ export class CanonicalResolver {
 
 		// As a last resort, try explicit path using original name.
 		if (this.#baseURL) {
-			pushCandidate(
-				`${this.#baseURL}${originalName}.js`,
-				false,
-				true
-			);
+			pushCandidate(`${this.#baseURL}${originalName}.js`, false, true);
 		}
 
 		return candidates;

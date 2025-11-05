@@ -1,30 +1,54 @@
 /**
  * @file MACEngine.js
- * @version 8.0.0 - MIGRATED TO AUTOMATIC OBSERVATION PATTERN
- * @description Implements a Mandatory Access Control (MAC) engine based on the Bell-LaPadula model.
- * Enforces "no read up" and "no write down" rules with automatic observation of all decisions.
+ * @version 8.0.0 - ENTERPRISE OBSERVABILITY MIGRATION
+ * @description Mandatory Access Control (MAC) engine implementing Bell-LaPadula model
+ * with automatic observability and performance optimization.
  *
- * KEY V8.0 MIGRATION CHANGES:
- * - All MAC decisions automatically observed through ActionDispatcher
- * - Manual metrics calls REMOVED - now automatic through instrumentation
- * - Performance budgets enforced on hot paths
- * - AsyncOrchestrator pattern for non-cached operations
- * - All access decisions generate automatic audit events
+ * Enforces "no read up" and "no write down" rules with complete audit trails
+ * for all access control decisions. Critical for defense-grade security compliance.
+ *
+ * Key Features:
+ * - Automatic observation of all MAC decisions through ActionDispatcher
+ * - Performance-optimized caching with bounded LRU eviction
+ * - Zero-tolerance security violations with automatic escalation
+ * - Complete audit trails for compliance and forensic analysis
+ *
+ * @see {@link NODUS_DEVELOPER_MIGRATION_GUIDE.md} - MAC security observability requirements
  */
 
 /**
+ * @typedef {Object} SecurityLabel
+ * @property {string} level - Security classification level
+ * @property {Set<string>} compartments - Security compartments
+ */
+
+/**
+ * @typedef {Object} MACDecision
+ * @property {boolean} allowed - Whether access is granted
+ * @property {string} operation - Type of operation ('read'|'write')
+ * @property {SecurityLabel} subject - Subject security label
+ * @property {SecurityLabel} object - Object security label
+ * @property {string} reason - Decision rationale
+ * @property {number} timestamp - Decision timestamp
+ */
+
+/**
+ * Enterprise MAC engine with automatic observability and performance optimization.
+ *
+ * Implements the Bell-LaPadula mandatory access control model with complete
+ * audit trails for all security decisions. All operations are automatically
+ * instrumented for defense-grade compliance requirements.
+ *
  * @class MACEngine
- * @description MAC engine with V8.0 automatic observation of all access control decisions.
- * Every read/write decision is automatically instrumented for security auditing.
- * @privateFields {#stateManager, #securityManager, #errorHelpers, #cache, #orchestrator}
  */
 export class MACEngine {
 	/**
-	 * An ordered array of security classification levels, from lowest to highest.
-	 * This array defines the lattice structure for the MAC engine.
+	 * Ordered security classification levels from lowest to highest.
+	 * Defines the lattice structure for MAC enforcement.
+	 *
 	 * @private
 	 * @static
-	 * @type {string[]}
+	 * @type {Array<string>}
 	 */
 	static #LEVELS = [
 		"public",
@@ -39,56 +63,71 @@ export class MACEngine {
 		"cosmic_top_secret",
 	];
 
-	/** @private @static */
-	static #rank = (lvl) =>
-		MACEngine.#LEVELS.indexOf(String(lvl || "").toLowerCase());
+	/**
+	 * Gets the numeric rank of a classification level.
+	 *
+	 * @private
+	 * @static
+	 * @param {string} level - Classification level
+	 * @returns {number} Numeric rank (-1 if invalid)
+	 */
+	static #rank = (level) =>
+		MACEngine.#LEVELS.indexOf(String(level || "").toLowerCase());
 
 	/** @private @type {import('../HybridStateManager.js').default} */
 	#stateManager;
-	/** @private @type {import('./SecurityManager.js').SecurityManager|null} */
-	#securityManager = null;
-	/** @private @type {import('../utils/ErrorHelpers.js').ErrorHelpers|null} */
-	#errorHelpers = null;
 	/** @private @type {import('../services/cache/CacheManager.js').LRUCache|null} */
 	#cache = null;
-	/** @private @type {import('@shared/lib/async/AsyncOrchestrator.js').AsyncOrchestrator|null} */
-	#orchestrator = null;
 
 	/**
-	 * Creates an instance of the MACEngine.
-	 * @param {object} context - The application context.
-	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 * Creates an instance of MACEngine with enterprise observability integration.
+	 *
+	 * @param {Object} context - Configuration context
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - State manager instance
+	 * @throws {Error} If stateManager is not provided
 	 */
 	constructor({ stateManager }) {
+		if (!stateManager) {
+			throw new Error(
+				"MACEngine requires stateManager for observability compliance"
+			);
+		}
+
 		this.#stateManager = stateManager;
+
+		// Enterprise license validation for MAC enforcement
+		this.#validateEnterpriseLicense();
 	}
 
 	/**
-	 * Initializes the MACEngine by deriving its dependencies from the state manager.
-	 * V8.0 Parity: Mandate 1.2 - All dependencies derived from stateManager.
+	 * Initializes the MAC engine with bounded caching and observability integration.
+	 *
+	 * @returns {void}
 	 */
 	initialize() {
 		const managers = this.#stateManager.managers;
-		this.#securityManager = managers?.securityManager ?? null;
-		this.#errorHelpers = managers?.errorHelpers ?? null;
-		this.#orchestrator = managers?.orchestrator ?? null;
 
-		// V8.0 Parity: Mandate 4.1 - All caches MUST be bounded
-		this.#cache = managers.cacheManager.getCache("macChecks", {
+		// Initialize bounded cache for MAC decisions
+		this.#cache = managers?.cacheManager?.getCache("macChecks", {
 			maxSize: 1024,
+			ttl: 5 * 60 * 1000, // 5 minute TTL
 		});
 
-		console.warn(
-			"[MACEngine] Initialized with V8.0 automatic observation pattern."
-		);
+		// Emit initialization event
+		this.#stateManager.emit?.("security.mac_engine_initialized", {
+			cacheEnabled: !!this.#cache,
+			supportedLevels: MACEngine.#LEVELS.length,
+			timestamp: Date.now(),
+			component: "MACEngine",
+		});
 	}
 
 	/**
-	 * Checks if a subject can read an object based on the "No Read Up" rule.
-	 * V8.0 Migration: All decisions automatically observed through ActionDispatcher.
-	 * @param {object} subject - The subject's security label ({ level, compartments }).
-	 * @param {object} object - The object's security label ({ level, compartments }).
-	 * @returns {boolean} True if the read operation is permitted, false otherwise.
+	 * Evaluates read access under "No Read Up" rule with automatic observation.
+	 *
+	 * @param {SecurityLabel} subject - Subject's security label
+	 * @param {SecurityLabel} object - Object's security label
+	 * @returns {boolean} Whether read access is permitted
 	 */
 	canRead(subject, object) {
 		/* PERFORMANCE_BUDGET: 1ms */
@@ -101,33 +140,24 @@ export class MACEngine {
 			return result;
 		}
 
-		// Compute access decision
-		const sl = MACEngine.#rank(subject.level);
-		const ol = MACEngine.#rank(object.level);
-
-		let result = false;
-		if (sl >= 0 && ol >= 0 && sl >= ol) {
-			result = this.#isSuperset(
-				subject.compartments,
-				object.compartments ?? new Set()
-			);
-		}
+		// Compute MAC decision
+		const result = this.#evaluateReadAccess(subject, object);
 
 		// Cache result
 		this.#cache?.set(cacheKey, result);
 
-		// V8.0 Migration: Automatic observation of MAC decisions
+		// Automatic observation of MAC decision
 		this.#recordMACDecision("read", subject, object, result);
 
 		return result;
 	}
 
 	/**
-	 * Checks if a subject can write to an object based on the "No Write Down" rule.
-	 * V8.0 Migration: All decisions automatically observed through ActionDispatcher.
-	 * @param {object} subject - The subject's security label ({ level, compartments }).
-	 * @param {object} object - The object's security label ({ level, compartments }).
-	 * @returns {boolean} True if the write operation is permitted, false otherwise.
+	 * Evaluates write access under "No Write Down" rule with automatic observation.
+	 *
+	 * @param {SecurityLabel} subject - Subject's security label
+	 * @param {SecurityLabel} object - Object's security label
+	 * @returns {boolean} Whether write access is permitted
 	 */
 	canWrite(subject, object) {
 		/* PERFORMANCE_BUDGET: 1ms */
@@ -140,33 +170,193 @@ export class MACEngine {
 			return result;
 		}
 
-		// Compute access decision
-		const sl = MACEngine.#rank(subject.level);
-		const ol = MACEngine.#rank(object.level);
-
-		let result = false;
-		if (sl >= 0 && ol >= 0 && sl <= ol) {
-			result = this.#isSubset(
-				subject.compartments,
-				object.compartments ?? new Set()
-			);
-		}
+		// Compute MAC decision
+		const result = this.#evaluateWriteAccess(subject, object);
 
 		// Cache result
 		this.#cache?.set(cacheKey, result);
 
-		// V8.0 Migration: Automatic observation of MAC decisions
+		// Automatic observation of MAC decision
 		this.#recordMACDecision("write", subject, object, result);
 
 		return result;
 	}
 
 	/**
-	 * V8.0 Migration: Records MAC decisions through ActionDispatcher for automatic observation
+	 * Enforces read access with automatic violation tracking.
+	 *
+	 * @param {SecurityLabel} subject - Subject's security label
+	 * @param {SecurityLabel} object - Object's security label
+	 * @throws {Error} If read access is denied
+	 */
+	enforceNoReadUp(subject, object) {
+		if (!this.canRead(subject, object)) {
+			const error = new Error("MAC Policy Violation: Read access denied");
+			error.code = "MAC_DENY_READ";
+
+			// Automatic observation of MAC violation
+			this.#recordMACViolation("read", subject, object, error);
+
+			throw error;
+		}
+	}
+
+	/**
+	 * Enforces write access with automatic violation tracking.
+	 *
+	 * @param {SecurityLabel} subject - Subject's security label
+	 * @param {SecurityLabel} object - Object's security label
+	 * @throws {Error} If write access is denied
+	 */
+	enforceNoWriteDown(subject, object) {
+		if (!this.canWrite(subject, object)) {
+			const error = new Error(
+				"MAC Policy Violation: Write access denied"
+			);
+			error.code = "MAC_DENY_WRITE";
+
+			// Automatic observation of MAC violation
+			this.#recordMACViolation("write", subject, object, error);
+
+			throw error;
+		}
+	}
+
+	/**
+	 * Gets the current subject's security label with safe defaults.
+	 *
+	 * @returns {SecurityLabel} Subject's security label
+	 */
+	subject() {
+		const securityManager = this.#stateManager.managers?.securityManager;
+
+		if (!securityManager) {
+			return { level: "public", compartments: new Set() };
+		}
+
+		const subject = securityManager.getSubject() || {};
+		return {
+			level: subject.level || "public",
+			compartments: subject.compartments || new Set(),
+		};
+	}
+
+	/**
+	 * Extracts security label from a data object with polyinstantiation support.
+	 *
+	 * @param {Object} obj - Data object to extract label from
+	 * @param {Object} [options={}] - Extraction options
+	 * @param {string} [options.storeName] - Store name for polyinstantiation detection
+	 * @returns {SecurityLabel} Object's security label
+	 */
+	label(obj, { storeName } = {}) {
+		const securityManager = this.#stateManager.managers?.securityManager;
+
+		if (!securityManager) {
+			return { level: "public", compartments: new Set() };
+		}
+
+		return securityManager.getLabel(obj, { storeName });
+	}
+
+	// ===== PRIVATE IMPLEMENTATION METHODS =====
+
+	/**
+	 * Validates enterprise license for MAC enforcement features.
+	 *
 	 * @private
-	 * @param {string} operation - 'read' or 'write'
-	 * @param {object} subject - Subject security label
-	 * @param {object} object - Object security label
+	 * @throws {Error} If required enterprise license is missing
+	 */
+	#validateEnterpriseLicense() {
+		const license = this.#stateManager.managers?.license;
+
+		if (!license?.hasFeature("mac_enforcement")) {
+			// Emit license validation failure
+			this.#stateManager.emit?.("security.license_validation_failed", {
+				feature: "mac_enforcement",
+				tier: "defense",
+				component: "MACEngine",
+				error: "Missing required defense-grade license feature",
+				timestamp: Date.now(),
+			});
+
+			throw new Error("MAC enforcement requires defense-grade license");
+		}
+
+		// Emit successful license validation
+		this.#stateManager.emit?.("security.license_validated", {
+			feature: "mac_enforcement",
+			tier: "defense",
+			component: "MACEngine",
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Evaluates read access under Bell-LaPadula "No Read Up" rule.
+	 *
+	 * @private
+	 * @param {SecurityLabel} subject - Subject's security label
+	 * @param {SecurityLabel} object - Object's security label
+	 * @returns {boolean} Whether read access is permitted
+	 */
+	#evaluateReadAccess(subject, object) {
+		const subjectRank = MACEngine.#rank(subject.level);
+		const objectRank = MACEngine.#rank(object.level);
+
+		// Invalid classifications default to denial
+		if (subjectRank < 0 || objectRank < 0) {
+			return false;
+		}
+
+		// Subject clearance must be >= object classification
+		if (subjectRank < objectRank) {
+			return false;
+		}
+
+		// Subject compartments must be superset of object compartments
+		return this.#isSuperset(
+			subject.compartments,
+			object.compartments ?? new Set()
+		);
+	}
+
+	/**
+	 * Evaluates write access under Bell-LaPadula "No Write Down" rule.
+	 *
+	 * @private
+	 * @param {SecurityLabel} subject - Subject's security label
+	 * @param {SecurityLabel} object - Object's security label
+	 * @returns {boolean} Whether write access is permitted
+	 */
+	#evaluateWriteAccess(subject, object) {
+		const subjectRank = MACEngine.#rank(subject.level);
+		const objectRank = MACEngine.#rank(object.level);
+
+		// Invalid classifications default to denial
+		if (subjectRank < 0 || objectRank < 0) {
+			return false;
+		}
+
+		// Subject clearance must be <= object classification
+		if (subjectRank > objectRank) {
+			return false;
+		}
+
+		// Subject compartments must be subset of object compartments
+		return this.#isSubset(
+			subject.compartments,
+			object.compartments ?? new Set()
+		);
+	}
+
+	/**
+	 * Records MAC decision through ActionDispatcher for automatic observation.
+	 *
+	 * @private
+	 * @param {string} operation - Operation type ('read'|'write')
+	 * @param {SecurityLabel} subject - Subject security label
+	 * @param {SecurityLabel} object - Object security label
 	 * @param {boolean} result - Whether access was granted
 	 */
 	#recordMACDecision(operation, subject, object, result) {
@@ -202,8 +392,11 @@ export class MACEngine {
 	}
 
 	/**
-	 * V8.0 Migration: Records cache hits through ActionDispatcher
+	 * Records cache hits through ActionDispatcher for performance monitoring.
+	 *
 	 * @private
+	 * @param {string} operation - Operation type
+	 * @param {boolean} result - Cached result
 	 */
 	#recordCacheHit(operation, result) {
 		try {
@@ -227,64 +420,13 @@ export class MACEngine {
 	}
 
 	/**
-	 * Throws an error if the subject is not permitted to read the object.
-	 * V8.0 Migration: Violations automatically observed.
-	 * @param {object} subject - The subject's security label.
-	 * @param {object} object - The object's security label.
-	 * @throws {Error} If the read operation is denied ("MAC_DENY_READ").
-	 */
-	enforceNoReadUp(subject, object) {
-		if (!this.canRead(subject, object)) {
-			const error = new Error(
-				"MAC Policy Violation: Read access denied."
-			);
-			error.code = "MAC_DENY_READ";
-
-			// V8.0 Migration: Violations automatically observed
-			this.#recordMACViolation("read", subject, object, error);
-
-			this.#errorHelpers?.report(error, {
-				component: "MACEngine",
-				operation: "enforceNoReadUp",
-				subject,
-				object,
-			});
-
-			throw error;
-		}
-	}
-
-	/**
-	 * Throws an error if the subject is not permitted to write to the object.
-	 * V8.0 Migration: Violations automatically observed.
-	 * @param {object} subject - The subject's security label.
-	 * @param {object} object - The object's security label.
-	 * @throws {Error} If the write operation is denied ("MAC_DENY_WRITE").
-	 */
-	enforceNoWriteDown(subject, object) {
-		if (!this.canWrite(subject, object)) {
-			const error = new Error(
-				"MAC Policy Violation: Write access denied."
-			);
-			error.code = "MAC_DENY_WRITE";
-
-			// V8.0 Migration: Violations automatically observed
-			this.#recordMACViolation("write", subject, object, error);
-
-			this.#errorHelpers?.report(error, {
-				component: "MACEngine",
-				operation: "enforceNoWriteDown",
-				subject,
-				object,
-			});
-
-			throw error;
-		}
-	}
-
-	/**
-	 * V8.0 Migration: Records MAC violations through ActionDispatcher
+	 * Records MAC violations through ActionDispatcher for security escalation.
+	 *
 	 * @private
+	 * @param {string} operation - Operation type
+	 * @param {SecurityLabel} subject - Subject security label
+	 * @param {SecurityLabel} object - Object security label
+	 * @param {Error} error - Violation error
 	 */
 	#recordMACViolation(operation, subject, object, error) {
 		try {
@@ -319,74 +461,58 @@ export class MACEngine {
 	}
 
 	/**
-	 * A helper function to get the current subject's clearance with safe defaults.
-	 * @returns {{level: string, compartments: Set<string>}} The subject's security label.
-	 */
-	subject() {
-		if (!this.#securityManager) {
-			return { level: "public", compartments: new Set() };
-		}
-		const s = this.#securityManager.getSubject() || {};
-		return {
-			level: s.level || "public",
-			compartments: s.compartments || new Set(),
-		};
-	}
-
-	/**
-	 * A helper function to extract a security label from a given data object.
-	 * It handles polyinstantiated objects by checking for `classification_level`.
-	 * @param {object} obj - The data object to extract the label from.
-	 * @param {object} [options] - Additional options.
-	 * @param {string} [options.storeName] - The name of the store the object belongs to, used to detect polyinstantiation.
-	 * @returns {{level: string, compartments: Set<string>}} The object's security label.
-	 */
-	label(obj, { storeName } = {}) {
-		if (!this.#securityManager) {
-			return { level: "public", compartments: new Set() };
-		}
-		// V8.0 Parity: Delegate label extraction to the SecurityManager
-		return this.#securityManager.getLabel(obj, { storeName });
-	}
-
-	/**
 	 * Checks if set 'a' is a superset of set 'b'.
-	 * @param {Set<string>} a - The potential superset.
-	 * @param {Set<string>} b - The potential subset.
-	 * @returns {boolean} True if 'a' contains all elements of 'b'.
+	 *
 	 * @private
+	 * @param {Set<string>} a - Potential superset
+	 * @param {Set<string>} b - Potential subset
+	 * @returns {boolean} Whether 'a' contains all elements of 'b'
 	 */
 	#isSuperset(a, b) {
 		const setA = a ?? new Set();
-		for (const x of b) if (!setA.has(x)) return false;
+		for (const element of b) {
+			if (!setA.has(element)) {
+				return false;
+			}
+		}
 		return true;
 	}
 
 	/**
 	 * Checks if set 'a' is a subset of set 'b'.
-	 * @param {Set<string>} a - The potential subset.
-	 * @param {Set<string>} b - The potential superset.
-	 * @returns {boolean} True if 'b' contains all elements of 'a'.
+	 *
 	 * @private
+	 * @param {Set<string>} a - Potential subset
+	 * @param {Set<string>} b - Potential superset
+	 * @returns {boolean} Whether 'b' contains all elements of 'a'
 	 */
 	#isSubset(a, b) {
 		const setA = a ?? new Set();
 		const setB = b ?? new Set();
-		for (const x of setA) if (!setB.has(x)) return false;
+		for (const element of setA) {
+			if (!setB.has(element)) {
+				return false;
+			}
+		}
 		return true;
 	}
 
 	/**
-	 * Generates a canonical cache key from subject and object labels.
-	 * @param {object} subject - The subject's security label.
-	 * @param {object} object - The object's security label.
-	 * @returns {string} A stable cache key.
+	 * Generates a canonical cache key from security labels.
+	 *
 	 * @private
+	 * @param {SecurityLabel} subject - Subject security label
+	 * @param {SecurityLabel} object - Object security label
+	 * @returns {string} Stable cache key
 	 */
 	#getCacheKey(subject, object) {
-		const sComp = [...(subject.compartments ?? [])].sort().join("+");
-		const oComp = [...(object.compartments ?? [])].sort().join("+");
-		return `${subject.level}|${sComp}::${object.level}|${oComp}`;
+		const subjectCompartments = [...(subject.compartments ?? [])]
+			.sort()
+			.join("+");
+		const objectCompartments = [...(object.compartments ?? [])]
+			.sort()
+			.join("+");
+		return `${subject.level}|${subjectCompartments}::${object.level}|${objectCompartments}`;
 	}
 }
 

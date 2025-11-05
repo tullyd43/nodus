@@ -45,9 +45,9 @@ export class ValidationLayer {
 	#ready = false;
 	/** @private @type {import('../HybridStateManager.js').default|null} */
 	#stateManager = null;
-	/** @private @type {import('../../shared/lib/MetricsRegistry.js').MetricsRegistry|null} */
+	/** @private @type {import('../../../../shared/lib/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics = null;
-	/** @private @type {import('../../shared/lib/ErrorHelpers.js').ErrorHelpers|null} */
+	/** @private @type {import('../../../../shared/lib/ErrorHelpers.js').ErrorHelpers|null} */
 	#errorHelpers = null;
 	/** @private @type {import('../ForensicLogger.js').default|null} */
 	#forensicLogger = null;
@@ -94,6 +94,68 @@ export class ValidationLayer {
 			eventType: "VALIDATION_LAYER_OPERATION",
 			meta: { component: "ValidationLayer" },
 		});
+	}
+
+	// --- Metric helper methods (prefer ActionDispatcher, fallback to registry)
+	#metricKey(name) {
+		const key = String(name || "");
+		if (key.startsWith("validation") || key.startsWith("validation."))
+			return key;
+		return `validation.${key}`;
+	}
+
+	#incrementMetric(name, value = 1) {
+		const dispatcher = this.#stateManager?.managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.increment", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.increment?.(key, value);
+		} catch {
+			// swallow
+		}
+	}
+
+	#updateAverage(name, value) {
+		const dispatcher = this.#stateManager?.managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.updateAverage", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.updateAverage?.(key, value);
+		} catch {
+			// swallow
+		}
+	}
+
+	#setMetric(name, value) {
+		const dispatcher = this.#stateManager?.managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.set", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.set?.(key, value);
+		} catch {
+			// swallow
+		}
 	}
 
 	/**
@@ -144,7 +206,7 @@ export class ValidationLayer {
 				...options,
 			});
 		} catch (error) {
-			this.#metrics?.increment("orchestration_error");
+			this.#incrementMetric("orchestration_error");
 			console.error(
 				`[ValidationLayer] Orchestration failed for ${operationName}:`,
 				error
@@ -895,20 +957,20 @@ export class ValidationLayer {
 	 * @returns {void}
 	 */
 	#recordValidation(success, latency, errors) {
-		this.#metrics?.increment("validationCount");
+		this.#incrementMetric("validationCount");
 
 		if (!success) {
-			this.#metrics?.increment("validationErrors");
+			this.#incrementMetric("validationErrors");
 			const recent = this.#metrics?.get("recentErrors") || [];
 			const newError = {
 				errors,
 				timestamp: Date.now(),
 			};
 			const updatedRecent = [newError, ...recent].slice(0, 100);
-			this.#metrics?.set("recentErrors", updatedRecent);
+			this.#setMetric("recentErrors", updatedRecent);
 		}
 
-		this.#metrics?.updateAverage("averageLatency", latency);
+		this.#updateAverage("averageLatency", latency);
 	}
 
 	/**

@@ -78,7 +78,6 @@ export class ForensicPlugin {
 			}
 		} catch (policyErr) {
 			// fail-open: log via console to avoid requiring a logger
-			/* eslint-disable-next-line no-console */
 			console.warn(
 				"[ForensicPlugin] Policy check failed, proceeding with forensic envelope",
 				policyErr

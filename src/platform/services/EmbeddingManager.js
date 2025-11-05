@@ -145,6 +145,72 @@ export class EmbeddingManager {
 	}
 
 	/**
+	 * Metric helper utilities — prefer ActionDispatcher so platform observability
+	 * captures metric updates. Fallbacks use the local metrics registry.
+	 * @private
+	 */
+	#metricKey(name) {
+		const key = String(name || "");
+		if (key.startsWith("ai.embeddings") || key.startsWith("ai.embeddings."))
+			return key;
+		return `ai.embeddings.${key}`;
+	}
+
+	#incrementMetric(name, value = 1) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.increment", { key, value });
+				return;
+			}
+		} catch {
+			// swallow dispatcher errors
+		}
+		try {
+			this.#metrics?.increment?.(key, value);
+		} catch {
+			// swallow registry errors
+		}
+	}
+
+	#setMetric(name, value) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.set", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.set?.(key, value);
+		} catch {
+			// swallow
+		}
+	}
+
+	#recordTimer(name, value) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.timer", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.timer?.(key, value);
+		} catch {
+			// swallow
+		}
+	}
+
+	/**
 	 * Initializes user context once to avoid repeated lookups.
 	 * @private
 	 * @returns {string}
@@ -219,7 +285,7 @@ export class EmbeddingManager {
 				}
 			);
 		} catch (error) {
-			this.#metrics?.increment("orchestration_error");
+			this.#incrementMetric("orchestration_error");
 			this.#emitCriticalWarning("Orchestration failed", {
 				operation: operationName,
 				error: error.message,
@@ -244,7 +310,7 @@ export class EmbeddingManager {
 				// Input validation and sanitization
 				const sanitizedText = this.#sanitizeText(text);
 				if (!sanitizedText) {
-					this.#metrics?.increment("invalid_input");
+					this.#incrementMetric("invalid_input");
 					return null;
 				}
 
@@ -265,7 +331,7 @@ export class EmbeddingManager {
 					"embeddings"
 				);
 				if (cached) {
-					this.#metrics?.increment("cache_hit");
+					this.#incrementMetric("cache_hit");
 					return {
 						id: embeddingId,
 						vector: cached.vector,
@@ -276,7 +342,7 @@ export class EmbeddingManager {
 
 				// Check for pending operations to prevent duplicates
 				if (this.#pendingEmbeddings.has(embeddingId)) {
-					this.#metrics?.increment("pending_hit");
+					this.#incrementMetric("pending_hit");
 					return await this.#pendingEmbeddings.get(embeddingId);
 				}
 
@@ -302,7 +368,7 @@ export class EmbeddingManager {
 					);
 
 					const result = await embeddingPromise;
-					this.#metrics?.increment("generated");
+					this.#incrementMetric("generated");
 					return result;
 				} finally {
 					// Cleanup pending operations
@@ -364,7 +430,7 @@ export class EmbeddingManager {
 
 			// Record timing metrics
 			const duration = performance.now() - startTime;
-			this.#metrics?.timer("generation_duration", duration);
+			this.#recordTimer("generation_duration", duration);
 
 			return {
 				id,
@@ -373,7 +439,7 @@ export class EmbeddingManager {
 				classification,
 			};
 		} catch (error) {
-			this.#metrics?.increment("generation_error");
+			this.#incrementMetric("generation_error");
 			this.#emitCriticalWarning("Embedding generation failed", {
 				embeddingId: id,
 				error: error.message,
@@ -420,10 +486,10 @@ export class EmbeddingManager {
 				throw new this.#NetworkError("Invalid API response format");
 			}
 
-			this.#metrics?.increment("api_call_success");
+			this.#incrementMetric("api_call_success");
 			return data.data[0].embedding;
 		} catch (error) {
-			this.#metrics?.increment("api_call_error");
+			this.#incrementMetric("api_call_error");
 			throw error;
 		}
 	}
@@ -467,7 +533,7 @@ export class EmbeddingManager {
 					"embeddings"
 				);
 				if (!targetData?.vector) {
-					this.#metrics?.increment("target_not_found");
+					this.#incrementMetric("target_not_found");
 					return [];
 				}
 
@@ -510,8 +576,8 @@ export class EmbeddingManager {
 					.sort((a, b) => b.relevance - a.relevance)
 					.slice(0, topK);
 
-				this.#metrics?.increment("similarity_search_executed");
-				this.#metrics?.gauge(
+				this.#incrementMetric("similarity_search_executed");
+				this.#setMetric(
 					"similarity_results_count",
 					sortedResults.length
 				);
@@ -547,7 +613,8 @@ export class EmbeddingManager {
 				}
 
 				// Security classification for the operation
-				const classification = _options.classification || "CONFIDENTIAL";
+				const classification =
+					_options.classification || "CONFIDENTIAL";
 
 				// Use ActionDispatcher for secure entity mutation
 				await this.#stateManager.managers.actionDispatcher?.dispatch(
@@ -575,7 +642,7 @@ export class EmbeddingManager {
 					classification
 				);
 
-				this.#metrics?.increment("entity_embedding_upserted");
+				this.#incrementMetric("entity_embedding_upserted");
 			},
 			{ timeout: 10000 }
 		);
@@ -632,11 +699,8 @@ export class EmbeddingManager {
 					}
 				}
 
-				this.#metrics?.increment(
-					"bulk_embeddings_processed",
-					processed
-				);
-				this.#metrics?.increment("bulk_embeddings_failed", failed);
+				this.#incrementMetric("bulk_embeddings_processed", processed);
+				this.#incrementMetric("bulk_embeddings_failed", failed);
 
 				return { processed, failed, errors };
 			},
@@ -697,8 +761,8 @@ export class EmbeddingManager {
 					}
 				}
 
-				this.#metrics?.increment("embeddings_imported", imported);
-				this.#metrics?.increment("embeddings_import_skipped", skipped);
+				this.#incrementMetric("embeddings_imported", imported);
+				this.#incrementMetric("embeddings_import_skipped", skipped);
 
 				return { imported, skipped, errors };
 			},
@@ -781,7 +845,7 @@ export class EmbeddingManager {
 		);
 
 		if (!canRead) {
-			this.#metrics?.increment("access_denied");
+			this.#incrementMetric("access_denied");
 			throw new this.#PolicyError(
 				"Insufficient clearance to access entity",
 				{
@@ -928,7 +992,12 @@ export class EmbeddingManager {
 		const sanitized = this.#sanitizer?.cleanse?.(meta) || meta;
 
 		// Remove potentially sensitive metadata
-		const { apiKey: _apiKey, token: _token, password: _password, ...cleanMeta } = sanitized;
+		const {
+			apiKey: _apiKey,
+			token: _token,
+			password: _password,
+			...cleanMeta
+		} = sanitized;
 
 		return cleanMeta;
 	}
@@ -1105,7 +1174,7 @@ export class EmbeddingManager {
 			this.#pendingEmbeddings.clear();
 			this.#loggedWarnings.clear();
 
-			this.#metrics?.increment("cache_cleared_manual");
+			this.#incrementMetric("cache_cleared_manual");
 		} catch (error) {
 			this.#emitCriticalWarning("Cache clear failed", {
 				error: error.message,
@@ -1151,8 +1220,8 @@ export class EmbeddingManager {
 					}
 				}
 
-				this.#metrics?.increment("embeddings_exported", exportedCount);
-				this.#metrics?.increment(
+				this.#incrementMetric("embeddings_exported", exportedCount);
+				this.#incrementMetric(
 					"embeddings_export_filtered",
 					filteredCount
 				);

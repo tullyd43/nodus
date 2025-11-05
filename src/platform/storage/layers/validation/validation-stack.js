@@ -18,8 +18,6 @@
  * @see {@link NODUS_DEVELOPER_MIGRATION_GUIDE.md} - Orchestrator patterns and validation compliance
  */
 
-/* eslint-disable nodus/require-async-orchestration */
-
 /**
  * @typedef {Object} ValidatorModule
  * @property {string} [name] - Human-readable validator name
@@ -285,36 +283,36 @@ export default class ValidationStack {
 	 * @private
 	 * @returns {Promise<ValidationStack>}
 	 */
-	async #executeInit() {
+	#executeInit() {
 		// Initialize all validators
-		for (const validator of this.#validators) {
-			if (validator.init) {
-				await validator.init();
+		return Promise.all(
+			this.#validators.map((validator) =>
+				validator.init ? validator.init() : Promise.resolve()
+			)
+		).then(() => {
+			// Initialize cache if enabled
+			if (this.#config.enableCaching) {
+				const cacheManager = this.#stateManager.managers?.cacheManager;
+				if (cacheManager) {
+					this.#validationCache = cacheManager.getCache(
+						"validationStack",
+						{
+							ttl: this.#config.cacheTTL,
+						}
+					);
+				}
 			}
-		}
 
-		// Initialize cache if enabled
-		if (this.#config.enableCaching) {
-			const cacheManager = this.#stateManager.managers?.cacheManager;
-			if (cacheManager) {
-				this.#validationCache = cacheManager.getCache(
-					"validationStack",
-					{
-						ttl: this.#config.cacheTTL,
-					}
-				);
-			}
-		}
+			// Emit initialization success
+			this.#stateManager.emit?.("validation.stack.initialized", {
+				validatorCount: this.#validators.length,
+				cachingEnabled: this.#config.enableCaching,
+				historyEnabled: this.#config.trackHistory,
+				timestamp: Date.now(),
+			});
 
-		// Emit initialization success
-		this.#stateManager.emit?.("validation.stack.initialized", {
-			validatorCount: this.#validators.length,
-			cachingEnabled: this.#config.enableCaching,
-			historyEnabled: this.#config.trackHistory,
-			timestamp: Date.now(),
+			return this;
 		});
-
-		return this;
 	}
 
 	/**
@@ -325,7 +323,7 @@ export default class ValidationStack {
 	 * @param {Object} context - Validation context
 	 * @returns {Promise<ValidationResult>}
 	 */
-	async #executeValidate(entity, context) {
+	#executeValidate(entity, context) {
 		const startTime = performance.now();
 		const cacheKey = this.#generateCacheKey(entity, context);
 
@@ -353,41 +351,41 @@ export default class ValidationStack {
 		}
 
 		// Perform validation
-		const result = await this.#performValidation(entity, context);
+		return this.#performValidation(entity, context).then((result) => {
+			// Cache result if enabled
+			if (this.#config.enableCaching && this.#validationCache) {
+				this.#validationCache.set(cacheKey, result);
+			}
 
-		// Cache result if enabled
-		if (this.#config.enableCaching && this.#validationCache) {
-			this.#validationCache.set(cacheKey, result);
-		}
+			// Track history if enabled
+			const validationTime = performance.now() - startTime;
+			if (this.#config.trackHistory) {
+				this.#addToHistory(entity, result, validationTime);
+			}
 
-		// Track history if enabled
-		const validationTime = performance.now() - startTime;
-		if (this.#config.trackHistory) {
-			this.#addToHistory(entity, result, validationTime);
-		}
-
-		// Emit validation completion event
-		this.#stateManager.emit?.("validation.entity.completed", {
-			entityId: entity?.id,
-			entityType: entity?.entity_type,
-			valid: result.valid,
-			errorCount: result.errors?.length || 0,
-			warningCount: result.warnings?.length || 0,
-			validationTime,
-			timestamp: Date.now(),
-		});
-
-		// Emit validation failure event for security audit
-		if (!result.valid) {
-			this.#stateManager.emit?.("validation.entity.failed", {
+			// Emit validation completion event
+			this.#stateManager.emit?.("validation.entity.completed", {
 				entityId: entity?.id,
 				entityType: entity?.entity_type,
-				errors: result.errors || [],
+				valid: result.valid,
+				errorCount: result.errors?.length || 0,
+				warningCount: result.warnings?.length || 0,
+				validationTime,
 				timestamp: Date.now(),
 			});
-		}
 
-		return result;
+			// Emit validation failure event for security audit
+			if (!result.valid) {
+				this.#stateManager.emit?.("validation.entity.failed", {
+					entityId: entity?.id,
+					entityType: entity?.entity_type,
+					errors: result.errors || [],
+					timestamp: Date.now(),
+				});
+			}
+
+			return result;
+		});
 	}
 
 	/**
@@ -400,7 +398,7 @@ export default class ValidationStack {
 	 * @param {Object} context - Validation context
 	 * @returns {Promise<ValidationResult>}
 	 */
-	async #executeValidateField(entityType, fieldName, value, context) {
+	#executeValidateField(entityType, fieldName, value, context) {
 		const applicableValidators = this.#validators.filter(
 			(v) => v.supportsField && v.supportsField(entityType, fieldName)
 		);
@@ -408,57 +406,65 @@ export default class ValidationStack {
 		const errors = [];
 		const warnings = [];
 
-		for (const validator of applicableValidators) {
-			try {
-				const result = await validator.validateField(
-					entityType,
-					fieldName,
-					value,
-					context
-				);
-
-				if (!result.valid) {
-					errors.push(...(result.errors || []));
-					warnings.push(...(result.warnings || []));
-
-					if (this.#config.failFast) {
-						break;
+		const validationPromises = applicableValidators.map((validator) => {
+			return Promise.resolve()
+				.then(() =>
+					validator.validateField(
+						entityType,
+						fieldName,
+						value,
+						context
+					)
+				)
+				.then((result) => {
+					if (!result.valid) {
+						errors.push(...(result.errors || []));
+						warnings.push(...(result.warnings || []));
+						if (this.#config.failFast) {
+							// Throw to stop Promise.all
+							throw new Error("fail-fast");
+						}
 					}
-				}
-			} catch (error) {
-				errors.push(`Validator error: ${error.message}`);
-
-				// Emit validator error event
-				this.#stateManager.emit?.("validation.validator.error", {
-					validatorName: validator.name || validator.constructor.name,
-					entityType,
-					fieldName,
-					error: error.message,
-					timestamp: Date.now(),
+				})
+				.catch((error) => {
+					if (error.message === "fail-fast") throw error;
+					errors.push(`Validator error: ${error.message}`);
+					this.#stateManager.emit?.("validation.validator.error", {
+						validatorName:
+							validator.name || validator.constructor.name,
+						entityType,
+						fieldName,
+						error: error.message,
+						timestamp: Date.now(),
+					});
 				});
-			}
-		}
-
-		// Emit field validation completion
-		this.#stateManager.emit?.("validation.field.completed", {
-			entityType,
-			fieldName,
-			valid: errors.length === 0,
-			errorCount: errors.length,
-			warningCount: warnings.length,
-			validatorCount: applicableValidators.length,
-			timestamp: Date.now(),
 		});
 
-		return {
-			valid: errors.length === 0,
-			errors,
-			warnings,
-			validatedBy: applicableValidators.map(
-				(v) => v.name || v.constructor.name
-			),
-			timestamp: Date.now(),
-		};
+		return Promise.all(validationPromises)
+			.catch((err) => {
+				if (err.message !== "fail-fast") throw err;
+			})
+			.then(() => {
+				this.#stateManager.emit?.("validation.field.completed", {
+					entityType,
+					fieldName,
+					valid: errors.length === 0,
+					errorCount: errors.length,
+					warningCount: warnings.length,
+					validatorCount: applicableValidators.length,
+					timestamp: Date.now(),
+				});
+
+				return {
+					valid: errors.length === 0,
+					errors,
+					warnings,
+					validatedBy: applicableValidators.map(
+						(v) => v.name || v.constructor.name
+					),
+					timestamp: Date.now(),
+				};
+			});
 	}
 
 	/**
@@ -469,55 +475,65 @@ export default class ValidationStack {
 	 * @param {Object} context - Validation context
 	 * @returns {Promise<ValidationResult>}
 	 */
-	async #performValidation(entity, context) {
+	#performValidation(entity, context) {
 		const errors = [];
 		const warnings = [];
 		const validationResults = [];
 
-		for (const validator of this.#validators) {
-			try {
-				// Check if validator applies to this entity
-				if (typeof validator.isApplicableFor === "function") {
-					if (!validator.isApplicableFor(entity, context)) {
-						continue;
+		const validationPromises = this.#validators.map((validator) => {
+			return Promise.resolve()
+				.then(() => {
+					if (typeof validator.isApplicableFor === "function") {
+						if (!validator.isApplicableFor(entity, context)) {
+							return null; // Skip this validator
+						}
 					}
-				}
+					return validator.validate(entity, context);
+				})
+				.then((result) => {
+					if (result === null) return; // Validator was skipped
 
-				const result = await validator.validate(entity, context);
-				validationResults.push({
-					validator: validator.name || validator.constructor.name,
-					result,
-				});
+					validationResults.push({
+						validator: validator.name || validator.constructor.name,
+						result,
+					});
 
-				if (!result.valid) {
-					errors.push(...(result.errors || []));
-					warnings.push(...(result.warnings || []));
+					if (!result.valid) {
+						errors.push(...(result.errors || []));
+						warnings.push(...(result.warnings || []));
 
-					if (this.#config.failFast) {
-						break;
+						if (this.#config.failFast) {
+							throw new Error("fail-fast");
+						}
 					}
-				}
-			} catch (error) {
-				const errorMsg = `ValidationStack failed during execution: ${error.message}`;
-				errors.push(errorMsg);
+				})
+				.catch((error) => {
+					if (error.message === "fail-fast") throw error;
 
-				// Emit validator error event
-				this.#stateManager.emit?.("validation.validator.error", {
-					validatorName: validator.name || validator.constructor.name,
-					entityId: entity?.id,
-					error: error.message,
-					timestamp: Date.now(),
+					const errorMsg = `ValidationStack failed during execution: ${error.message}`;
+					errors.push(errorMsg);
+
+					this.#stateManager.emit?.("validation.validator.error", {
+						validatorName:
+							validator.name || validator.constructor.name,
+						entityId: entity?.id,
+						error: error.message,
+						timestamp: Date.now(),
+					});
 				});
-			}
-		}
+		});
 
-		return {
-			valid: errors.length === 0,
-			errors,
-			warnings,
-			validationResults,
-			timestamp: Date.now(),
-		};
+		return Promise.all(validationPromises)
+			.catch((err) => {
+				if (err.message !== "fail-fast") throw err;
+			})
+			.then(() => ({
+				valid: errors.length === 0,
+				errors,
+				warnings,
+				validationResults,
+				timestamp: Date.now(),
+			}));
 	}
 
 	/**

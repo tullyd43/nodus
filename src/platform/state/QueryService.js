@@ -174,7 +174,7 @@ export class QueryService {
 				}
 			)
 			.catch((error) => {
-				this.#metrics?.increment("query_orchestration_error");
+				this.#incrementMetric("query_orchestration_error");
 				this.#emitCriticalWarning("Query orchestration failed", {
 					operation: operationName,
 					error: error.message,
@@ -267,6 +267,86 @@ export class QueryService {
 		});
 	}
 
+	/**
+	 * Normalize metric key names for dispatcher/registry usage.
+	 * @private
+	 */
+	#metricKey(name) {
+		const key = String(name || "");
+		if (key.startsWith("query") || key.startsWith("query.")) return key;
+		return `query.${key}`;
+	}
+
+	/**
+	 * Increment a metric via ActionDispatcher when available, falling back to the
+	 * local metrics registry only if dispatcher is unavailable.
+	 * @private
+	 */
+	#incrementMetric(name, value = 1) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				/* PERFORMANCE_BUDGET: 1ms */
+				dispatcher.dispatch("metrics.increment", { key, value });
+				return;
+			}
+		} catch {
+			// swallow dispatcher errors - non-fatal
+		}
+
+		try {
+			this.#metrics?.increment?.(key, value);
+		} catch {
+			// swallow fallback errors
+		}
+	}
+
+	/**
+	 * Set or update a metric value via ActionDispatcher when available,
+	 * falling back to the local registry.
+	 * @private
+	 */
+	#setMetric(name, value) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.set", { key, value });
+				return;
+			}
+		} catch {
+			// swallow dispatcher errors
+		}
+		try {
+			this.#metrics?.set?.(key, value);
+		} catch {
+			// swallow fallback errors
+		}
+	}
+
+	/**
+	 * Record a timing metric.
+	 * @private
+	 */
+	#recordTimer(name, value) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.timer", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.timer?.(key, value);
+		} catch {
+			// swallow
+		}
+	}
+
 	// ═══════════════════════════════════════════════════════════════════════════
 	// PUBLIC API
 	// ═══════════════════════════════════════════════════════════════════════════
@@ -295,11 +375,11 @@ export class QueryService {
 				const cacheKey = `${sanitizedQuery}:${JSON.stringify(sanitizedOptions)}`;
 				const cached = this.#cache?.get(cacheKey);
 				if (cached) {
-					this.#metrics?.increment("cache_hit");
+					this.#incrementMetric("cache_hit");
 					return Promise.resolve(cached);
 				}
 
-				this.#metrics?.increment("cache_miss");
+				this.#incrementMetric("cache_miss");
 				const {
 					domains = [],
 					limit = 50,

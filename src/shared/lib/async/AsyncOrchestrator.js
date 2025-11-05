@@ -178,7 +178,7 @@ function sanitizeWithFallback(value, sanitizer, schema) {
  * @param {number} [options.timeoutMs] Optional timeout for the function execution.
  * @returns {Promise<any>} A promise that resolves with the function's return value, or undefined on error/timeout.
  */
-/* eslint-disable-next-line nodus/require-async-orchestration -- This is a low-level utility for the orchestrator itself, not an application workflow. */
+ 
 async function safeCall(fn, description, options = {}) {
 	const { logger, timeoutMs = DEFAULT_PLUGIN_TIMEOUT_MS } = options;
 	try {
@@ -228,18 +228,18 @@ function createBoundedAttachments(limit = 128) {
 		set(key, value) {
 			if (!map.has(key) && map.size >= limit) {
 				const oldest = map.keys().next().value;
-				/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- internal in-memory attachment store */
+				 
 				map.delete(oldest);
 			}
-			/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- internal in-memory attachment store */
+			 
 			map.set(key, value);
 		},
 		get(key) {
-			/* eslint-disable-next-line nodus/require-observability-compliance -- internal in-memory attachment store */
+			 
 			return map.get(key);
 		},
 		delete(key) {
-			/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- internal in-memory attachment store */
+			 
 			return map.delete(key);
 		},
 	};
@@ -293,7 +293,7 @@ function createExecutionContext(orchestrator, options, now) {
 			 * from ActionDispatcher/stateManager flows. Disable the
 			 * action-dispatcher/observability rules for this internal
 			 * helper with a clear justification. */
-			/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- in-memory plugin metadata, not a state mutation */
+			 
 			attachments.set(key, value);
 		},
 		/**
@@ -302,7 +302,7 @@ function createExecutionContext(orchestrator, options, now) {
 		 * @returns {any}
 		 */
 		getAttachment(key) {
-			/* eslint-disable-next-line nodus/require-observability-compliance -- in-memory plugin metadata, not a state mutation */
+			 
 			return attachments.get(key);
 		},
 		/**
@@ -311,7 +311,7 @@ function createExecutionContext(orchestrator, options, now) {
 		 * @returns {void}
 		 */
 		deleteAttachment(key) {
-			/* eslint-disable-next-line nodus/require-action-dispatcher, nodus/require-observability-compliance -- in-memory plugin metadata, not a state mutation */
+			 
 			attachments.delete(key);
 		},
 		/**
@@ -392,15 +392,15 @@ export class AsyncOrchestrator {
 			this._automaticInstrumentation = managers.observability
 				?.automaticInstrumentation ||
 				managers.instrumentation?.automaticInstrumentation || {
-					/* eslint-disable-next-line nodus/require-async-orchestration -- fallback noop adapter */
+					 
 					instrumentOperation: async () => null,
 				};
 			this._asyncTracker = managers.observability
 				?.asyncOperationTracker ||
 				managers.asyncOperationTracker || {
-					/* eslint-disable-next-line nodus/require-async-orchestration -- fallback noop adapter */
+					 
 					recordSuccess: async () => {},
-					/* eslint-disable-next-line nodus/require-async-orchestration -- fallback noop adapter */
+					 
 					recordError: async () => {},
 				};
 
@@ -461,7 +461,7 @@ export class AsyncOrchestrator {
 						);
 					}
 				},
-				/* eslint-disable-next-line nodus/require-async-orchestration -- plugin lifecycle hook executed inside orchestrator */
+				 
 				after: async (context) => {
 					const p = context.getAttachment(
 						"__autoInstrumentationPromise__"
@@ -477,7 +477,7 @@ export class AsyncOrchestrator {
 						}
 					}
 				},
-				/* eslint-disable-next-line nodus/require-async-orchestration -- plugin lifecycle hook executed inside orchestrator */
+				 
 				error: async (context) => {
 					const p = context.getAttachment(
 						"__autoInstrumentationPromise__"
@@ -493,7 +493,7 @@ export class AsyncOrchestrator {
 						}
 					}
 				},
-				/* eslint-disable-next-line nodus/require-async-orchestration -- plugin hooks are part of the orchestrator lifecycle */
+				 
 				settled: async (context) => {
 					// Ensure instrumentation promise is observed to avoid unhandled rejections
 					const p = context.getAttachment(
@@ -561,7 +561,7 @@ export class AsyncOrchestrator {
 	 * @returns {Promise<T|void>}
 	 */
 	// @performance-budget: 5ms
-	/* eslint-disable nodus/require-async-orchestration -- This is the orchestrator's entry point. */
+	 
 	async run(operation, options = {}) {
 		const callable =
 			typeof operation === "function" ? operation : () => operation;
@@ -599,7 +599,6 @@ export class AsyncOrchestrator {
 			await this.#dispatch("settled", pipeline, context);
 		}
 	}
-	/* eslint-enable nodus/require-async-orchestration */
 
 	/**
 	 * Retrieves the currently registered plugin list.
@@ -683,7 +682,7 @@ export class AsyncOrchestrator {
 	 * @param {AsyncRunContext} context
 	 * @returns {Promise<void>}
 	 */
-	/* eslint-disable-next-line nodus/require-async-orchestration -- This is an internal part of the orchestration flow. */
+	 
 	async #dispatch(hook, pipeline, context, extra) {
 		if (!HOOK_SEQUENCE.includes(hook)) return;
 		for (const plugin of pipeline) {
@@ -691,7 +690,7 @@ export class AsyncOrchestrator {
 			if (typeof handler !== "function") continue;
 
 			await safeCall(
-				/* eslint-disable-next-line nodus/require-async-orchestration -- This is an internal part of the orchestration flow. */
+				 
 				async () => {
 					const supported = await safeCall(
 						() => plugin.supports?.(context) ?? true,

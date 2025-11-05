@@ -105,7 +105,7 @@ export class AsyncOrchestrationService {
 	wrap(operation, options = {}) {
 		const callable =
 			typeof operation === "function" ? operation : () => operation;
-		/* eslint-disable-next-line nodus/require-observability-compliance -- Allowed: wrapper forwards to AsyncOrchestrationService.run which uses orchestrator.run internally */
+		 
 		return /* PERFORMANCE_BUDGET: 10ms */ this.run(callable, options);
 	}
 

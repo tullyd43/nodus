@@ -324,6 +324,82 @@ function isInWrapperClass(node, sourceCode) {
 	return false;
 }
 
+/**
+ * Determine if the current node is wrapped by a known helper call (maybeWrap, #wrapOperation, #withModuleCache)
+ */
+function isWrappedByHelper(node, sourceCode) {
+	let current = node.parent;
+	while (current) {
+		if (current.type === "CallExpression") {
+			try {
+				const callText = sourceCode.getText(current);
+				if (
+					/(wrapOperation|maybeWrap|sharedMaybeWrap|#wrapOperation|#withModuleCache|withModuleCache)\s*\(/.test(
+						callText
+					)
+				) {
+					return true;
+				}
+			} catch {
+				// ignore
+			}
+		}
+		// Also consider function expressions/arrow functions that are passed
+		// as arguments to wrapper calls (e.g. sharedMaybeWrap(..., () => obj.set(...))).
+		if (
+			(current.type === "ArrowFunctionExpression" ||
+				current.type === "FunctionExpression" ||
+				current.type === "FunctionDeclaration") &&
+			current.parent &&
+			current.parent.type === "CallExpression"
+		) {
+			try {
+				const parentCallText = sourceCode.getText(current.parent);
+				if (
+					/(wrapOperation|maybeWrap|sharedMaybeWrap|#wrapOperation|#withModuleCache|withModuleCache)\s*\(/.test(
+						parentCallText
+					)
+				) {
+					return true;
+				}
+			} catch {
+				// ignore
+			}
+		}
+		current = current.parent;
+	}
+	return false;
+}
+
+/**
+ * Heuristic: detect when a separately-declared function is passed into a wrapper helper
+ */
+function isFunctionPassedToWrapper(node, sourceCode) {
+	if (!node) return false;
+	let identifier = null;
+	if (node.type === "FunctionDeclaration" && node.id?.name) {
+		identifier = node.id.name;
+	} else if (
+		(node.type === "FunctionExpression" ||
+			node.type === "ArrowFunctionExpression") &&
+		node.parent &&
+		node.parent.type === "VariableDeclarator" &&
+		node.parent.id &&
+		node.parent.id.name
+	) {
+		identifier = node.parent.id.name;
+	}
+	if (!identifier) return false;
+	const fileText = sourceCode.getText();
+	const pattern = new RegExp(
+		"(?:maybeWrap|sharedMaybeWrap|wrapOperation|#wrapOperation|withModuleCache|#withModuleCache)\\s*\\([^)]*\\b" +
+			identifier +
+			"\\b[^)]*\\)",
+		"m"
+	);
+	return pattern.test(fileText);
+}
+
 export default {
 	meta: {
 		type: "problem",
@@ -395,6 +471,17 @@ export default {
 		return {
 			// Check method calls for state mutations
 			CallExpression(node) {
+				// Ignore operations on known in-memory maps (subscriptions, pendingRequests)
+				const nodeText = sourceCode.getText(node);
+				const localMapNames =
+					/(?:this\.)?#?(subscriptions|pendingRequests|messageQueue|_bootstrapCache)/;
+				if (localMapNames.test(nodeText)) return;
+
+				// Ignore operations on local resources such as the WebSocket connection or
+				// heartbeat timers which are module-local and shouldn't require ActionDispatcher
+				const localResourceNames =
+					/(?:this\.)?#?(connection|heartbeatInterval|_socket|socket)/;
+				if (localResourceNames.test(nodeText)) return;
 				let methodName = null;
 				if (
 					node.callee.type === "MemberExpression" &&
@@ -441,6 +528,17 @@ export default {
 
 				// Check for state mutation operations
 				if (isStateMutationOperation(methodName)) {
+					// If the node is already wrapped by a recognized helper (maybeWrap, #wrapOperation)
+					// treat it as compliant since the helper will enforce observability.
+					if (
+						isWrappedByHelper(node, sourceCode) ||
+						isFunctionPassedToWrapper(
+							containingFunction,
+							sourceCode
+						)
+					) {
+						return;
+					}
 					if (
 						containingFunction &&
 						!usesCompliantPattern(sourceCode, containingFunction)

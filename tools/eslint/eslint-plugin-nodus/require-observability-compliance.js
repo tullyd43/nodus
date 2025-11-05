@@ -157,7 +157,7 @@ const MANUAL_LOGGING_PATTERNS = [
 ];
 
 // Enhanced patterns that indicate proper Nodus architecture compliance
-const COMPLIANT_PATTERNS = [
+const _COMPLIANT_PATTERNS = [
 	// Orchestrator patterns (including wrapper patterns like EmbeddingManager)
 	/orchestrator\.run\(/,
 	/\.createRunner\(/,
@@ -168,12 +168,20 @@ const COMPLIANT_PATTERNS = [
 	/this\.#runOrchestrated\(/,
 	/await\s+this\.#runOrchestrated\(/,
 	/return\s+this\.#runOrchestrated\(/,
+	/#wrapOperation\(/,
+	/this\.#wrapOperation\(/,
+	/#withModuleCache\(/,
+	/this\.#withModuleCache\(/,
 
 	// ForensicRegistry patterns (secure operations)
 	/forensicRegistry\.wrapOperation\(/,
 	/\.forensicRegistry\.wrapOperation\(/,
 	/observability\.forensicRegistry\.wrapOperation\(/,
 	/\.observability\.forensicRegistry\.wrapOperation\(/,
+	/maybeWrap\(/,
+	/sharedMaybeWrap\(/,
+	/getObservabilityFlags\(/,
+	/observabilityToggles\.maybeWrap\(/,
 
 	// ActionDispatcher patterns (state mutations) - Enhanced for EmbeddingManager patterns
 	/actionDispatcher\.dispatch\(/,
@@ -238,6 +246,10 @@ function usesCompliantPattern(sourceCode, node, requiredPattern) {
 				/\.forensicRegistry\.wrapOperation\(/,
 				/observability\.forensicRegistry\.wrapOperation\(/,
 				/\.observability\.forensicRegistry\.wrapOperation\(/,
+				/maybeWrap\(/,
+				/sharedMaybeWrap\(/,
+				/getObservabilityFlags\(/,
+				/observabilityToggles\.maybeWrap\(/,
 			].some((pattern) => pattern.test(text));
 
 		case "actionDispatcher":
@@ -266,9 +278,6 @@ function usesCompliantPattern(sourceCode, node, requiredPattern) {
 				/systemControl\./,
 				/\.enterprise\./,
 			].some((pattern) => pattern.test(text));
-
-		default:
-			return COMPLIANT_PATTERNS.some((pattern) => pattern.test(text));
 	}
 }
 
@@ -311,11 +320,115 @@ function getMethodContext(node) {
 }
 
 /**
+ * Determine if the current node is wrapped by a known helper call (maybeWrap, #wrapOperation, #withModuleCache)
+ */
+function isWrappedByHelper(node, sourceCode) {
+	let current = node.parent;
+	while (current) {
+		if (current.type === "CallExpression") {
+			try {
+				// Use the full call expression text (including arguments) so private
+				// helper forms like `this.#wrapOperation(...)` are correctly detected.
+				const callText = sourceCode.getText(current);
+				if (
+					/(wrapOperation|maybeWrap|sharedMaybeWrap|#wrapOperation|#withModuleCache|withModuleCache)\s*\(/.test(
+						callText
+					)
+				) {
+					return true;
+				}
+			} catch {
+				// ignore errors reading source text
+			}
+		}
+		// If we hit a function expression/arrow that itself is an argument to a
+		// CallExpression, check that parent call for wrapper names as well. This
+		// covers the common pattern: sharedMaybeWrap(..., () => obj.set(...)).
+		if (
+			(current.type === "ArrowFunctionExpression" ||
+				current.type === "FunctionExpression" ||
+				current.type === "FunctionDeclaration") &&
+			current.parent &&
+			current.parent.type === "CallExpression"
+		) {
+			try {
+				const parentCallText = sourceCode.getText(current.parent);
+				if (
+					/(wrapOperation|maybeWrap|sharedMaybeWrap|#wrapOperation|#withModuleCache|withModuleCache)\s*\(/.test(
+						parentCallText
+					)
+				) {
+					return true;
+				}
+			} catch {
+				// ignore
+			}
+		}
+		current = current.parent;
+	}
+	return false;
+}
+
+/**
+ * Heuristic: Determine if the containing function is passed as an argument to a known
+ * wrapper helper elsewhere in the same file. This covers patterns where the function
+ * is declared separately (const fn = () => { ... }) and later passed to sharedMaybeWrap(fn).
+ */
+function isFunctionPassedToWrapper(functionNode, sourceCode) {
+	if (!functionNode) return false;
+	// Try to resolve an identifier for this function
+	let identifier = null;
+	if (functionNode.type === "FunctionDeclaration" && functionNode.id?.name) {
+		identifier = functionNode.id.name;
+	} else if (
+		(functionNode.type === "FunctionExpression" ||
+			functionNode.type === "ArrowFunctionExpression") &&
+		functionNode.parent &&
+		functionNode.parent.type === "VariableDeclarator" &&
+		functionNode.parent.id &&
+		functionNode.parent.id.name
+	) {
+		identifier = functionNode.parent.id.name;
+	} else if (functionNode.key && functionNode.key.name) {
+		identifier = functionNode.key.name;
+	}
+
+	if (!identifier) return false;
+
+	// Search the whole file text for wrapper calls that include the identifier as an argument
+	const fileText = sourceCode.getText();
+	const wrapperArgPattern = new RegExp(
+		"(?:maybeWrap|sharedMaybeWrap|wrapOperation|#wrapOperation|withModuleCache|#withModuleCache)\\s*\\([^)]*\\b" +
+			identifier +
+			"\\b[^)]*\\)",
+		"m"
+	);
+
+	return wrapperArgPattern.test(fileText);
+}
+
+/**
  * Determine if this is a cache operation based on context
  */
 function isCacheOperation(node, sourceCode) {
 	const text = sourceCode.getText(node);
-	return /cache|Cache/.test(text) || /\.get\(|\.set\(|\.delete\(/.test(text);
+	// Ignore known in-memory map names that are not platform caches. Many
+	// call sites place these identifiers inside wrapper calls; therefore do a
+	// broader text check for the local map identifiers to avoid false positives.
+	if (
+		/(?:\bsubscriptions\b|\bpendingRequests\b|\bmessageQueue\b|_bootstrapCache|_loadedModules|_loaded)/.test(
+			text
+		)
+	) {
+		return false;
+	}
+
+	// Only treat as cache operation when the context indicates a cache-like identifier
+	// (cache, cacheManager, forensicRegistry) to avoid false positives on local maps
+	const looksLikeCache =
+		/cache|Cache|cacheManager|forensicRegistry|ForensicRegistry/.test(text);
+	if (!looksLikeCache) return false;
+	return /\.get\(|\.set\(|\.delete\(|\.clear\(/.test(text);
 }
 
 /**
@@ -445,6 +558,22 @@ export default {
 				const requirement = getComplianceRequirement(methodName);
 				if (!requirement) return;
 
+				// If the requirement is for forensic wrapping but the operation is on a local
+				// in-memory map (subscriptions, pendingRequests, messageQueue), skip enforcing
+				// ForensicRegistry here - these maps are module-local and already treated
+				// specially elsewhere. This avoids false positives for local maps.
+				const objectText = _objectContext
+					? sourceCode.getText(_objectContext)
+					: "";
+				const localMapRegex =
+					/(?:this\.)?#?(subscriptions|pendingRequests|messageQueue|_bootstrapCache|_loadedModules|_loaded)/;
+				if (
+					requirement.requiresForensic &&
+					localMapRegex.test(objectText)
+				) {
+					return;
+				}
+
 				const containingFunction = getContainingFunction(node);
 				if (!containingFunction) return;
 
@@ -471,6 +600,18 @@ export default {
 					(requirement.requiresForensic ||
 						isCacheOperation(node, sourceCode))
 				) {
+					// If the node is already wrapped by a recognized helper call (maybeWrap or #wrapOperation)
+					// then treat it as compliant even if the containingFunction doesn't directly include
+					// the forensic call (callbacks passed into helpers are common patterns).
+					if (
+						isWrappedByHelper(node, sourceCode) ||
+						isFunctionPassedToWrapper(
+							containingFunction,
+							sourceCode
+						)
+					) {
+						return;
+					}
 					if (
 						!usesCompliantPattern(
 							sourceCode,

@@ -2,7 +2,7 @@
 
 import { AppError } from "./ErrorHelpers.js";
 
-/* eslint-disable nodus/require-action-dispatcher, nodus/require-observability-compliance --
+/* 
 	MetricsRegistry is the internal implementation of the metrics subsystem and manages a
 	local/bounded cache for metrics. These operations are intentionally local and not
 	external state mutations; disabling these rules here prevents false positives while

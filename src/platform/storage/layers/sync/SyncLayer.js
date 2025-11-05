@@ -20,6 +20,10 @@
 
 import { CDS } from "@platform/security/CDS.js";
 import { DateCore } from "@shared/lib/DateUtils.js";
+import {
+	getObservabilityFlags,
+	maybeWrap as sharedMaybeWrap,
+} from "@shared/lib/observabilityToggles.js";
 
 /**
  * @typedef {Object} SyncModule
@@ -92,6 +96,8 @@ export class SyncLayer {
 	#orchestratorRunner;
 	/** @private @type {SyncLayerOptions} */
 	#config;
+	/** @private @type {object} */
+	#obsFlags;
 	/** @private @type {boolean} */
 	#ready = false;
 	/** @private @type {Function} */
@@ -147,6 +153,34 @@ export class SyncLayer {
 			...options,
 		};
 
+		// Observability toggles: allow runtime configuration to reduce overhead
+		// (disable metrics/timers/events/forensic wraps when running in hot paths).
+		this.#config.observability = {
+			enableMetrics:
+				options?.observability?.enableMetrics !== undefined
+					? options.observability.enableMetrics
+					: true,
+			enableTimers:
+				options?.observability?.enableTimers !== undefined
+					? options.observability.enableTimers
+					: true,
+			enableEvents:
+				options?.observability?.enableEvents !== undefined
+					? options.observability.enableEvents
+					: true,
+			enableForensic:
+				options?.observability?.enableForensic !== undefined
+					? options.observability.enableForensic
+					: true,
+		};
+
+		// Derive observable flags centrally so other modules can override or
+		// platform policies can inject behavior via stateManager config.
+		this.#obsFlags = getObservabilityFlags(
+			this.#stateManager,
+			options?.observability
+		);
+
 		const orchestrator = this.#managers?.asyncOrchestrator;
 		if (!orchestrator) {
 			throw new this.#AppError(
@@ -164,7 +198,9 @@ export class SyncLayer {
 		// Bind the debounced sync method
 		this.#debouncedSync = this.#debounce(() => {
 			this.performSync().catch((error) => {
-				this.#emitCriticalWarning("Debounced sync failed", { error: error.message });
+				this.#emitCriticalWarning("Debounced sync failed", {
+					error: error.message,
+				});
 			});
 		}, this.#config.debounceInterval);
 
@@ -227,7 +263,7 @@ export class SyncLayer {
 	 * @param {object} [options={}] - Additional orchestrator options
 	 * @returns {Promise<any>}
 	 */
-	#runOrchestrated(operationName, operation, options = {}) {
+	async #runOrchestrated(operationName, operation, options = {}) {
 		// Policy enforcement
 		if (!this.#policies?.getPolicy("async", "enabled")) {
 			this.#emitWarning("Async operations disabled by policy", {
@@ -245,8 +281,25 @@ export class SyncLayer {
 
 		try {
 			/* PERFORMANCE_BUDGET: 15ms for sync operations */
-			return this.#orchestratorRunner.run(
-				() => this.#errorBoundary?.try(() => operation()) || operation(),
+			// Prefer creating a short-lived runner per operation to provide
+			// clearer labels and per-operation metadata in observability traces.
+			const orchestrator = this.#managers?.asyncOrchestrator;
+			if (!orchestrator) {
+				throw new this.#AppError(
+					"AsyncOrchestrationService required for SyncLayer observability compliance"
+				);
+			}
+
+			const runner = orchestrator.createRunner({
+				labelPrefix: `sync.layer.${operationName}`,
+				actorId: this.#currentUser,
+				eventType: "SYNC_LAYER_OPERATION",
+				meta: { component: "SyncLayer", operation: operationName },
+			});
+
+			const result = await runner.run(
+				() =>
+					this.#errorBoundary?.try(() => operation()) || operation(),
 				{
 					label: `sync.${operationName}`,
 					actorId: this.#currentUser,
@@ -256,8 +309,10 @@ export class SyncLayer {
 					...options,
 				}
 			);
+
+			return result;
 		} catch (error) {
-			this.#metrics?.increment("sync_orchestration_error");
+			this.#incrementMetric("sync_orchestration_error");
 			this.#emitCriticalWarning("Sync orchestration failed", {
 				operation: operationName,
 				error: error.message,
@@ -268,12 +323,95 @@ export class SyncLayer {
 	}
 
 	/**
+	 * Create a metrics key namespaced to this component.
+	 * @private
+	 */
+	#metricKey(name) {
+		return `syncLayer.${name}`;
+	}
+
+	/**
+	 * Dispatch an increment metric update through ActionDispatcher when available.
+	 * @private
+	 */
+	#incrementMetric(name, value = 1) {
+		const key = this.#metricKey(name);
+		try {
+			if (this.#actionDispatcher?.dispatch) {
+				/* PERFORMANCE_BUDGET: 1ms */
+				this.#actionDispatcher.dispatch("metrics.increment", {
+					key,
+					value,
+				});
+				return;
+			}
+		} catch {
+			// Fall through to metrics registry fallback
+		}
+
+		// Fallback to local metrics registry when dispatcher is unavailable
+		try {
+			this.#metrics?.increment?.(key, value);
+		} catch {}
+	}
+
+	/**
+	 * Dispatch a set metric update through ActionDispatcher when available.
+	 * @private
+	 */
+	#setMetric(name, value) {
+		const key = this.#metricKey(name);
+		try {
+			if (this.#actionDispatcher?.dispatch) {
+				/* PERFORMANCE_BUDGET: 1ms */
+				this.#actionDispatcher.dispatch("metrics.set", {
+					key,
+					value,
+				});
+				return;
+			}
+		} catch {
+			// Fall through to metrics registry fallback
+		}
+
+		try {
+			this.#metrics?.set?.(key, value);
+		} catch {}
+	}
+
+	/**
+	 * Dispatch a timer metric (duration) through ActionDispatcher when available.
+	 * @private
+	 */
+	#recordTimer(name, value) {
+		if (!this.#obsFlags?.enableTimers) return;
+		const key = this.#metricKey(name);
+		try {
+			if (this.#actionDispatcher?.dispatch) {
+				/* PERFORMANCE_BUDGET: 1ms */
+				this.#actionDispatcher.dispatch("metrics.timer", {
+					key,
+					value,
+				});
+				return;
+			}
+		} catch {
+			// Fall through to metrics registry fallback
+		}
+
+		try {
+			this.#metrics?.timer?.(key, value);
+		} catch {}
+	}
+
+	/**
 	 * Dispatches an action through the ActionDispatcher for observability.
 	 * @private
 	 * @param {string} actionType - Type of action to dispatch
 	 * @param {object} payload - Action payload
 	 */
 	#dispatchAction(actionType, payload) {
+		if (!this.#obsFlags?.enableEvents) return;
 		try {
 			/* PERFORMANCE_BUDGET: 2ms */
 			this.#actionDispatcher?.dispatch(actionType, {
@@ -288,6 +426,25 @@ export class SyncLayer {
 				error: error.message,
 			});
 		}
+	}
+
+	/**
+	 * Conditionally wrap a function with forensicRegistry.wrapOperation depending on
+	 * the observability configuration. When forensic wraps are disabled this will
+	 * execute the function directly to avoid instrumentation overhead.
+	 * @private
+	 */
+	async #maybeWrap(domain, operation, fn, meta) {
+		// Delegate to the shared maybeWrap helper which centralizes policy
+		// about whether forensic wraps are performed.
+		return await sharedMaybeWrap(
+			this.#forensicRegistry,
+			this.#obsFlags,
+			domain,
+			operation,
+			fn,
+			meta
+		);
 	}
 
 	/**
@@ -435,10 +592,16 @@ export class SyncLayer {
 			conflictCount: this.#conflictQueue.length,
 			autoSyncEnabled: this.#config.enableAutoSync,
 			lastSync: this.#metrics?.get("last_sync"),
+			lastSyncUp: this.#metrics?.get("last_sync_up"),
+			lastSyncDown: this.#metrics?.get("last_sync_down"),
 			statistics: {
 				syncCount: this.#metrics?.get("sync_count") || 0,
 				errorCount: this.#metrics?.get("error_count") || 0,
 				averageLatency: this.#metrics?.get("average_latency") || 0,
+				lastUploadedCount:
+					this.#metrics?.get("last_uploaded_count") || 0,
+				lastDownloadedCount:
+					this.#metrics?.get("last_downloaded_count") || 0,
 			},
 		};
 	}
@@ -527,28 +690,50 @@ export class SyncLayer {
 		try {
 			const startTime = performance.now();
 
-			// Upload changes to server
+			// Upload changes to server (orchestrated per-phase)
 			if (
 				syncOptions.direction === "up" ||
 				syncOptions.direction === "bidirectional"
 			) {
-				result.up = await this.#syncUp(syncOptions.batchSize);
+				const upStart = performance.now();
+				result.up = await this.#runOrchestrated(
+					"syncUp",
+					() => this.#syncUp(syncOptions.batchSize),
+					{ meta: { phase: "up" } }
+				);
+				const upDuration = performance.now() - upStart;
+				this.#recordTimer("syncUp_duration", upDuration);
+				this.#setMetric("last_sync_up", DateCore.timestamp());
+				this.#setMetric(
+					"last_uploaded_count",
+					result.up?.uploaded || 0
+				);
 			}
 
-			// Download changes from server
+			// Download changes from server (orchestrated per-phase)
 			if (
 				syncOptions.direction === "down" ||
 				syncOptions.direction === "bidirectional"
 			) {
-				result.down = await this.#syncDown(syncOptions.batchSize);
+				const downStart = performance.now();
+				result.down = await this.#runOrchestrated(
+					"syncDown",
+					() => this.#syncDown(syncOptions.batchSize),
+					{ meta: { phase: "down" } }
+				);
+				const downDuration = performance.now() - downStart;
+				this.#recordTimer("syncDown_duration", downDuration);
+				this.#setMetric("last_sync_down", DateCore.timestamp());
+				this.#setMetric(
+					"last_downloaded_count",
+					result.down?.downloaded || 0
+				);
 			}
 
 			const latency = performance.now() - startTime;
 			this.#recordSyncMetrics(true, latency, result);
 
-			this.#emitWarning(
-				`Sync completed in ${latency.toFixed(2)}ms.`
-			);
+			this.#emitWarning(`Sync completed in ${latency.toFixed(2)}ms.`);
 
 			this.#dispatchAction("sync.completed", {
 				result,
@@ -573,9 +758,15 @@ export class SyncLayer {
 			// If a resync was requested while this sync was running, trigger it now
 			if (this.#isResyncNeeded) {
 				this.#isResyncNeeded = false;
-				setTimeout(() => this.performSync().catch((error) => {
-					this.#emitCriticalWarning("Resync failed", { error: error.message });
-				}), 1000);
+				setTimeout(
+					() =>
+						this.performSync().catch((error) => {
+							this.#emitCriticalWarning("Resync failed", {
+								error: error.message,
+							});
+						}),
+					1000
+				);
 			}
 		}
 	}
@@ -602,50 +793,11 @@ export class SyncLayer {
 		const failedItems = [];
 
 		for (const item of sanitizedBatch) {
-			try {
-				/* PERFORMANCE_BUDGET: 50ms */
-				const response = await this.#forensicRegistry.wrapOperation(
-					"sync",
-					"send_to_server",
-					() => this.#sendToServer(item),
-					{
-						entityId: item.entity.id,
-						operation: item.operation,
-						requester: this.#currentUser,
-						classification: "CONFIDENTIAL",
-					}
-				);
-				if (response.success) {
-					uploaded++;
-					this.#dispatchAction("sync.up_success", {
-						entityId: item.entity.id,
-						operation: item.operation,
-					});
-				} else {
-					failed++;
-					failedItems.push(item);
-					this.#dispatchAction("sync.up_failed", {
-						entityId: item.entity.id,
-						operation: item.operation,
-						error: response.error,
-					});
-				}
-			} catch (error) {
-				failed++;
-				failedItems.push(item);
-
-				// Retry logic with exponential backoff
-				item.retries = (item.retries || 0) + 1;
-				if (item.retries < this.#config.maxRetries) {
-					this.#scheduleRetry(item);
-				} else {
-					this.#dispatchAction("sync.up_max_retries", {
-						entityId: item.entity.id,
-						operation: item.operation,
-						retries: item.retries,
-						error: error.message,
-					});
-				}
+			const res = await this.#processSyncUpItem(item);
+			uploaded += res.uploadedDelta || 0;
+			failed += res.failedDelta || 0;
+			if (res.failedItem) {
+				failedItems.push(res.failedItem);
 			}
 		}
 
@@ -670,13 +822,14 @@ export class SyncLayer {
 			this.#metrics?.get("last_sync_down") || DateCore.timestamp();
 
 		/* PERFORMANCE_BUDGET: 50ms */
-		const response = await this.#forensicRegistry.wrapOperation(
+		const response = await this.#maybeWrap(
 			"sync",
 			"fetch_from_server",
-			() => this.#fetchFromServer({
-				since: lastSyncTime,
-				limit: batchSize,
-			}),
+			() =>
+				this.#fetchFromServer({
+					since: lastSyncTime,
+					limit: batchSize,
+				}),
 			{
 				since: lastSyncTime,
 				limit: batchSize,
@@ -694,56 +847,26 @@ export class SyncLayer {
 		const conflictItems = [];
 
 		for (const remoteEntity of response.entities) {
-			try {
-				await this.#applyRemoteChange(
-					remoteEntity.store_name,
-					this.#sanitizeInput(remoteEntity)
-				);
-				downloaded++;
-				this.#dispatchAction("sync.down_success", {
-					entityId: remoteEntity.id,
-					storeName: remoteEntity.store_name,
+			const res = await this.#processSyncDownItem(remoteEntity);
+			downloaded += res.downloadedDelta || 0;
+			conflicts += res.conflictsDelta || 0;
+			if (res.conflictItem) {
+				conflictItems.push({
+					entity: res.conflictItem,
+					conflict: null,
 				});
-			} catch (error) {
-				if (error instanceof this.#PolicyError && error.message.includes("MAC_WRITE_DENIED")) {
-					this.#dispatchAction("sync.down_mac_denied", {
-						entityId: remoteEntity.id,
-						storeName: remoteEntity.store_name,
-						error: error.message,
-					});
-					continue;
-				}
-
-				if (error instanceof this.#AppError && error.message.includes("CONFLICT")) {
-					conflicts++;
-					conflictItems.push({
-						entity: remoteEntity,
-						conflict: error.details,
-					});
-					this.#conflictQueue.push({
-						remoteEntity,
-						localEntity: error.context?.localEntity,
-						timestamp: DateCore.timestamp(),
-					});
-					this.#dispatchAction("sync.down_conflict", {
-						entityId: remoteEntity.id,
-						storeName: remoteEntity.store_name,
-						error: error.message,
-					});
-				} else {
-					this.#dispatchAction("sync.down_error", {
-						entityId: remoteEntity.id,
-						storeName: remoteEntity.store_name,
-						error: error.message,
-					});
-				}
 			}
 		}
 
 		// Update last sync timestamp
+		const ts = DateCore.timestamp();
 		this.#dispatchAction("sync.last_sync_down_updated", {
-			timestamp: DateCore.timestamp(),
+			timestamp: ts,
 		});
+		// Record last sync down metric
+		this.#setMetric("last_sync_down", ts);
+		// Record total downloaded for this phase
+		this.#setMetric("last_downloaded_count", downloaded);
 
 		return {
 			downloaded,
@@ -787,7 +910,7 @@ export class SyncLayer {
 		}
 
 		/* PERFORMANCE_BUDGET: 100ms */
-		const response = await this.#forensicRegistry.wrapOperation(
+		const response = await this.#maybeWrap(
 			"network",
 			"cds_fetch",
 			() => CDS.fetch(url, requestOptions),
@@ -828,14 +951,15 @@ export class SyncLayer {
 		});
 
 		/* PERFORMANCE_BUDGET: 100ms */
-		const response = await this.#forensicRegistry.wrapOperation(
+		const response = await this.#maybeWrap(
 			"network",
 			"cds_fetch",
-			() => CDS.fetch(url, {
-				headers: {
-					Authorization: `Bearer ${this.#getAuthToken()}`,
-				},
-			}),
+			() =>
+				CDS.fetch(url, {
+					headers: {
+						Authorization: `Bearer ${this.#getAuthToken()}`,
+					},
+				}),
 			{
 				url: url.toString(),
 				method: "GET",
@@ -871,7 +995,9 @@ export class SyncLayer {
 		this.#autoSyncInterval = setInterval(() => {
 			if (!this.#syncInProgress && this.#syncQueue.length > 0) {
 				this.performSync().catch((error) => {
-					this.#emitCriticalWarning("Auto-sync failed:", { error: error.message });
+					this.#emitCriticalWarning("Auto-sync failed:", {
+						error: error.message,
+					});
 				});
 			}
 		}, this.#config.syncInterval);
@@ -888,7 +1014,9 @@ export class SyncLayer {
 				() => {
 					this.#emitWarning("Network online, triggering sync.");
 					this.performSync().catch((error) => {
-						this.#emitCriticalWarning("Online sync failed", { error: error.message });
+						this.#emitCriticalWarning("Online sync failed", {
+							error: error.message,
+						});
 					});
 				},
 				{ passive: true }
@@ -915,10 +1043,11 @@ export class SyncLayer {
 	async #applyRemoteChange(storeName, entity) {
 		try {
 			/* PERFORMANCE_BUDGET: 20ms */
-			await this.#forensicRegistry.wrapOperation(
+			await this.#maybeWrap(
 				"storage",
 				"put",
-				() => this.#stateManager.storage.instance?.put(storeName, entity),
+				() =>
+					this.#stateManager.storage.instance?.put(storeName, entity),
 				{
 					store: storeName,
 					entityId: entity.id,
@@ -954,25 +1083,187 @@ export class SyncLayer {
 		const timeout = setTimeout(() => {
 			this.queueEntityForSync(item.entity, item.operation);
 			/* PERFORMANCE_BUDGET: 5ms */
-			this.#forensicRegistry.wrapOperation("cache", "delete", () => {
-				this.#retryTimeouts?.delete(item.entity.id);
-			}, {
+			// Fire-and-forget: avoid awaiting to keep scheduling lightweight
+			this.#maybeWrap(
+				"cache",
+				"delete",
+				() => {
+					this.#retryTimeouts?.delete(item.entity.id);
+				},
+				{
+					cache: "syncRetries",
+					key: item.entity.id,
+					requester: this.#currentUser,
+					classification: "INTERNAL",
+				}
+			).catch(() => {});
+		}, delay);
+
+		/* PERFORMANCE_BUDGET: 5ms */
+		this.#maybeWrap(
+			"cache",
+			"set",
+			() => {
+				this.#retryTimeouts?.set(item.entity.id, timeout);
+			},
+			{
 				cache: "syncRetries",
 				key: item.entity.id,
 				requester: this.#currentUser,
 				classification: "INTERNAL",
-			});
-		}, delay);
+			}
+		).catch(() => {});
+	}
 
-		/* PERFORMANCE_BUDGET: 5ms */
-		this.#forensicRegistry.wrapOperation("cache", "set", () => {
-			this.#retryTimeouts?.set(item.entity.id, timeout);
-		}, {
-			cache: "syncRetries",
-			key: item.entity.id,
-			requester: this.#currentUser,
-			classification: "INTERNAL",
-		});
+	/**
+	 * Process a single upload (syncUp) item. Encapsulates timing, forensic wrap,
+	 * dispatching and retry logic. Returns an object describing the outcome so
+	 * the caller can aggregate counts and failed items.
+	 * @private
+	 * @param {object} item
+	 * @returns {Promise<{uploadedDelta:number, failedDelta:number, failedItem?:object}>}
+	 */
+	async #processSyncUpItem(item) {
+		try {
+			const itemStart = performance.now();
+			const response = await this.#maybeWrap(
+				"sync",
+				"send_to_server",
+				() => this.#sendToServer(item),
+				{
+					entityId: item.entity.id,
+					operation: item.operation,
+					requester: this.#currentUser,
+					classification: "CONFIDENTIAL",
+				}
+			);
+			const itemDuration = performance.now() - itemStart;
+			this.#recordTimer("syncUp_item_duration", itemDuration);
+
+			if (response.success) {
+				this.#incrementMetric("uploaded_count");
+				this.#dispatchAction("sync.up_success", {
+					entityId: item.entity.id,
+					operation: item.operation,
+				});
+				return { uploadedDelta: 1, failedDelta: 0 };
+			}
+
+			// non-success response
+			this.#incrementMetric("upload_failed_count");
+			this.#dispatchAction("sync.up_failed", {
+				entityId: item.entity.id,
+				operation: item.operation,
+				error: response.error,
+			});
+			return {
+				uploadedDelta: 0,
+				failedDelta: 1,
+				failedItem: {
+					entity: item.entity,
+					operation: item.operation,
+					error: response.error || null,
+				},
+			};
+		} catch (error) {
+			// Retry logic with exponential backoff
+			item.retries = (item.retries || 0) + 1;
+			if (item.retries < this.#config.maxRetries) {
+				this.#scheduleRetry(item);
+				this.#incrementMetric("upload_retry_count");
+				return {
+					uploadedDelta: 0,
+					failedDelta: 1,
+					failedItem: {
+						entity: item.entity,
+						operation: item.operation,
+						error: error?.message || null,
+					},
+				};
+			}
+
+			this.#dispatchAction("sync.up_max_retries", {
+				entityId: item.entity.id,
+				operation: item.operation,
+				retries: item.retries,
+				error: error.message,
+			});
+			return {
+				uploadedDelta: 0,
+				failedDelta: 1,
+				failedItem: {
+					entity: item.entity,
+					operation: item.operation,
+					error: error?.message || null,
+				},
+			};
+		}
+	}
+
+	/**
+	 * Process a single download (syncDown) remote entity. Handles applyRemoteChange,
+	 * timing, conflict handling and dispatching. Returns an object describing the outcome.
+	 * @private
+	 * @param {object} remoteEntity
+	 * @returns {Promise<{downloadedDelta:number, conflictsDelta:number, conflictItem?:object}>}
+	 */
+	async #processSyncDownItem(remoteEntity) {
+		try {
+			const itemStart = performance.now();
+			await this.#applyRemoteChange(
+				remoteEntity.store_name,
+				this.#sanitizeInput(remoteEntity)
+			);
+			const itemDuration = performance.now() - itemStart;
+			this.#recordTimer("syncDown_item_duration", itemDuration);
+			this.#incrementMetric("downloaded_count");
+			this.#dispatchAction("sync.down_success", {
+				entityId: remoteEntity.id,
+				storeName: remoteEntity.store_name,
+			});
+			return { downloadedDelta: 1, conflictsDelta: 0 };
+		} catch (error) {
+			if (
+				error instanceof this.#PolicyError &&
+				error.message.includes("MAC_WRITE_DENIED")
+			) {
+				this.#dispatchAction("sync.down_mac_denied", {
+					entityId: remoteEntity.id,
+					storeName: remoteEntity.store_name,
+					error: error.message,
+				});
+				return { downloadedDelta: 0, conflictsDelta: 0 };
+			}
+
+			if (
+				error instanceof this.#AppError &&
+				error.message.includes("CONFLICT")
+			) {
+				this.#incrementMetric("conflict_count");
+				this.#conflictQueue.push({
+					remoteEntity,
+					localEntity: error.context?.localEntity,
+					timestamp: DateCore.timestamp(),
+				});
+				this.#dispatchAction("sync.down_conflict", {
+					entityId: remoteEntity.id,
+					storeName: remoteEntity.store_name,
+					error: error.message,
+				});
+				return {
+					downloadedDelta: 0,
+					conflictsDelta: 1,
+					conflictItem: remoteEntity,
+				};
+			}
+
+			this.#dispatchAction("sync.down_error", {
+				entityId: remoteEntity.id,
+				storeName: remoteEntity.store_name,
+				error: error.message,
+			});
+			return { downloadedDelta: 0, conflictsDelta: 0 };
+		}
 	}
 
 	/**
@@ -992,14 +1283,14 @@ export class SyncLayer {
 			timestamp: DateCore.timestamp(),
 		});
 
-		this.#metrics?.increment("sync_count");
-		this.#metrics?.set("last_sync", DateCore.timestamp());
+		this.#incrementMetric("sync_count");
+		this.#setMetric("last_sync", DateCore.timestamp());
 
 		if (!success) {
-			this.#metrics?.increment("error_count");
-			this.#metrics?.set("last_sync_error", DateCore.timestamp());
+			this.#incrementMetric("error_count");
+			this.#setMetric("last_sync_error", DateCore.timestamp());
 		}
-		this.#metrics?.updateAverage("average_latency", latency);
+		this.#recordTimer("average_latency", latency);
 	}
 
 	/**
@@ -1010,14 +1301,21 @@ export class SyncLayer {
 	 * @returns {Function} Returns the new debounced function.
 	 */
 	#debounce(func, wait) {
-		let timeout;
-		return function executedFunction(...args) {
-			const later = () => {
+		let timeout = null;
+		return (...args) => {
+			if (timeout) {
 				clearTimeout(timeout);
-				func.apply(this, args);
-			};
-			clearTimeout(timeout);
-			timeout = setTimeout(later, wait);
+			}
+			timeout = setTimeout(() => {
+				timeout = null;
+				try {
+					func(...args);
+				} catch (err) {
+					this.#emitCriticalWarning("Debounced function failed", {
+						error: err?.message,
+					});
+				}
+			}, wait);
 		};
 	}
 }

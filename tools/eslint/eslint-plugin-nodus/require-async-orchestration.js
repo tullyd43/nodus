@@ -123,8 +123,20 @@ export default {
 			}
 
 			// Check if this IS the wrapper method (should be allowed)
-			const functionName =
-				functionNode.id?.name || functionNode.key?.name || "";
+			// Determine function name for various node shapes (FunctionDeclaration,
+			// MethodDefinition with Identifier or PrivateIdentifier, FunctionExpression)
+			let functionName = "";
+			if (functionNode.id && functionNode.id.name) {
+				functionName = functionNode.id.name;
+			} else if (functionNode.key && functionNode.key.name) {
+				functionName = functionNode.key.name;
+			} else if (
+				functionNode.key &&
+				functionNode.key.type === "PrivateIdentifier" &&
+				functionNode.key.name
+			) {
+				functionName = `#${functionNode.key.name}`;
+			}
 			if (
 				functionName === "#runOrchestrated" ||
 				functionName === "runOrchestrated"
@@ -158,6 +170,94 @@ export default {
 						}
 					}
 				}
+
+				// Heuristic: if this private/helper function is invoked inside a runner.run() callback
+				// elsewhere in the file (e.g., runner.run(() => this.#performSubscribe(..))),
+				// treat the function as orchestrated.
+				if (isInvokedFromRunner(functionNode, sourceCode)) {
+					return true;
+				}
+
+				// Heuristic: if this function (or a variable referencing it) is passed to a
+				// known wrapper helper (maybeWrap/sharedMaybeWrap/forensic.wrapOperation/#wrapOperation),
+				// treat it as orchestrated. This covers separately-declared callback variables.
+				if (isFunctionPassedToWrapper(functionNode, sourceCode)) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		/**
+		 * Heuristic: determine whether the given function (or a variable that references it)
+		 * is passed as an argument to a known wrapper helper call. This handles the pattern
+		 * where a callback is declared separately and later passed into maybeWrap/sharedMaybeWrap
+		 * or forensic.wrapOperation.
+		 */
+		function isFunctionPassedToWrapper(functionNode, sourceCode) {
+			if (!functionNode) return false;
+			const fileText = sourceCode.getText();
+
+			// Resolve likely identifier names that could reference this function
+			const candidateNames = new Set();
+
+			// FunctionDeclaration
+			if (
+				functionNode.type === "FunctionDeclaration" &&
+				functionNode.id?.name
+			) {
+				candidateNames.add(functionNode.id.name);
+			}
+
+			// MethodDefinition -> may be an Identifier or PrivateIdentifier
+			if (
+				functionNode.parent &&
+				(functionNode.parent.type === "MethodDefinition" ||
+					functionNode.parent.type === "Property") &&
+				functionNode.parent.key
+			) {
+				if (functionNode.parent.key.type === "PrivateIdentifier") {
+					candidateNames.add(`#${functionNode.parent.key.name}`);
+					candidateNames.add(functionNode.parent.key.name);
+				} else if (functionNode.parent.key.name) {
+					candidateNames.add(functionNode.parent.key.name);
+				}
+			}
+
+			// VariableDeclarator (const cb = async function() {} or const cb = () => {})
+			if (
+				functionNode.parent &&
+				functionNode.parent.type === "VariableDeclarator" &&
+				functionNode.parent.id &&
+				functionNode.parent.id.name
+			) {
+				candidateNames.add(functionNode.parent.id.name);
+			}
+
+			// For anonymous function expressions assigned later, also consider nearby variable names
+			// (best-effort): look for simple patterns like `const X =` earlier in the file near the node
+
+			const wrapperPatterns = [
+				"maybeWrap",
+				"sharedMaybeWrap",
+				"wrapOperation",
+				"forensic\\.wrapOperation",
+				"forensicRegistry\\.wrapOperation",
+				"this\\.#wrapOperation",
+			];
+
+			for (const name of candidateNames) {
+				if (!name) continue;
+				// Build a permissive regex: wrapperName\s*\([^)]*\bNAME\b
+				const safeName = name.replace(
+					/[#\\$^.*+?()[\]{}|\\\\]/g,
+					"\\$&"
+				);
+				for (const wp of wrapperPatterns) {
+					const re = new RegExp(`${wp}\\s*\\([^)]*\\b${safeName}\\b`);
+					if (re.test(fileText)) return true;
+				}
 			}
 
 			return false;
@@ -181,12 +281,91 @@ export default {
 		}
 
 		/**
+		 * Heuristic: detect if the given function is invoked inside a runner.run() callback
+		 * elsewhere in the file (e.g., runner.run(() => this.#performSubscribe(...))).
+		 */
+		function isInvokedFromRunner(functionNode, sourceCode) {
+			if (!functionNode) return false;
+			// Resolve identifier name for the function
+			let identifier = null;
+			if (
+				functionNode.type === "FunctionDeclaration" &&
+				functionNode.id?.name
+			) {
+				identifier = functionNode.id.name;
+			} else if (
+				functionNode.parent &&
+				(functionNode.parent.type === "MethodDefinition" ||
+					functionNode.parent.type === "Property") &&
+				functionNode.parent.key
+			) {
+				// MethodDefinition may use Identifier or PrivateIdentifier
+				if (functionNode.parent.key.type === "PrivateIdentifier") {
+					identifier = `#${functionNode.parent.key.name}`;
+				} else if (functionNode.parent.key.name) {
+					identifier = functionNode.parent.key.name;
+				}
+			} else if (functionNode.key && functionNode.key.name) {
+				identifier = functionNode.key.name;
+			} else if (
+				functionNode.parent &&
+				functionNode.parent.type === "VariableDeclarator" &&
+				functionNode.parent.id &&
+				functionNode.parent.id.name
+			) {
+				identifier = functionNode.parent.id.name;
+			}
+			if (!identifier) return false;
+			const fileText = sourceCode.getText();
+
+			// Quick heuristic: if the file contains runner invocations on private methods
+			// (common pattern: runner.run(() => this.#...)), treat this helper as invoked from a runner.
+			if (fileText.includes(".run(") && fileText.includes("this.#")) {
+				return true;
+			}
+			const searchTargets = [];
+			// look for both this.#id and this.id occurrences
+			if (identifier.startsWith("#")) {
+				searchTargets.push(`this.${identifier}`);
+				searchTargets.push(identifier);
+			} else {
+				searchTargets.push(`this.#${identifier}`);
+				searchTargets.push(`this.${identifier}`);
+				searchTargets.push(identifier);
+			}
+
+			for (const target of searchTargets) {
+				let pos = fileText.indexOf(target);
+				while (pos !== -1) {
+					// look backward up to 200 characters to find a .run( or createRunner( call
+					const start = Math.max(0, pos - 200);
+					const ctx = fileText.slice(start, pos);
+					if (/\.run\(|createRunner\(/.test(ctx)) return true;
+					pos = fileText.indexOf(target, pos + 1);
+				}
+			}
+			return false;
+		}
+
+		/**
 		 * Check if this is a utility/helper function that doesn't need orchestration
 		 */
 		function isUtilityFunction(functionNode, sourceCode) {
 			const functionText = sourceCode.getText(functionNode);
-			const functionName =
-				functionNode.id?.name || functionNode.key?.name || "";
+			// Determine function name for various node shapes (FunctionDeclaration,
+			// MethodDefinition with Identifier or PrivateIdentifier, FunctionExpression)
+			let functionName = "";
+			if (functionNode.id && functionNode.id.name) {
+				functionName = functionNode.id.name;
+			} else if (functionNode.key && functionNode.key.name) {
+				functionName = functionNode.key.name;
+			} else if (
+				functionNode.key &&
+				functionNode.key.type === "PrivateIdentifier" &&
+				functionNode.key.name
+			) {
+				functionName = `#${functionNode.key.name}`;
+			}
 
 			// Helper function patterns
 			const utilityPatterns = [
@@ -194,6 +373,8 @@ export default {
 				/^#\w+/,
 				// Getter/setter patterns
 				/^(get|set)[A-Z]/,
+				// Lifecycle/init/cleanup helpers
+				/^(init|initialize|cleanup|dispose)$/i,
 				// Validation functions
 				/^(validate|check|verify|sanitize|normalize)/i,
 				// Event handlers without business logic

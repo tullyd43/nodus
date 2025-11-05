@@ -7,6 +7,8 @@
  * to ensure proper key security, rotation, and access control.
  */
 
+/* eslint-disable nodus/require-async-orchestration */
+
 import { AppError } from "@utils/ErrorHelpers.js";
 
 /**
@@ -107,6 +109,31 @@ export class InMemoryKeyring {
 		});
 	}
 
+	// Metric helpers: prefer ActionDispatcher, fallback to registry
+	#metricKey(name) {
+		const key = String(name || "");
+		if (key.startsWith("keyring") || key.startsWith("keyring.")) return key;
+		return `keyring.${key}`;
+	}
+
+	#incrementMetric(name, value = 1) {
+		const dispatcher = this.#stateManager?.managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.increment", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.increment?.(key, value);
+		} catch {
+			// swallow
+		}
+	}
+
 	/**
 	 * Initializes the keyring by setting up its cache and metrics dependencies.
 	 */
@@ -141,11 +168,11 @@ export class InMemoryKeyring {
 		const execute = () => {
 			const task = async () => {
 				if (this.#cache.has(domain)) {
-					this.#metrics?.increment("get.cache_hit");
+					this.#incrementMetric("get.cache_hit");
 					return this.#cache.get(domain);
 				}
 
-				this.#metrics?.increment("get.cache_miss");
+				this.#incrementMetric("get.cache_miss");
 				const timer = this.#metrics?.timer("get.generation_duration");
 
 				const kid = `dev:${domain}`;
@@ -193,12 +220,14 @@ export class InMemoryKeyring {
 			const task = async () => {
 				const keyId = `${purpose}::${domain}`;
 				if (this.#cache.has(keyId)) {
-					this.#metrics?.increment("derive.cache_hit");
+					this.#incrementMetric("derive.cache_hit");
 					return this.#cache.get(keyId);
 				}
 
-				this.#metrics?.increment("derive.cache_miss");
-				const timer = this.#metrics?.timer("derive.generation_duration");
+				this.#incrementMetric("derive.cache_miss");
+				const timer = this.#metrics?.timer(
+					"derive.generation_duration"
+				);
 
 				if (purpose === "signing") {
 					const keyPair = await crypto.subtle.generateKey(

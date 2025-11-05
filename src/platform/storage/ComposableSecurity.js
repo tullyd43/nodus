@@ -137,12 +137,74 @@ export class ComposableSecurity {
 				...options,
 			});
 		} catch (error) {
-			this.#metrics?.increment("orchestration_error");
+			this.#incrementMetric("orchestration_error");
 			console.error(
 				`[ComposableSecurity] Orchestration failed for ${operationName}:`,
 				error
 			);
 			throw error;
+		}
+	}
+
+	/**
+	 * Metric helpers: prefer ActionDispatcher then fall back to local registry.
+	 * @private
+	 */
+	#metricKey(name) {
+		return `security.${String(name || "")}`;
+	}
+
+	#incrementMetric(name, value = 1) {
+		try {
+			const dispatcher = this.#stateManager?.managers?.actionDispatcher;
+			const key = this.#metricKey(name);
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.increment", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.increment?.(name, value);
+		} catch {
+			// swallow
+		}
+	}
+
+	#setMetric(name, value) {
+		try {
+			const dispatcher = this.#stateManager?.managers?.actionDispatcher;
+			const key = this.#metricKey(name);
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.set", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.set?.(name, value);
+		} catch {
+			// swallow
+		}
+	}
+
+	#recordTimer(name, value) {
+		try {
+			const dispatcher = this.#stateManager?.managers?.actionDispatcher;
+			const key = this.#metricKey(name);
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.timer", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.timer?.(name, value);
+		} catch {
+			// swallow
 		}
 	}
 
@@ -424,7 +486,7 @@ export class ComposableSecurity {
 		const userContext =
 			this.#stateManager?.managers?.securityManager?.getSubject();
 		if (!userContext) {
-			this.#metrics?.increment("accessDenied");
+			this.#incrementMetric("accessDenied");
 			console.warn(
 				"[ComposableSecurity] Access denied: missing user context",
 				{
@@ -454,7 +516,7 @@ export class ComposableSecurity {
 			return cachedAccess;
 		}
 
-		this.#metrics?.increment("accessChecks");
+		this.#incrementMetric("accessChecks");
 
 		const hasAccess = await this.#performAccessCheck(
 			userContext,
@@ -472,7 +534,7 @@ export class ComposableSecurity {
 		}
 
 		if (!hasAccess) {
-			this.#metrics?.increment("accessDenied");
+			this.#incrementMetric("accessDenied");
 			console.warn("[ComposableSecurity] Access denied", {
 				classification,
 				compartments,

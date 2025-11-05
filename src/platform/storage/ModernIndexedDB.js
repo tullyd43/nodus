@@ -14,8 +14,6 @@
  * @see {@link NODUS_DEVELOPER_MIGRATION_GUIDE.md} - Migration patterns and observability requirements
  */
 
-/* eslint-disable nodus/require-async-orchestration */
-
 import { StorageError } from "@shared/lib/ErrorHelpers.js";
 
 /**
@@ -62,25 +60,7 @@ export class ModernIndexedDB {
 	/** @private @type {import('@platform/state/HybridStateManager.js').default} */
 	#stateManager;
 	/** @private @type {ReturnType<import('@shared/lib/async/AsyncOrchestrationService.js').AsyncOrchestrationService["createRunner"]>} */
-	#runner;
-
-	/**
-	 * Centralized orchestration wrapper for this storage component.
-	 * Ensures all async operations run through the AsyncOrchestrator runner.
-	 * @private
-	 * @param {Function} operation - The async operation to run (synchronous function that returns a Promise)
-	 * @param {object} [options] - Runner options (labelSuffix, eventType, meta, etc.)
-	 * @returns {Promise<any>}
-	 */
-	#runOrchestrated(operation, options = {}) {
-		// Runner was created in constructor and assigned to #runner
-		if (!this.#runner || typeof this.#runner.run !== "function") {
-			// Fall back to direct execution if orchestrator is not available
-			return Promise.resolve().then(() => operation());
-		}
-
-		return this.#runner.run(operation, options);
-	}
+	#runOrchestrated;
 
 	/**
 	 * Creates an instance of ModernIndexedDB with enterprise observability integration.
@@ -109,7 +89,7 @@ export class ModernIndexedDB {
 			);
 		}
 
-		this.#runner = orchestrator.createRunner({
+		this.#runOrchestrated = orchestrator.createRunner({
 			labelPrefix: "storage.indexeddb",
 			actorId: `indexeddb.${this.#dbName}`,
 			eventType: "INDEXEDDB_OPERATION",
@@ -328,21 +308,22 @@ export class ModernIndexedDB {
 	 * @private
 	 * @returns {Promise<void>}
 	 */
-	async #executeInit() {
+	#executeInit() {
 		const request = indexedDB.open(this.#dbName, this.#version);
 
 		request.onupgradeneeded = (event) => {
 			this.#handleUpgrade(event, request);
 		};
 
-		this.#db = await this.#promisifyRequest(request);
-		this.#isReady = true;
-
-		// Emit successful initialization through state manager
-		this.#stateManager.emit?.("storage.database.initialized", {
-			dbName: this.#dbName,
-			version: this.#version,
-			timestamp: Date.now(),
+		return this.#promisifyRequest(request).then((db) => {
+			this.#db = db;
+			this.#isReady = true;
+			// Emit successful initialization through state manager
+			this.#stateManager.emit?.("storage.database.initialized", {
+				dbName: this.#dbName,
+				version: this.#version,
+				timestamp: Date.now(),
+			});
 		});
 	}
 
@@ -388,22 +369,20 @@ export class ModernIndexedDB {
 	 * @param {function(IDBObjectStore|IDBObjectStore[]): Promise<any>} actionFn - The action function
 	 * @returns {Promise<any>}
 	 */
-	async #createTransaction(storeNames, mode, actionFn) {
+	#createTransaction(storeNames, mode, actionFn) {
 		return new Promise((resolve, reject) => {
 			const transaction = this.#db.transaction(storeNames, mode, {
 				durability: "strict",
 			});
 
 			transaction.oncomplete = () => {};
-			transaction.onerror = (event) => {
-				reject(event.target.error);
-			};
+			transaction.onerror = (event) => reject(event.target.error);
 
 			const store = Array.isArray(storeNames)
 				? storeNames.map((name) => transaction.objectStore(name))
 				: transaction.objectStore(storeNames);
 
-			actionFn(store).then(resolve).catch(reject);
+			Promise.resolve(actionFn(store)).then(resolve).catch(reject);
 		});
 	}
 
@@ -412,7 +391,7 @@ export class ModernIndexedDB {
 	 *
 	 * @private
 	 */
-	async #executeGet(storeName, key) {
+	#executeGet(storeName, key) {
 		return this.#createTransaction(storeName, "readonly", (store) => {
 			const request = store.get(key);
 			return this.#promisifyRequest(request);
@@ -424,7 +403,7 @@ export class ModernIndexedDB {
 	 *
 	 * @private
 	 */
-	async #executeGetAll(storeName) {
+	#executeGetAll(storeName) {
 		return this.#createTransaction(storeName, "readonly", (store) => {
 			const request = store.getAll();
 			return this.#promisifyRequest(request);
@@ -436,25 +415,20 @@ export class ModernIndexedDB {
 	 *
 	 * @private
 	 */
-	async #executePut(storeName, value) {
-		const result = await this.#createTransaction(
-			storeName,
-			"readwrite",
-			(store) => {
-				const request = store.put(value);
-				return this.#promisifyRequest(request);
-			}
-		);
-
-		// Emit state mutation through ActionDispatcher for audit trail
-		this.#stateManager.emit?.("storage.entity.updated", {
-			storeName,
-			entityId: value?.id,
-			operation: "put",
-			timestamp: Date.now(),
+	#executePut(storeName, value) {
+		return this.#createTransaction(storeName, "readwrite", (store) => {
+			const request = store.put(value);
+			return this.#promisifyRequest(request);
+		}).then((result) => {
+			// Emit state mutation through ActionDispatcher for audit trail
+			this.#stateManager.emit?.("storage.entity.updated", {
+				storeName,
+				entityId: value?.id,
+				operation: "put",
+				timestamp: Date.now(),
+			});
+			return result;
 		});
-
-		return result;
 	}
 
 	/**
@@ -462,8 +436,8 @@ export class ModernIndexedDB {
 	 *
 	 * @private
 	 */
-	async #executePutBulk(storeName, values) {
-		await this.#createTransaction(storeName, "readwrite", async (store) => {
+	#executePutBulk(storeName, values) {
+		return this.#createTransaction(storeName, "readwrite", (store) => {
 			values.forEach((value) => store.put(value));
 			return Promise.resolve();
 		});
@@ -482,25 +456,20 @@ export class ModernIndexedDB {
 	 *
 	 * @private
 	 */
-	async #executeDelete(storeName, key) {
-		const result = await this.#createTransaction(
-			storeName,
-			"readwrite",
-			(store) => {
-				const request = store.delete(key);
-				return this.#promisifyRequest(request);
-			}
-		);
-
-		// Emit deletion through ActionDispatcher for security audit
-		this.#stateManager.emit?.("storage.entity.deleted", {
-			storeName,
-			entityId: key,
-			operation: "delete",
-			timestamp: Date.now(),
+	#executeDelete(storeName, key) {
+		return this.#createTransaction(storeName, "readwrite", (store) => {
+			const request = store.delete(key);
+			return this.#promisifyRequest(request);
+		}).then((result) => {
+			// Emit deletion through ActionDispatcher for security audit
+			this.#stateManager.emit?.("storage.entity.deleted", {
+				storeName,
+				entityId: key,
+				operation: "delete",
+				timestamp: Date.now(),
+			});
+			return result;
 		});
-
-		return result;
 	}
 
 	/**
@@ -508,24 +477,19 @@ export class ModernIndexedDB {
 	 *
 	 * @private
 	 */
-	async #executeClear(storeName) {
-		const result = await this.#createTransaction(
-			storeName,
-			"readwrite",
-			(store) => {
-				const request = store.clear();
-				return this.#promisifyRequest(request);
-			}
-		);
-
-		// Emit store clear for security audit trail
-		this.#stateManager.emit?.("storage.store.cleared", {
-			storeName,
-			operation: "clear",
-			timestamp: Date.now(),
+	#executeClear(storeName) {
+		return this.#createTransaction(storeName, "readwrite", (store) => {
+			const request = store.clear();
+			return this.#promisifyRequest(request);
+		}).then((result) => {
+			// Emit store clear for security audit trail
+			this.#stateManager.emit?.("storage.store.cleared", {
+				storeName,
+				operation: "clear",
+				timestamp: Date.now(),
+			});
+			return result;
 		});
-
-		return result;
 	}
 
 	/**
@@ -533,7 +497,7 @@ export class ModernIndexedDB {
 	 *
 	 * @private
 	 */
-	async #executeQueryByIndex(storeName, indexName, query) {
+	#executeQueryByIndex(storeName, indexName, query) {
 		return this.#createTransaction(storeName, "readonly", (store) => {
 			const index = store.index(indexName);
 			const request = index.getAll(query);

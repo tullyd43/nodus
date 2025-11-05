@@ -1,5 +1,3 @@
-import { ForensicLogger } from "../../platform/security/ForensicLogger.js";
-
 /**
  * @file adapter.js
  * @description Provides a simple server-proxy transport adapter for CDS.
@@ -24,7 +22,12 @@ import { ForensicLogger } from "../../platform/security/ForensicLogger.js";
  *
  * @param {{proxyEndpoint:string}} opts
  */
-export function createProxyTransport(opts, nativeFetch, forensicLogger) {
+export function createProxyTransport(
+	opts,
+	nativeFetch,
+	forensicLogger,
+	actionDispatcher
+) {
 	const proxyEndpoint = opts && String(opts.proxyEndpoint || "");
 	if (!proxyEndpoint) throw new Error("proxyEndpoint is required");
 	if (typeof nativeFetch !== "function") {
@@ -39,20 +42,15 @@ export function createProxyTransport(opts, nativeFetch, forensicLogger) {
 	// Also emit a static forensic envelope so static analysis rules and audit
 	// collectors see the creation event in library code paths. This is
 	// intentionally non-blocking.
-	ForensicLogger.createEnvelope("PROXY_TRANSPORT_CREATED", {
-		proxyEndpoint,
-	}).catch(() => {
-		/* no-op: fire-and-forget */
-	});
-	forensicLogger
-		?.logAuditEvent("PROXY_TRANSPORT_CREATED", {
+	actionDispatcher
+		?.dispatch("security.proxy_transport_created", {
 			proxyEndpoint,
 		})
 		.catch(() => {
 			/* no-op: fire-and-forget */
 		});
 
-	return async function proxyTransport(targetUrl, init = {}) {
+	return function proxyTransport(targetUrl, init = {}) {
 		// Build the proxy payload without mutating init.
 		const payload = JSON.stringify({ url: String(targetUrl), init });
 
@@ -63,8 +61,7 @@ export function createProxyTransport(opts, nativeFetch, forensicLogger) {
 			credentials: "same-origin",
 		};
 
-		const resp = await nativeFetch(proxyEndpoint, requestInit);
-		return resp;
+		return nativeFetch(proxyEndpoint, requestInit);
 	};
 }
 

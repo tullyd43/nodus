@@ -166,7 +166,7 @@ export class CacheManager {
 				}
 			)
 			.catch((error) => {
-				this.#metrics?.increment("cache_orchestration_error");
+				this.#incrementMetric("cache_orchestration_error");
 				this.#emitCriticalWarning("Cache orchestration failed", {
 					operation: operationName,
 					error: error.message,
@@ -283,6 +283,89 @@ export class CacheManager {
 		}
 	}
 
+	/**
+	 * Normalizes metric key names for dispatcher/registry usage.
+	 * If the caller already provided a cache-prefixed key (e.g. starting with "cache"),
+	 * it is preserved to avoid doubling prefixes.
+	 * @private
+	 */
+	#metricKey(name) {
+		const key = String(name || "");
+		if (key.startsWith("cache") || key.startsWith("cache.")) return key;
+		return `cache.${key}`;
+	}
+
+	/**
+	 * Increment a metric via ActionDispatcher when available, falling back to the
+	 * local metrics registry only if dispatcher is unavailable.
+	 * @private
+	 */
+	#incrementMetric(name, value = 1) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				/* PERFORMANCE_BUDGET: 1ms */
+				dispatcher.dispatch("metrics.increment", { key, value });
+				return;
+			}
+		} catch {
+			// swallow dispatcher errors - non-fatal
+		}
+
+		// Fallback: increment directly on the registry if available.
+		try {
+			this.#metrics?.increment?.(key, value);
+		} catch {
+			// swallow fallback errors - non-fatal
+		}
+	}
+
+	/**
+	 * Set or update a metric value via ActionDispatcher when available,
+	 * falling back to the local registry.
+	 * @private
+	 */
+	#setMetric(name, value) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.set", { key, value });
+				return;
+			}
+		} catch {
+			// swallow dispatcher errors
+		}
+		try {
+			this.#metrics?.set?.(key, value);
+		} catch {
+			// swallow fallback errors
+		}
+	}
+
+	/**
+	 * Record a timing metric.
+	 * @private
+	 */
+	#recordTimer(name, value) {
+		const dispatcher = this.#managers?.actionDispatcher;
+		const key = this.#metricKey(name);
+		try {
+			if (dispatcher?.dispatch) {
+				dispatcher.dispatch("metrics.timer", { key, value });
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.timer?.(key, value);
+		} catch {
+			// swallow
+		}
+	}
+
 	// ═══════════════════════════════════════════════════════════════════════════
 	// PUBLIC API
 	// ═══════════════════════════════════════════════════════════════════════════
@@ -340,7 +423,7 @@ export class CacheManager {
 		);
 
 		this.#caches.set(sanitizedName, newCache);
-		this.#metrics?.increment("cache.created");
+		this.#incrementMetric("cache.created");
 
 		this.#dispatchAction("cache.created", {
 			cacheName: sanitizedName,
@@ -396,7 +479,7 @@ export class CacheManager {
 				}
 			}
 
-			this.#metrics?.increment("cache.cleared.all");
+			this.#incrementMetric("cache.cleared.all");
 
 			this.#dispatchAction("cache.cleared_all", {
 				totalCaches: this.#caches.size,
@@ -447,7 +530,7 @@ export class CacheManager {
 				}
 			}
 
-			this.#metrics?.increment("cache.invalidations");
+			this.#incrementMetric("cache.invalidations");
 
 			this.#dispatchAction("cache.invalidated", {
 				pattern: String(sanitizedPattern),
@@ -484,7 +567,7 @@ export class CacheManager {
 			}
 
 			this.#caches.clear();
-			this.#metrics?.increment("cache.destroyed.all");
+			this.#incrementMetric("cache.destroyed.all");
 
 			this.#dispatchAction("cache.destroyed_all", {
 				destroyedCaches,
@@ -538,7 +621,7 @@ export class CacheManager {
 				cache.set(this.#sanitizeInput(key), this.#sanitizeInput(value));
 			}
 
-			this.#metrics?.increment("cache.set");
+			this.#incrementMetric("cache.set");
 
 			this.#dispatchAction("cache.set_applied", {
 				cacheName,
@@ -581,7 +664,7 @@ export class CacheManager {
 				cache.delete(this.#sanitizeInput(key));
 			}
 
-			this.#metrics?.increment("cache.delete");
+			this.#incrementMetric("cache.delete");
 
 			this.#dispatchAction("cache.delete_applied", {
 				cacheName,

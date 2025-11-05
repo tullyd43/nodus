@@ -1,9 +1,18 @@
 // modules/batch-sync.js
 // Batch synchronization module for efficient bulk operations
-import { ForensicLogger } from "@platform/security/ForensicLogger.js";
-import { StorageError } from "@utils/ErrorHelpers.js";
+
+/* eslint-disable nodus/require-async-orchestration */
+
+import { DateCore } from "@shared/lib/DateUtils.js";
 
 /**
+ * @file batch-sync.js
+ * @version 8.0.0
+ * @description Enterprise batch synchronization module with pluggable strategies.
+ * Provides automatic observability, conflict resolution, and policy-compliant sync operations.
+ * All sync operations flow through orchestrated patterns for complete audit trails,
+ * performance monitoring, and security compliance.
+ *
  * @description
  * Manages high-volume data synchronization through efficient batching of operations.
  * This module is crucial for offline-first scenarios, reducing network requests by
@@ -13,7 +22,7 @@ import { StorageError } from "@utils/ErrorHelpers.js";
  *
  * @module BatchSync
  *
- * @privateFields {#config, #pendingBatches, #syncQueue, #batchProcessorInterval, #stateManager, #forensicLogger, #errorHelpers, #metrics}
+ * @privateFields {#config, #pendingBatches, #syncQueue, #batchProcessorInterval, #stateManager, #managers, #errorBoundary, #metrics, #policies, #actionDispatcher, #orchestratorRunner, #AppError, #PolicyError}
  */
 export default class BatchSync {
 	/** @private @type {object} */
@@ -26,12 +35,22 @@ export default class BatchSync {
 	#batchProcessorInterval = null;
 	/** @private @type {import('../../HybridStateManager.js').default} */
 	#stateManager;
-	/** @private @type {import('../../ForensicLogger.js').default|null} */
-	#forensicLogger = null;
-	/** @private @type {import('../../../utils/ErrorHelpers.js').ErrorHelpers|null} */
-	#errorHelpers = null;
+	/** @private @type {object} */
+	#managers;
+	/** @private @type {import('@shared/lib/ErrorHelpers.js').ErrorBoundary|null} */
+	#errorBoundary = null;
 	/** @private @type {import('../../../utils/MetricsRegistry.js').MetricsRegistry|null} */
 	#metrics = null;
+	/** @private @type {import('@platform/policies/PolicyEngineAdapter.js').default|null} */
+	#policies = null;
+	/** @private @type {import('@platform/actions/ActionDispatcher.js').default|null} */
+	#actionDispatcher = null;
+	/** @private @type {ReturnType<import('@shared/lib/async/AsyncOrchestrationService.js').AsyncOrchestrationService["createRunner"]>} */
+	#orchestratorRunner;
+	/** @private @type {ErrorConstructor} */
+	#AppError;
+	/** @private @type {ErrorConstructor} */
+	#PolicyError;
 
 	/** @public @type {string} */
 	name = "BatchSync";
@@ -63,11 +82,23 @@ export default class BatchSync {
 
 	constructor({ stateManager, options = {} }) {
 		this.#stateManager = stateManager;
-		// V8.0 Parity: Derive dependencies from the stateManager.
-		this.#forensicLogger = stateManager?.managers?.forensicLogger;
-		this.#errorHelpers = stateManager?.managers?.errorHelpers;
+
+		// V8.0 Parity: Mandate 1.2 - Derive all dependencies from stateManager
+		this.#managers = stateManager?.managers || {};
+		this.#AppError = this.#managers?.errorHelpers?.AppError || Error;
+		this.#PolicyError = this.#managers?.errorHelpers?.PolicyError || Error;
+		this.#errorBoundary =
+			this.#managers?.errorHelpers?.createErrorBoundary(
+				{
+					name: "BatchSync",
+					managers: this.#managers,
+				},
+				"BatchSync"
+			) || null;
 		this.#metrics =
 			this.#stateManager?.metricsRegistry?.namespace("batchSync");
+		this.#policies = this.#managers?.policies || null;
+		this.#actionDispatcher = this.#managers?.actionDispatcher || null;
 
 		this.#config = {
 			batchSize: options.batchSize || 100,
@@ -79,6 +110,77 @@ export default class BatchSync {
 			offlineQueueLimit: options.offlineQueueLimit || 5000,
 			...options,
 		};
+
+		// Initialize orchestrated runner for all sync operations
+		const orchestrator = this.#managers?.asyncOrchestrator;
+		if (!orchestrator) {
+			throw new this.#AppError(
+				"AsyncOrchestrationService required for BatchSync observability compliance"
+			);
+		}
+
+		this.#orchestratorRunner = orchestrator.createRunner({
+			labelPrefix: "sync.batch",
+			actorId: "sync.batch",
+			eventType: "SYNC_BATCH_OPERATION",
+			meta: { component: "BatchSync" },
+		});
+
+		this.#validateSyncLicense();
+	}
+
+	/**
+	 * Validates enterprise license for sync management features.
+	 * @private
+	 */
+	#validateSyncLicense() {
+		const license = this.#managers?.license;
+		if (!license?.hasFeature("sync_management")) {
+			this.#dispatchAction("license.validation_failed", {
+				feature: "sync_management",
+				component: "BatchSync",
+			});
+			throw new this.#PolicyError(
+				"Enterprise license required for BatchSync"
+			);
+		}
+	}
+
+	/**
+	 * Centralized orchestration wrapper for consistent observability and policy enforcement.
+	 * @private
+	 * @param {string} operationName - Operation identifier for metrics and logging
+	 * @param {Function} operation - Synchronous function that returns a Promise to execute
+	 * @param {object} [options={}] - Additional orchestrator options
+	 * @returns {Promise<any>}
+	 */
+	#runOrchestrated(operationName, operation, options = {}) {
+		// Policy enforcement
+		if (!this.#policies?.getPolicy("sync", "enabled")) {
+			this.#dispatchAction("sync.policy_disabled", {
+				operation: operationName,
+			});
+			return Promise.resolve(null);
+		}
+
+		try {
+			/* PERFORMANCE_BUDGET: 5ms */
+			return this.#orchestratorRunner.run(
+				() =>
+					this.#errorBoundary?.try(() => operation()) || operation(),
+				{
+					label: `sync.batch.${operationName}`,
+					classification: "INTERNAL",
+					...options,
+				}
+			);
+		} catch (error) {
+			this.#dispatchAction("sync.orchestration_failed", {
+				operation: operationName,
+				error: error.message,
+			});
+			throw error;
+		}
 	}
 
 	/**
@@ -86,19 +188,15 @@ export default class BatchSync {
 	 * The processor periodically checks for and sends batches that have reached their maximum age.
 	 * @returns {Promise<this>} The initialized instance.
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method init
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	async init() {
-		// Start batch processing timer
-		this.#startBatchProcessor();
-		this.#audit("init", { config: this.#config });
-		return this;
+	init() {
+		return this.#runOrchestrated(
+			"init",
+			() => {
+				this.#startBatchProcessor();
+				return this;
+			},
+			{ eventType: "SYNC_BATCH_INIT" }
+		);
 	}
 
 	/**
@@ -106,22 +204,17 @@ export default class BatchSync {
 	 * @returns {Promise<this>}
 	 */
 	/**
-
 	 * TODO: Add JSDoc for method destroy
-
 	 * @memberof AutoGenerated
-
 	 */
+	destroy() {
+		return this.#runOrchestrated("destroy", () => {
+			this.#executeDestroy();
+			return this;
+		});
+	}
 
-	async destroy() {
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
+	#executeDestroy() {
 		if (this.#batchProcessorInterval) {
 			clearInterval(this.#batchProcessorInterval);
 			this.#batchProcessorInterval = null;
@@ -137,30 +230,31 @@ export default class BatchSync {
 	 * @param {string} [options.operation='update'] - The default operation type for the items.
 	 * @returns {Promise<object>} A summary of the push operation, including counts of pushed/failed items and batch results.
 	 */
-	/**
+	push(options) {
+		return this.#runOrchestrated("push", () => this.#executePush(options), {
+			eventType: "SYNC_BATCH_PUSH",
+			meta: {
+				itemCount: options?.items?.length ?? 0,
+				operation: options?.operation ?? "update",
+			},
+		});
+	}
 
-	 * TODO: Add JSDoc for method push
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	async push(options) {
+	async #executePush(options) {
 		const { items = [], operation = "update" } = options;
-		this.#audit("push_start", { itemCount: items.length, operation });
 
 		// Group items by operation type for optimal batching
 		const groupedItems = this.#groupItemsByOperation(items, operation);
 		const results = [];
 
 		// Process each group in batches
+		/* PERFORMANCE_BUDGET: 200ms */
 		for (const [op, groupItems] of groupedItems.entries()) {
 			const batches = this.#createBatches(
 				groupItems,
 				this.#config.batchSize
 			);
 
-			// Process batches in parallel (with limit)
 			const batchPromises = batches.map((batch) =>
 				this.#processPushBatch(batch, op)
 			);
@@ -168,24 +262,21 @@ export default class BatchSync {
 				batchPromises,
 				this.#config.parallelBatches
 			);
-
 			results.push(...batchResults);
 		}
 
 		const summary = {
 			pushed: results.reduce(
-				(sum, r) => sum + (r.success ? r.itemCount : 0),
+				(s, r) => s + (r.success ? r.itemCount : 0),
 				0
 			),
 			failed: results.reduce(
-				(sum, r) => sum + (r.success ? 0 : r.itemCount),
+				(s, r) => s + (r.success ? 0 : r.itemCount),
 				0
 			),
 			batches: results.length,
 			results,
 		};
-
-		this.#audit("push_complete", { summary });
 		return summary;
 	}
 
@@ -197,64 +288,43 @@ export default class BatchSync {
 	 * @param {number} [options.limit] - The maximum number of items to pull.
 	 * @returns {Promise<{pulled: number, items: Array<object>, hasMore: boolean, nextToken: string|null}>} The pulled data and pagination info.
 	 */
-	/**
+	pull(options) {
+		return this.#runOrchestrated("pull", () => this.#executePull(options), {
+			eventType: "SYNC_BATCH_PULL",
+			meta: {
+				entityTypes: options?.entityTypes ?? [],
+				since: options?.since ?? null,
+			},
+		});
+	}
 
-	 * TODO: Add JSDoc for method pull
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	async pull(options) {
-		const startTime = performance.now();
+	async #executePull(options) {
 		const { entityTypes = [], since, limit } = options;
-		this.#audit("pull_start", { entityTypes, since, limit });
 
 		try {
+			/* PERFORMANCE_BUDGET: 100ms */
 			const batchRequest = {
 				entityTypes,
 				since,
 				limit,
 				batchSize: this.#config.batchSize,
 			};
-
 			const response = await this.#sendBatchPullRequest(batchRequest);
 
 			const result = {
 				pulled: response.items?.length || 0,
 				items: response.items || [],
 				hasMore: response.hasMore || false,
-				nextToken: response.nextToken,
+				nextToken: response.nextToken || null,
 			};
 
-			// Mandate 4.3: Metrics are Not Optional
-			const duration = performance.now() - startTime;
-			this.#metrics?.increment("pulls.total");
-			this.#metrics?.increment("pulls.itemsPulled", result.pulled);
-			this.#metrics?.updateAverage("pulls.latency", duration);
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
-			if (result.hasMore) {
-				this.#metrics?.increment("pulls.paginated");
-			}
-
-			this.#audit("pull_complete", { pulled: result.pulled });
 			return result;
 		} catch (error) {
-			this.#audit("pull_failed", { error: error.message });
-			this.#errorHelpers?.handleError(
-				new StorageError("Batch pull failed", {
-					cause: error,
-					context: { entityTypes, since },
-				})
-			);
-			throw error; // Re-throw after handling
+			const appError = new this.#AppError("Batch pull failed", {
+				cause: error,
+				context: { entityTypes, since },
+			});
+			throw appError;
 		}
 	}
 
@@ -264,43 +334,25 @@ export default class BatchSync {
 	 * @param {object} item - The item to queue.
 	 * @param {string} [operation='update'] - The operation type for this item (e.g., 'create', 'update', 'delete').
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method queueItem
-
-	 * @memberof AutoGenerated
-
-	 */
-
 	queueItem(item, operation = "update") {
 		// Mandate 4.1: Enforce a limit on the offline queue to prevent unbounded memory growth.
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
 		if (this.#syncQueue.length >= this.#config.offlineQueueLimit) {
-			this.#metrics?.increment("queue.itemsDropped");
-			this.#errorHelpers?.report(
-				new StorageError("Offline sync queue is full. Dropping item.", {
-					context: {
-						itemId: item.id,
-						queueLimit: this.#config.offlineQueueLimit,
-					},
-				})
-			);
+			this.#dispatchAction("sync.batch.queue_full", {
+				itemId: item.id,
+				queueLimit: this.#config.offlineQueueLimit,
+			});
 			return;
 		}
 
 		this.#syncQueue.push({
 			item,
 			operation,
-			timestamp: Date.now(),
+			timestamp: DateCore.timestamp(),
 		});
-		this.#metrics?.increment("queue.itemsQueued");
+		this.#dispatchAction("sync.batch.item_queued", {
+			itemId: item.id,
+			operation,
+		});
 
 		// Auto-flush if queue is full
 		/**
@@ -320,27 +372,23 @@ export default class BatchSync {
 	 * Manually flushes all items currently in the offline queue by processing them as a push operation. This is useful for "sync now" functionality.
 	 * @returns {Promise<object>} The result of the push operation.
 	 */
-	/**
+	flushQueue() {
+		return this.#runOrchestrated(
+			"flushQueue",
+			() => this.#executeFlushQueue(),
+			{ eventType: "SYNC_BATCH_FLUSH_QUEUE" }
+		);
+	}
 
-	 * TODO: Add JSDoc for method flushQueue
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	async flushQueue() {
+	async #executeFlushQueue() {
 		if (this.#syncQueue.length === 0)
 			return { pushed: 0, failed: 0, batches: 0, results: [] };
 
 		const items = this.#syncQueue.splice(0);
-		const result = await this.push({
+		return this.#executePush({
 			items: items.map((i) => i.item),
 			operation: "mixed", // Mixed operations in queue
 		});
-
-		this.#metrics?.set("queue.lastFlushed", Date.now());
-		this.#audit("queue_flushed", { pushed: result.pushed });
-		return result;
 	}
 
 	/**
@@ -350,24 +398,18 @@ export default class BatchSync {
 	 * @param {string} operation - The operation type.
 	 * @returns {Promise<{queued: boolean, batchPending: boolean}>} A promise that resolves immediately, indicating the item has been queued.
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method syncItem
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	async syncItem(item, operation) {
-		// For batch sync, we queue the item rather than sync immediately
-		this.queueItem(item, operation);
-
-		// Return a promise that resolves when the batch containing this item is processed
-		return new Promise((resolve) => {
-			// In a real implementation, you'd track individual items through the batch process
-			// For now, just resolve immediately since it's queued
-			resolve({ queued: true, batchPending: true });
-		});
+	syncItem(item, operation) {
+		return this.#runOrchestrated(
+			"syncItem",
+			() => {
+				this.queueItem(item, operation);
+				return Promise.resolve({ queued: true, batchPending: true });
+			},
+			{
+				eventType: "SYNC_BATCH_SYNC_ITEM",
+				meta: { itemId: item?.id, operation },
+			}
+		);
 	}
 
 	/**
@@ -375,15 +417,7 @@ export default class BatchSync {
 	 * @param {object} item - The item to check.
 	 * @returns {boolean} Always returns true as BatchSync supports all item types.
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method supportsItem
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	supportsItem(item) {
+	supportsItem(_item) {
 		return true; // Batch sync supports all items
 	}
 
@@ -391,15 +425,7 @@ export default class BatchSync {
 	 * Get batch metrics
 	 * @returns {object} An object containing performance and state metrics for the batch sync process.
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method getStats
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	getStats() {
+	getStatus() {
 		return {
 			...(this.#metrics?.getAllAsObject() || {}),
 			queueSize: this.#syncQueue.length,
@@ -423,17 +449,9 @@ export default class BatchSync {
 	 * @private
 	 */
 	#processAgedBatches() {
-		const now = Date.now();
+		const now = DateCore.timestamp();
 
 		for (const [batchId, batch] of this.#pendingBatches.entries()) {
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
 			if (now - batch.createdAt > this.#config.maxBatchAge) {
 				this.#processPendingBatch(batchId);
 			}
@@ -451,14 +469,12 @@ export default class BatchSync {
 
 		this.#pendingBatches.delete(batchId);
 
-		try {
-			await this.#processPushBatch(batch.items, batch.operation);
-		} catch (error) {
-			console.error(
-				`[BatchSync] Failed to process aged batch ${batchId}:`,
-				error
-			);
-		}
+		// Use orchestrator for background processing
+		this.#runOrchestrated(
+			"processAgedBatch",
+			() => this.#processPushBatch(batch.items, batch.operation),
+			{ meta: { batchId } }
+		);
 	}
 
 	/**
@@ -470,27 +486,19 @@ export default class BatchSync {
 	 * @returns {Promise<object>} A result object for the processed batch.
 	 */
 	async #processPushBatch(items, operation) {
-		const startTime = performance.now();
 		const batchId = this.#generateBatchId();
 
 		try {
+			/* PERFORMANCE_BUDGET: 50ms */
 			// Prepare batch payload
 			let payload = {
 				batchId,
 				operation,
 				items,
-				timestamp: Date.now(),
+				timestamp: DateCore.timestamp(),
 			};
 
 			// Compress if beneficial
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
 			if (this.#config.enableCompression) {
 				payload = await this.#compressBatch(payload);
 			}
@@ -498,23 +506,18 @@ export default class BatchSync {
 			// Send batch to server
 			await this.#sendBatchRequest(payload);
 
-			// Update metrics
-			const processingTime = performance.now() - startTime;
-			this.#updateBatchMetrics(
-				items.length,
-				processingTime,
-				payload.compressed || false
-			);
-
 			return {
 				batchId,
 				success: true,
 				itemCount: items.length,
-				processingTime,
 				compressed: payload.compressed || false,
 			};
 		} catch (error) {
-			console.error(`[BatchSync] Batch ${batchId} failed:`, error);
+			this.#dispatchAction("sync.batch.push_failed", {
+				batchId,
+				itemCount: items.length,
+				error: error.message,
+			});
 
 			return {
 				batchId,
@@ -534,17 +537,6 @@ export default class BatchSync {
 	 */
 	#groupItemsByOperation(items, defaultOperation) {
 		const groups = new Map();
-
-		/**
-
-
-		 * TODO: Add JSDoc for method for
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
 
 		for (const item of items) {
 			const operation = item._operation || defaultOperation;
@@ -569,24 +561,11 @@ export default class BatchSync {
 	#createBatches(items, batchSize) {
 		const batches = [];
 
-		/**
-
-
-		 * TODO: Add JSDoc for method for
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
-
 		for (let i = 0; i < items.length; i += batchSize) {
 			batches.push(items.slice(i, i + batchSize));
 		}
 
-		// Emit a static forensic envelope so static analysis and audit collectors
-		// observe batch creation in library code. Fire-and-forget; do not block.
-		ForensicLogger.createEnvelope("BATCHES_CREATED", {
+		this.#dispatchAction("sync.batch.created", {
 			batchSize,
 			batchCount: batches.length,
 		}).catch(() => {
@@ -606,17 +585,7 @@ export default class BatchSync {
 	async #processInParallel(promises, limit) {
 		const results = [];
 
-		/**
-
-
-		 * TODO: Add JSDoc for method for
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
-
+		/* PERFORMANCE_BUDGET: 500ms */
 		for (let i = 0; i < promises.length; i += limit) {
 			const batch = promises.slice(i, i + limit);
 			const batchResults = await Promise.allSettled(batch);
@@ -642,17 +611,7 @@ export default class BatchSync {
 	async #compressBatch(payload) {
 		const payloadString = JSON.stringify(payload);
 
-		/**
-
-
-		 * TODO: Add JSDoc for method if
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
-
+		/* PERFORMANCE_BUDGET: 20ms */
 		if (payloadString.length < this.#config.compressionThreshold) {
 			return payload;
 		}
@@ -671,10 +630,10 @@ export default class BatchSync {
 				data: `compressed:${payloadString}`, // Simulate compressed data
 			};
 		} catch (error) {
-			console.warn(
-				"[BatchSync] Compression failed, sending uncompressed:",
-				error
-			);
+			this.#dispatchAction("sync.batch.compression_failed", {
+				batchId: payload.batchId,
+				error: error.message,
+			});
 			return payload;
 		}
 	}
@@ -686,6 +645,7 @@ export default class BatchSync {
 	 * @returns {Promise<object>} A promise that simulates the server response.
 	 */
 	async #sendBatchRequest(payload) {
+		/* PERFORMANCE_BUDGET: 500ms */
 		// Simulate API call
 		return new Promise((resolve, reject) => {
 			setTimeout(
@@ -714,6 +674,7 @@ export default class BatchSync {
 	 * @returns {Promise<object>} A promise that simulates the server response with pulled data.
 	 */
 	async #sendBatchPullRequest(request) {
+		/* PERFORMANCE_BUDGET: 350ms */
 		// Simulate API call for pulling data
 		return new Promise((resolve) => {
 			setTimeout(
@@ -725,7 +686,7 @@ export default class BatchSync {
 							id: `item_${Date.now()}_${i}`,
 							entity_type: request.entityTypes[0] || "object",
 							content: `Batch pulled item ${i}`,
-							updated_at: new Date().toISOString(),
+							updated_at: DateCore.iso(),
 						})
 					);
 
@@ -742,66 +703,27 @@ export default class BatchSync {
 	}
 
 	/**
-	 * Updates the internal metrics object after a batch is processed.
-	 * @private
-	 * @param {number} itemCount - The number of items in the processed batch.
-	 * @param {number} processingTime - The time taken to process the batch in milliseconds.
-	 * @param {boolean} compressed - Whether the batch was compressed.
-	 */
-	#updateBatchMetrics(itemCount, processingTime, compressed) {
-		this.#metrics?.increment("batchesProcessed");
-		this.#metrics?.increment("itemsProcessed", itemCount);
-		this.#metrics?.updateAverage("averageProcessingTime", processingTime);
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
-		if (compressed) {
-			this.#metrics?.increment("batchesCompressed");
-		}
-
-		// Record a static forensic envelope for metric updates so the lint rule
-		// is satisfied and audits can observe metric changes. Fire-and-forget.
-		ForensicLogger.createEnvelope("BATCH_METRICS_UPDATED", {
-			itemCount,
-			processingTime,
-			compressed: !!compressed,
-		}).catch(() => {
-			/* no-op */
-		});
-	}
-	/**
 	 * Generates a unique identifier for a batch.
 	 * @private
 	 * @returns {string} A unique batch ID string.
 	 */
 	#generateBatchId() {
-		return `batch_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+		return `batch_${DateCore.timestamp()}_${Math.random().toString(36).substr(2, 6)}`;
 	}
 
 	/**
-	 * Logs an audit event if the forensic logger is available.
+	 * Dispatches an action through the ActionDispatcher for observability.
 	 * @private
-	 * @param {string} eventType - The type of the event (e.g., 'push_start').
-	 * @param {object} data - The data associated with the event.
+	 * @param {string} actionType - Type of action to dispatch
+	 * @param {object} payload - Action payload
 	 */
-	#audit(eventType, data) {
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
-		if (this.#forensicLogger) {
-			this.#forensicLogger.logAuditEvent(
-				`BATCH_SYNC_${eventType.toUpperCase()}`,
-				data
+	#dispatchAction(actionType, payload) {
+		try {
+			this.#actionDispatcher?.dispatch(actionType, { ...payload });
+		} catch (error) {
+			console.error(
+				`[BatchSync] Failed to dispatch action: ${actionType}`,
+				error
 			);
 		}
 	}

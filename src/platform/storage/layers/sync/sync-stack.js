@@ -247,7 +247,8 @@ export default class SyncStack {
 		try {
 			/* PERFORMANCE_BUDGET: 5ms */
 			return this.#orchestratorRunner.run(
-				() => this.#errorBoundary?.try(() => operation()) || operation(),
+				() =>
+					this.#errorBoundary?.try(() => operation()) || operation(),
 				{
 					label: `sync.${operationName}`,
 					actorId: this.#currentUser,
@@ -258,13 +259,83 @@ export default class SyncStack {
 				}
 			);
 		} catch (error) {
-			this.#metrics?.increment("sync_orchestration_error");
+			this.#incrementMetric("sync_orchestration_error");
 			this.#emitCriticalWarning("Sync orchestration failed", {
 				operation: operationName,
 				error: error.message,
 				user: this.#currentUser,
 			});
 			throw error;
+		}
+	}
+
+	/**
+	 * Create a metrics key namespaced to this component.
+	 * @private
+	 */
+	#metricKey(name) {
+		return `syncStack.${name}`;
+	}
+
+	/**
+	 * Dispatch an increment metric update through ActionDispatcher when available.
+	 * Fallback to local metrics registry when necessary.
+	 * @private
+	 */
+	#incrementMetric(name, value = 1) {
+		try {
+			if (this.#actionDispatcher?.dispatch) {
+				this.#actionDispatcher.dispatch("metrics.increment", {
+					key: this.#metricKey(name),
+					value,
+				});
+				return;
+			}
+		} catch {
+			// swallow dispatcher errors
+		}
+		try {
+			this.#metrics?.increment?.(this.#metricKey(name), value);
+		} catch {
+			// swallow registry errors
+		}
+	}
+
+	#recordTimer(name, value) {
+		try {
+			if (this.#actionDispatcher?.dispatch) {
+				this.#actionDispatcher.dispatch("metrics.timer", {
+					key: this.#metricKey(name),
+					value,
+				});
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.timer?.(this.#metricKey(name), value);
+		} catch {
+			// swallow
+		}
+	}
+
+	#setMetric(name, value) {
+		try {
+			if (this.#actionDispatcher?.dispatch) {
+				this.#actionDispatcher.dispatch("metrics.set", {
+					key: this.#metricKey(name),
+					value,
+				});
+				return;
+			}
+		} catch {
+			// swallow
+		}
+		try {
+			this.#metrics?.set?.(this.#metricKey(name), value);
+		} catch {
+			// swallow
 		}
 	}
 
@@ -402,7 +473,9 @@ export default class SyncStack {
 	 * @throws {AppError} If sync operation fails
 	 */
 	performSync(options = {}) {
-		const operation = this.#sanitizeInput(options.operation ?? "bidirectional");
+		const operation = this.#sanitizeInput(
+			options.operation ?? "bidirectional"
+		);
 		const syncId = this.#idManager.generate({ prefix: "sync" });
 
 		/* PERFORMANCE_BUDGET: 5000ms */
