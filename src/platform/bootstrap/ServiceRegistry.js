@@ -26,10 +26,10 @@ import { InMemoryKeyring } from "@platform/security/keyring/Keyring.js";
 import { NonRepudiation } from "@platform/security/NonRepudiation.js";
 // PolicyEngineAdapter belongs with other security/policies imports.
 import { SystemPolicies } from "@platform/security/policies/SystemPoliciesCached.js";
-import Sanitizer from "@platform/security/Sanitizer.js";
+import { Sanitizer } from "@platform/security/Sanitizer.js";
 import { SecurityManager } from "@platform/security/SecurityManager.js";
-import { TenantPolicyService } from "@platform/security/TenantPolicyService.js";
-import { AsyncOrchestrationService } from "@platform/services/AsyncOrchestrationService.js";
+import { TenantPolicyService } from "@platform/security/TenantPolicyService.js"; // This was a duplicate import
+import { AsyncOrchestrator } from "@shared/lib/async/AsyncOrchestrator.js";
 import { CacheManager } from "@platform/services/cache/CacheManager.js";
 import { EmbeddingManager } from "@platform/services/EmbeddingManager.js";
 import { IdManager } from "@platform/services/id/IdManager.js";
@@ -38,7 +38,6 @@ import { QueryService } from "@platform/state/QueryService.js";
 import { StorageLoader } from "@platform/storage/StorageLoader.js";
 import { ValidationLayer } from "@platform/storage/ValidationLayer.js";
 import { ErrorHelpers } from "@shared/lib/ErrorHelpers.js";
-import { MetricsRegistry } from "@shared/lib/MetricsRegistry.js";
 import { MetricsReporter } from "@shared/lib/MetricsReporter.js";
 
 // Map service names to constructors/values. Keep this local so the registry
@@ -47,7 +46,8 @@ const SERVICE_CONSTRUCTORS = {
 	// Foundational
 	errorHelpers: ErrorHelpers,
 	cacheManager: CacheManager,
-	metricsRegistry: MetricsRegistry,
+	metricsRegistry: (await import("@shared/lib/MetricsRegistry.js"))
+		.MetricsRegistry,
 	idManager: IdManager,
 	securityManager: SecurityManager,
 	keyring: InMemoryKeyring,
@@ -61,7 +61,7 @@ const SERVICE_CONSTRUCTORS = {
 
 	// Services
 	storageLoader: StorageLoader,
-	asyncOrchestrator: AsyncOrchestrationService,
+	asyncOrchestrator: AsyncOrchestrator,
 	eventFlowEngine: EventFlowEngine,
 	queryService: QueryService,
 	actionHandler: ActionHandlerRegistry,
@@ -175,7 +175,7 @@ export class ServiceRegistry {
 		if (this.#stateManager.managers[serviceName]) {
 			return this.#stateManager.managers[serviceName];
 		}
-		
+
 		const createAndInitService = async () => {
 			const ServiceClass = SERVICE_CONSTRUCTORS[serviceName];
 

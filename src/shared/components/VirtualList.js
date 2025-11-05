@@ -1,5 +1,5 @@
 import { SafeDOM } from "@shared/lib/SafeDOM.js";
-import { ForensicLogger } from "@shared/security/ForensicLogger.js";
+import { ForensicLogger } from "@platform/security/ForensicLogger.js";
 // src/core/ui/VirtualList.js
 // Lightweight, framework-free virtualized list with item recycling, keyboard nav,
 // sticky headers, and resize-aware windowing. Works for rows or cards.
@@ -12,7 +12,6 @@ import { ForensicLogger } from "@shared/security/ForensicLogger.js";
 //     keyOf: (i) => data[i].id,
 //   });
 //   vlist.mount();
-
 
 export class VirtualList {
 	/**

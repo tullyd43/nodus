@@ -16,9 +16,7 @@
  * @see {@link DEVELOPER_MANDATES.md} - Central to enforcing Mandates 1.3, 2.1, 2.4, and 4.3.
  */
 
-
-
-import { ObservabilityCacheHandler } from "@core/actions/handlers/ObservabilityCacheHandler.js";
+import { ObservabilityCacheHandler } from "@platform/observability/ObservabilityCacheHandler.js";
 import { createProxyTransport } from "@core/security/adapter.js";
 import { createDefaultTransport } from "@core/security/transport.js";
 import { HybridStateManager } from "@core/state/HybridStateManager.js";

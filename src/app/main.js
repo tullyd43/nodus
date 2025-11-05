@@ -7,7 +7,7 @@ import StateUIBridge from "@platform/state/StateUIBridge.js";
 import { AppConfig } from "./environment.config.js";
 
 import SecurityExplainer from "@/features/security/SecurityExplainer.js";
-import { ActionDispatcher } from "@/features/ui/ActionDispatcher.js";
+import { ActionDispatcher } from "@platform/actions/ActionDispatcher.js";
 import BindEngine from "@/features/ui/BindEngine.js";
 
 /**
@@ -180,8 +180,8 @@ const _orchestratedBootstrapLogic = async (
 		const vlistRunner = orchestrator.createRunner("virtual_list_creation");
 
 		const createVirtualList = () => {
-			return import("@shared/ui/VirtualList.js").then(
-				({ VirtualList }) => {
+			return import("@shared/components/VirtualList.js").then(
+				({ default: VirtualList }) => {
 					const vlistData = [];
 					for (let i = 0; i < 10000; i++) {
 						vlistData.push({

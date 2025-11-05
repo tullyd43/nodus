@@ -71,49 +71,61 @@ export default defineConfig({
 	resolve: {
 		// Use explicit path.resolve so aliases work correctly on Windows and CI
 		alias: {
-			"@": path.resolve(__dirname, "..", "src"),
-			"@app": path.resolve(__dirname, "..", "src/app"),
-			"@platform": path.resolve(__dirname, "..", "src/platform"),
-			"@features": path.resolve(__dirname, "..", "src/features"),
-			"@shared": path.resolve(__dirname, "..", "src/shared"),
+			"@": path.resolve(__dirname, "..", "..", "src"),
+			"@app": path.resolve(__dirname, "..", "..", "src/app"),
+			"@platform": path.resolve(__dirname, "..", "..", "src/platform"),
+			"@features": path.resolve(__dirname, "..", "..", "src/features"),
+			"@shared": path.resolve(__dirname, "..", "..", "src/shared"),
 			// Compatibility aliases for legacy imports
 			// File-level compatibility for some legacy tests/imports
 			// Support absolute-style imports used in some tests (e.g. "/src/grid/...")
-			"@core": path.resolve(__dirname, "..", "src/platform"),
-			"@core/state": path.resolve(__dirname, "..", "src/platform/state"),
+			"@core": path.resolve(__dirname, "..", "..", "src/platform"),
+			"@core/state": path.resolve(
+				__dirname,
+				"..",
+				"..",
+				"src/platform/state"
+			),
 			// Standard project aliases (namespaced and directory-oriented)
-			"@grid": path.resolve(__dirname, "..", "src/features/grid"),
-			"@utils": path.resolve(__dirname, "..", "src/shared/lib"),
+			"@grid": path.resolve(__dirname, "..", "..", "src/features/grid"),
+			"@utils": path.resolve(__dirname, "..", "..", "src/shared/lib"),
 			"@components": path.resolve(
 				__dirname,
+				"..",
 				"..",
 				"src/shared/components"
 			),
 			"@platform/security": path.resolve(
 				__dirname,
 				"..",
+				"..",
 				"src/platform/security"
 			),
 			"@platform/security/encryption": path.resolve(
 				__dirname,
+				"..",
 				"..",
 				"src/platform/security/encryption"
 			),
 			"@platform/storage/sync": path.resolve(
 				__dirname,
 				"..",
+				"..",
 				"src/platform/storage/sync"
 			),
 			"@platform/storage/validation": path.resolve(
 				__dirname,
+				"..",
 				"..",
 				"src/platform/storage/validation"
 			),
 			"@platform/storage/adapters": path.resolve(
 				__dirname,
 				"..",
+				"..",
 				"src/platform/storage/adapters"
 			),
+
 			// note: legacy absolute '/src/...' mappings intentionally removed —
 			// prefer fixing source imports to use the canonical @utils alias.
 			// ensure each alias is defined only once
