@@ -1,4 +1,5 @@
-import { ForensicLogger } from "@core/security/ForensicLogger.js";
+// NOTE: Do not import core services directly. Use the provided stateManager.managers
+// for access to ForensicLogger and other core services.
 // ui/admin/DatabaseOptimizationControlPanel.js
 // Complete admin control panel for database optimization management
 
@@ -16,6 +17,8 @@ export class DatabaseOptimizationControlPanel {
 
 	/** @private @type {import('../core/DatabaseOptimizer.js').DatabaseOptimizer} */
 	#optimizer;
+	/** @private @type {import('../core/HybridStateManager.js').default} */
+	#stateManager;
 	/** @private @type {HTMLElement} */
 	#container;
 	/** @private @type {string} */
@@ -50,12 +53,22 @@ export class DatabaseOptimizationControlPanel {
 	 */
 
 	constructor({ stateManager }, container) {
-		this.#optimizer = stateManager.databaseOptimizer;
+		this.#stateManager = stateManager;
+		// Prefer canonical access via stateManager.managers per Nodus mandates
+		this.#optimizer =
+			stateManager.managers?.databaseOptimizer ??
+			stateManager.databaseOptimizer;
 		this.#container = container;
-		this.#metrics = stateManager.metricsRegistry?.namespace(
-			"dbOptimizationControlPanel"
-		);
-		this.#logger = stateManager.forensicLogger;
+		this.#metrics =
+			stateManager.managers?.metricsRegistry?.namespace(
+				"dbOptimizationControlPanel"
+			) ??
+			stateManager.metricsRegistry?.namespace(
+				"dbOptimizationControlPanel"
+			);
+		this.#logger =
+			stateManager.managers?.forensicLogger ??
+			stateManager.forensicLogger;
 	}
 
 	/**
@@ -72,21 +85,31 @@ export class DatabaseOptimizationControlPanel {
 
 	 */
 
-	async initialize() {
+	initialize() {
+		// Return a Promise chain (no async/await) so callers can orchestrate this
+		this.#logger?.log?.(
+			"Initializing Database Optimization Control Panel..."
+		);
 		try {
-			this.#logger.log(
-				"Initializing Database Optimization Control Panel..."
-			);
-
 			this.render();
-			await this.loadAllData();
-			this.setupEventListeners();
-			this.startRealTimeUpdates();
-
-			this.#logger.log("Control Panel initialized");
-		} catch (error) {
-			this.showError("Failed to initialize control panel", error.message);
+		} catch (err) {
+			// Rendering failures are fatal for init
+			this.showError("Failed to initialize control panel", String(err));
+			return Promise.resolve();
 		}
+
+		return this.loadAllData()
+			.then(() => {
+				this.setupEventListeners();
+				this.startRealTimeUpdates();
+				this.#logger?.log?.("Control Panel initialized");
+			})
+			.catch((error) => {
+				this.showError(
+					"Failed to initialize control panel",
+					String(error?.message || error)
+				);
+			});
 	}
 
 	/**
@@ -136,11 +159,12 @@ export class DatabaseOptimizationControlPanel {
 		headerActions.className = "header-actions";
 		const exportBtn = document.createElement("button");
 		exportBtn.className = "btn btn-secondary";
-		exportBtn.setAttribute("onclick", "this.exportReport()");
+		// Use ActionDispatcher-compatible data attributes instead of direct onclick.
+		exportBtn.dataset.action = "dashboard.exportReport";
 		exportBtn.textContent = "📊 Export Report";
 		const refreshBtn = document.createElement("button");
 		refreshBtn.className = "btn btn-primary";
-		refreshBtn.setAttribute("onclick", "this.refreshAllData()");
+		refreshBtn.dataset.action = "dashboard.refreshAllData";
 		refreshBtn.textContent = "🔄 Refresh All";
 		headerActions.appendChild(exportBtn);
 		headerActions.appendChild(refreshBtn);
@@ -156,7 +180,9 @@ export class DatabaseOptimizationControlPanel {
 			const btn = document.createElement("button");
 			btn.className = "nav-tab" + (view === "dashboard" ? " active" : "");
 			btn.dataset.view = view;
-			btn.setAttribute("onclick", `this.switchView('${view}')`);
+			// Attach an action so ActionDispatcher can handle view changes
+			btn.dataset.action = "dashboard.switchView";
+			btn.dataset.actionPayload = JSON.stringify({ view });
 			btn.textContent = label;
 			if (badgeId) {
 				const span = document.createElement("span");
@@ -247,20 +273,55 @@ export class DatabaseOptimizationControlPanel {
 		this.#container.appendChild(root);
 		this.#container.appendChild(style);
 
-		// Set up global click handlers
+		// Set up global click handlers (prefer ActionDispatcher via stateManager.managers)
 		this.#container.addEventListener("click", (e) => {
+			const actionEl = e.target.closest("[data-action]");
+			if (actionEl) {
+				e.preventDefault();
+				const action = actionEl.dataset.action;
+				const rawPayload = actionEl.dataset.actionPayload;
+				let payload;
+				if (rawPayload) {
+					try {
+						payload = JSON.parse(rawPayload);
+					} catch {
+						payload = rawPayload;
+					}
+				}
+
+				const actionDispatcher =
+					this.#stateManager?.managers?.actionDispatcher;
+				if (
+					actionDispatcher &&
+					typeof actionDispatcher.dispatch === "function"
+				) {
+					// Dispatch through ActionDispatcher for automatic observability
+					actionDispatcher.dispatch(action, payload).catch((err) => {
+						console.error("ActionDispatcher dispatch failed:", err);
+					});
+					return;
+				}
+
+				// Fallback: call local method if present (method name is last segment)
+				const methodName = String(action).split(".").pop();
+				if (methodName && typeof this[methodName] === "function") {
+					try {
+						this[methodName](payload?.view ?? payload);
+					} catch (err) {
+						console.error(
+							`Fallback method ${methodName} failed:`,
+							err
+						);
+					}
+				}
+				return;
+			}
+
+			// Back-compat: older inline onclick handlers
 			if (e.target.matches("[onclick]")) {
 				const method = e.target
 					.getAttribute("onclick")
 					.match(/this\.(\w+)\('?([^']*)'?\)/);
-				/**
-
-				 * TODO: Add JSDoc for method if
-
-				 * @memberof AutoGenerated
-
-				 */
-
 				if (method && this[method[1]]) {
 					e.preventDefault();
 					this[method[1]](method[2] || undefined);
@@ -282,26 +343,35 @@ export class DatabaseOptimizationControlPanel {
 
 	 */
 
-	async loadAllData() {
-		try {
-			this.#metrics?.increment("data.load.attempt");
-			const [dashboard, suggestions, applied, metrics, health] =
-				await Promise.all([
-					this.loadDashboardData(),
-					this.#optimizer.getPendingSuggestions(),
-					this.#optimizer.getAppliedOptimizations(),
-					this.#optimizer.getEnhancedMetrics(),
-					this.#optimizer.getHealthStatus(),
-				]);
+	loadAllData() {
+		this.#metrics?.increment("data.load.attempt");
 
-			this.#data = { dashboard, suggestions, applied, metrics, health };
-			this.updateHealthIndicator();
-			this.updateBadges();
-			this.renderCurrentView();
-			this.#metrics?.increment("data.load.success");
-		} catch (error) {
-			this.showError("Failed to load data", error.message);
-		}
+		return Promise.all([
+			this.loadDashboardData(),
+			this.#optimizer.getPendingSuggestions(),
+			this.#optimizer.getAppliedOptimizations(),
+			this.#optimizer.getEnhancedMetrics(),
+			this.#optimizer.getHealthStatus(),
+		])
+			.then(([dashboard, suggestions, applied, metrics, health]) => {
+				this.#data = {
+					dashboard,
+					suggestions,
+					applied,
+					metrics,
+					health,
+				};
+				this.updateHealthIndicator();
+				this.updateBadges();
+				this.renderCurrentView();
+				this.#metrics?.increment("data.load.success");
+			})
+			.catch((error) => {
+				this.showError(
+					"Failed to load data",
+					String(error?.message || error)
+				);
+			});
 	}
 
 	/**
@@ -316,13 +386,11 @@ export class DatabaseOptimizationControlPanel {
 
 	 */
 
-	async loadDashboardData() {
-		try {
-			return await this.optimizer.getPerformanceMetrics();
-		} catch (error) {
+	loadDashboardData() {
+		return this.#optimizer.getPerformanceMetrics().catch((error) => {
 			console.error("Failed to load dashboard data:", error);
 			return null;
-		}
+		});
 	}
 
 	/**
@@ -419,7 +487,7 @@ export class DatabaseOptimizationControlPanel {
 	 */
 
 	renderDashboardView() {
-		const metrics = this.data.metrics;
+		const metrics = this.#data.metrics;
 		/**
 
 		 * TODO: Add JSDoc for method if
@@ -445,7 +513,7 @@ export class DatabaseOptimizationControlPanel {
 
         <div class="metric-card">
           <h3>💡 Pending Suggestions</h3>
-          <div class="metric-value">${this.#data.suggestions?.length || 0}</div>
+		  <div class="metric-value">${this.#data.suggestions?.length || 0}</div>
           <div class="metric-subtitle">Optimization opportunities</div>
           <div class="metric-trend trend-up">
             ⚡ Ready for review
@@ -457,7 +525,7 @@ export class DatabaseOptimizationControlPanel {
           <div class="metric-value">${this.#data.applied?.length || 0}</div>
           <div class="metric-subtitle">Successfully applied</div>
           <div class="metric-trend trend-up">
-            📈 ${this.data.applied?.filter((opt) => opt.performance_gain > 0).length || 0} with gains
+			📈 ${this.#data.applied?.filter((opt) => opt.performance_gain > 0).length || 0} with gains
           </div>
         </div>
 
@@ -468,7 +536,7 @@ export class DatabaseOptimizationControlPanel {
           </div>
           <div class="metric-subtitle">Database optimizer status</div>
           <div class="metric-trend trend-neutral"> 
-            🔄 Auto-monitoring ${metrics.config?.monitoring ? "enabled" : "disabled"}
+			🔄 Auto-monitoring ${metrics.config?.monitoring ? "enabled" : "disabled"}
           </div>
         </div>
       </div>
@@ -477,9 +545,9 @@ export class DatabaseOptimizationControlPanel {
         <div class="chart-header">
           <h3 class="chart-title">Query Latency Trend</h3>
           <div class="chart-controls">
-            <button class="chart-control active" onclick="this.updateChart('latency', '1h')">1H</button>
-            <button class="chart-control" onclick="this.updateChart('latency', '24h')">24H</button>
-            <button class="chart-control" onclick="this.updateChart('latency', '7d')">7D</button>
+			<button class="chart-control active" onclick="this.updateChart('latency', '1h')">1H</button>
+			<button class="chart-control" onclick="this.updateChart('latency', '24h')">24H</button>
+			<button class="chart-control" onclick="this.updateChart('latency', '7d')">7D</button>
           </div>
         </div>
         <div id="latency-chart" style="height: 300px; background: #f8fafc; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #64748b;">
@@ -516,7 +584,7 @@ export class DatabaseOptimizationControlPanel {
 
 		 */
 
-		if (!this.data.suggestions || this.data.suggestions.length === 0) {
+		if (!this.#data.suggestions || this.#data.suggestions.length === 0) {
 			return ` 
         <div class="alert alert-success">
           <strong>🎉 No pending suggestions!</strong>
@@ -525,7 +593,7 @@ export class DatabaseOptimizationControlPanel {
       `;
 		}
 
-		const suggestionsTable = this.data.suggestions
+		const suggestionsTable = this.#data.suggestions
 			.map(
 				(suggestion) => `
       <tr>
@@ -600,7 +668,7 @@ export class DatabaseOptimizationControlPanel {
 
 		 */
 
-		if (!this.data.applied || this.data.applied.length === 0) {
+		if (!this.#data.applied || this.#data.applied.length === 0) {
 			return ` 
         <div class="alert alert-info">
           <strong>📊 No optimizations applied yet</strong><br>
@@ -609,7 +677,7 @@ export class DatabaseOptimizationControlPanel {
       `;
 		}
 
-		const appliedTable = this.data.applied
+		const appliedTable = this.#data.applied
 			.map(
 				(opt) => `
       <tr>
@@ -681,7 +749,7 @@ export class DatabaseOptimizationControlPanel {
 
 		 */
 
-		switch (this.data.health) {
+		switch (this.#data.health) {
 			case "healthy":
 				return "#10b981";
 			case "idle":
@@ -707,7 +775,7 @@ export class DatabaseOptimizationControlPanel {
 
 		 */
 
-		switch (this.data.health) {
+		switch (this.#data.health) {
 			case "healthy":
 				return "🟢";
 			case "idle":
@@ -733,7 +801,7 @@ export class DatabaseOptimizationControlPanel {
 	 */
 
 	updateHealthIndicator() {
-		ForensicLogger.createEnvelope({
+		this.#logger?.createEnvelope?.({
 			actorId: "system",
 			action: "<auto>",
 			target: "<unknown>",
@@ -773,7 +841,7 @@ export class DatabaseOptimizationControlPanel {
 	 */
 
 	updateBadges() {
-		ForensicLogger.createEnvelope({
+		this.#logger?.createEnvelope?.({
 			actorId: "system",
 			action: "<auto>",
 			target: "<unknown>",
@@ -829,27 +897,29 @@ export class DatabaseOptimizationControlPanel {
 
 	 */
 
-	async applySuggestion(suggestionId) {
+	applySuggestion(suggestionId) {
 		if (!confirm("Are you sure you want to apply this optimization?"))
-			return;
+			return Promise.resolve();
 
-		try {
-			this.#metrics?.increment("suggestion.apply.attempt");
-			await this.#optimizer.applyOptimization(
-				suggestionId,
-				"admin_panel"
-			);
-			this.#logger.logAuditEvent("OPTIMIZATION_APPLIED", {
-				suggestionId,
-				source: "admin_panel",
+		this.#metrics?.increment("suggestion.apply.attempt");
+
+		return this.#optimizer
+			.applyOptimization(suggestionId, "admin_panel")
+			.then(() => {
+				this.#logger?.logAuditEvent?.("OPTIMIZATION_APPLIED", {
+					suggestionId,
+					source: "admin_panel",
+				});
+				this.#metrics?.increment("suggestion.apply.success");
+				this.showSuccess("Optimization applied successfully");
+				return this.refreshAllData();
+			})
+			.catch((error) => {
+				this.showError(
+					"Failed to apply optimization",
+					String(error?.message || error)
+				);
 			});
-
-			this.#metrics?.increment("suggestion.apply.success");
-			this.showSuccess("Optimization applied successfully");
-			await this.refreshAllData();
-		} catch (error) {
-			this.showError("Failed to apply optimization", error.message);
-		}
 	}
 
 	/**
@@ -865,23 +935,28 @@ export class DatabaseOptimizationControlPanel {
 
 	 */
 
-	async rollbackOptimization(optimizationId) {
+	rollbackOptimization(optimizationId) {
 		if (!confirm("Are you sure you want to rollback this optimization?"))
-			return;
+			return Promise.resolve();
 
-		try {
-			this.#metrics?.increment("optimization.rollback.attempt");
-			await this.#optimizer.rollbackOptimization(optimizationId);
-			this.#logger.logAuditEvent("OPTIMIZATION_ROLLED_BACK", {
-				optimizationId,
+		this.#metrics?.increment("optimization.rollback.attempt");
+
+		return this.#optimizer
+			.rollbackOptimization(optimizationId)
+			.then(() => {
+				this.#logger?.logAuditEvent?.("OPTIMIZATION_ROLLED_BACK", {
+					optimizationId,
+				});
+				this.#metrics?.increment("optimization.rollback.success");
+				this.showSuccess("Optimization rolled back successfully");
+				return this.refreshAllData();
+			})
+			.catch((error) => {
+				this.showError(
+					"Failed to rollback optimization",
+					String(error?.message || error)
+				);
 			});
-
-			this.#metrics?.increment("optimization.rollback.success");
-			this.showSuccess("Optimization rolled back successfully");
-			await this.refreshAllData();
-		} catch (error) {
-			this.showError("Failed to rollback optimization", error.message);
-		}
 	}
 
 	/**
@@ -897,9 +972,10 @@ export class DatabaseOptimizationControlPanel {
 
 	 */
 
-	async refreshAllData() {
-		await this.loadAllData();
-		this.showSuccess("Data refreshed successfully");
+	refreshAllData() {
+		return this.loadAllData().then(() => {
+			this.showSuccess("Data refreshed successfully");
+		});
 	}
 
 	/**
@@ -915,11 +991,25 @@ export class DatabaseOptimizationControlPanel {
 	 */
 
 	startRealTimeUpdates() {
-		this.#refreshInterval = setInterval(() => {
-			this.loadAllData().catch((err) =>
-				console.error("Auto-refresh failed:", err)
-			);
-		}, this.#updateInterval);
+		const orchestrator = this.#stateManager?.managers?.asyncOrchestrator;
+		if (orchestrator) {
+			const runner = orchestrator.createRunner("dashboard.auto_refresh");
+			this.#refreshInterval = setInterval(() => {
+				runner
+					.run(() => this.loadAllData(), {
+						label: "dashboard.data.refresh",
+						classification: "INTERNAL",
+						timeout: 30000,
+					})
+					.catch((err) => console.error("Auto-refresh failed:", err));
+			}, this.#updateInterval);
+		} else {
+			this.#refreshInterval = setInterval(() => {
+				this.loadAllData().catch((err) =>
+					console.error("Auto-refresh failed:", err)
+				);
+			}, this.#updateInterval);
+		}
 	}
 
 	/**
@@ -1089,7 +1179,7 @@ export class DatabaseOptimizationControlPanel {
 	 */
 
 	updateChart() {
-		ForensicLogger.createEnvelope({
+		this.#logger?.createEnvelope?.({
 			actorId: "system",
 			action: "<auto>",
 			target: "<unknown>",

@@ -158,7 +158,6 @@ export const ObservabilityCacheHandler = {
 			try {
 				// Write gauge metric using the MetricsRegistry instance.
 				// This is an internal, instrumented mutation allowed inside an action handler.
-				/* eslint-disable-next-line nodus/require-action-dispatcher -- internal metrics registry write from action handler */
 				metricsRegistry?.set(payload.key, payload.value);
 			} catch (err) {
 				stateManager?.managers?.errorHelpers?.handleError?.(err, {

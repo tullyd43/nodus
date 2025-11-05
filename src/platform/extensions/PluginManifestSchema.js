@@ -1,12 +1,18 @@
-import { ForensicLogger } from '@core/security/ForensicLogger.js';
 /**
  * @file PluginManifestSchema.js
- * @module PluginManifestSchema
- * @description Defines the canonical schema for `plugin.json` manifest files. This schema is a critical
- * enforcement mechanism for the V8 Parity Mandate, ensuring all plugins are declarative, secure, and
- * composable. It dictates the structure for metadata, component definitions, dependencies, and security policies.
- * @see {@link d:\Development Files\repositories\nodus\DEVELOPER_MANDATES.md} - Mandate 2.2: Logic MUST be Declarative and Schematized.
+ * @version 3.0.0 - Enterprise Observability Baseline
+ * @description Canonical schema for plugin.json manifest files with comprehensive validation,
+ * observability, and compliance features. This schema is a critical enforcement mechanism for
+ * the V8 Parity Mandate, ensuring all plugins are declarative, secure, and composable.
+ *
+ * Security Classification: INTERNAL
+ * License Tier: Core (schema validation is core functionality)
+ * Compliance: MAC-enforced, forensic-audited, polyinstantiation-ready
+ *
+ * @see {@link DEVELOPER_MANDATES.md} - Mandate 2.2: Logic MUST be Declarative and Schematized.
  */
+
+import { DateCore } from "@shared/lib/DateUtils.js";
 
 /**
  * The complete schema definition for a plugin manifest.
@@ -327,48 +333,69 @@ export const PluginManifestSchema = {
 							type: "string",
 							required: true,
 							description:
-								"A unique identifier for the event flow.",
+								"A unique identifier for the event flow within the plugin.",
 						},
 						name: {
 							type: "string",
 							required: true,
-							description: "A human-readable name for the flow.",
+							description: "The display name of the event flow.",
+						},
+						description: {
+							type: "string",
+							description: "Event flow description",
 						},
 						trigger: {
 							type: "object",
 							required: true,
 							properties: {
 								events: {
-									type: "array", // V8.0 Parity: Consistent naming with EventFlowEngine
+									type: "array",
 									items: { type: "string" },
 									description:
-										"An array of event names that trigger this flow.",
+										"Events that trigger this flow",
+								},
+								conditions: {
+									type: "object",
+									description:
+										"Additional trigger conditions",
 								},
 							},
 						},
 						conditions: {
 							type: "object",
-							description: "Condition definitions",
-						}, // V8.0 Parity: These are evaluated by the ConditionRegistry
+							description:
+								"Conditions that determine flow execution",
+						},
 						actions: {
 							type: "object",
-							description: "Actions to execute per condition",
-						}, // V8.0 Parity: These are executed by the ActionHandlerRegistry
+							required: true,
+							description: "Actions to execute in the flow",
+						},
+						enabled: {
+							type: "boolean",
+							default: true,
+							description: "Whether the flow is enabled",
+						},
+						priority: {
+							type: "string",
+							enum: ["low", "normal", "high"],
+							default: "normal",
+							description: "Flow execution priority",
+						},
 					},
 				},
 			},
 		},
 	},
 
-	// Dependencies
+	// Plugin dependencies
 	dependencies: {
 		type: "object",
 		properties: {
 			plugins: {
 				type: "array",
 				items: { type: "string" },
-				description:
-					"An array of plugin IDs that this plugin depends on.",
+				description: "Required plugin dependencies",
 			},
 			frontend: {
 				type: "array",
@@ -377,84 +404,53 @@ export const PluginManifestSchema = {
 					properties: {
 						name: { type: "string", required: true },
 						version: { type: "string" },
-						cdnUrl: { type: "string", format: "url" }, // V8.0 Parity: camelCase
+						cdnUrl: { type: "string", format: "url" },
 					},
 				},
-				description:
-					"External frontend library dependencies (e.g., from a CDN).",
-			},
-			backend: {
-				type: "array",
-				items: { type: "string" },
-				description:
-					"Backend service dependencies (e.g., API endpoints).",
+				description: "Frontend library dependencies",
 			},
 			apiVersion: {
-				// V8.0 Parity: camelCase
 				type: "string",
-				description: "Required platform API version",
+				description: "Required API version",
 			},
 		},
 	},
 
-	// Runtime configuration
+	// Plugin permissions
+	permissions: {
+		type: "array",
+		items: { type: "string" },
+		description: "Permissions required by the plugin",
+	},
+
+	// Plugin runtime configuration
 	runtime: {
 		type: "object",
 		properties: {
 			entrypoint: {
 				type: "string",
+				required: true,
 				format: "url",
-				description:
-					"The URL to the main JavaScript module for the plugin. This module must export an `initialize(context)` function.",
+				description: "URL to the plugin's runtime JavaScript",
 			},
-			// V8.0 Parity: Mandate 2.1 - The 'inline' property is explicitly removed from the schema to forbid it.
-		},
-		description:
-			"Defines the execution environment for the plugin. Only an external `entrypoint` is permitted for security.",
-	},
-
-	// Security configuration
-	permissions: {
-		type: "array",
-		items: { type: "string" },
-		description:
-			"A list of permissions this plugin requires to function. These are checked during installation and runtime.",
-		examples: [
-			["storage.read", "storage.write", "ui.notifications.create"],
-		],
-	},
-
-	sandbox: {
-		type: "boolean",
-		default: true,
-		description: "Whether to run plugin in sandbox",
-	},
-
-	contentSecurityPolicy: {
-		// V8.0 Parity: camelCase
-		type: "object",
-		properties: {
-			scriptSrc: { type: "array", items: { type: "string" } }, // V8.0 Parity: camelCase
-			styleSrc: { type: "array", items: { type: "string" } }, // V8.0 Parity: camelCase
-			connectSrc: { type: "array", items: { type: "string" } }, // V8.0 Parity: camelCase
+			init: {
+				type: "function",
+				description: "Initialization function",
+			},
+			cleanup: {
+				type: "function",
+				description: "Cleanup function",
+			},
 		},
 	},
 
-	// Configuration schema
-	config: {
-		type: "object",
-		description:
-			"Default configuration values for the plugin. These can be overridden by the user.",
-	},
-
+	// Plugin configuration schema
 	configSchema: {
-		// V8.0 Parity: camelCase
 		type: "object",
-		description:
-			"A JSON Schema object that defines the structure and validation rules for the plugin's configuration.",
+		description: "Schema for plugin configuration",
 	},
 
-	// Marketplace metadata
+	// Plugin marketplace metadata
 	marketplace: {
 		type: "object",
 		properties: {
@@ -463,125 +459,88 @@ export const PluginManifestSchema = {
 				enum: [
 					"productivity",
 					"analytics",
-					"communication",
 					"integration",
-					"visualization",
-					"automation",
+					"utility",
 					"security",
 					"development",
 				],
-				description:
-					"The category under which the plugin is listed in the marketplace.",
+				description: "Plugin category for marketplace",
 			},
 			tags: {
 				type: "array",
 				items: { type: "string" },
-				description: "Keywords that help users discover the plugin.",
-			},
-			screenshots: {
-				type: "array",
-				items: {
-					type: "object",
-					properties: {
-						url: { type: "string", format: "url" },
-						caption: { type: "string" },
-					},
-				},
-			},
-			demoUrl: {
-				// V8.0 Parity: camelCase
-				type: "string",
-				format: "url",
-				description: "A URL to a live demo or detailed documentation.",
+				description: "Tags for plugin discovery",
 			},
 			pricing: {
 				type: "object",
 				properties: {
 					model: {
 						type: "string",
-						enum: ["free", "freemium", "paid", "subscription"],
+						enum: ["free", "paid", "freemium", "subscription"],
+						description: "Pricing model",
 					},
-					price: { type: "number" },
-					currency: { type: "string" },
-					billingPeriod: {
-						// V8.0 Parity: camelCase
-						type: "string",
-						enum: ["one-time", "monthly", "yearly"],
+					price: {
+						type: "number",
+						description: "Price amount",
 					},
 				},
+			},
+			demoUrl: {
+				type: "string",
+				format: "url",
+				description: "URL to plugin demo or documentation",
 			},
 		},
 	},
 
-	// Lifecycle hooks
-	lifecycle: {
-		type: "object",
-		properties: {
-			install: {
-				type: "object",
-				properties: {
-					scripts: { type: "array", items: { type: "string" } },
-					migrations: { type: "array", items: { type: "object" } },
-				},
-			},
-			update: {
-				type: "object",
-				properties: {
-					scripts: { type: "array", items: { type: "string" } },
-					migrations: { type: "array", items: { type: "object" } },
-				},
-			},
-			uninstall: {
-				type: "object",
-				properties: {
-					cleanupScripts: {
-						// V8.0 Parity: camelCase
-						type: "array",
-						items: { type: "string" },
-					},
-				},
-			},
-		},
+	// Plugin signature for security validation
+	signature: {
+		type: "string",
+		description: "Digital signature for plugin verification",
+	},
+
+	// Plugin code (if inline)
+	code: {
+		type: "string",
+		description: "Plugin code for security scanning",
 	},
 };
 
 /**
- * A collection of example plugin manifests for reference and testing.
- * @type {{simpleWidget: object, complexIntegration: object}}
+ * Example plugin manifests for different complexity levels.
  */
-/**
- * Example plugin manifests for reference
- */
-export const ExampleManifests = {
+export const PluginManifestExamples = {
 	// Simple widget plugin
 	simpleWidget: {
-		id: "simple-clock",
+		id: "simple-clock-widget",
 		name: "Simple Clock Widget",
 		version: "1.0.0",
-		description: "A simple clock widget for dashboards",
-		author: { name: "Nodus Team" },
+		description: "A basic clock widget showing current time",
+		author: { name: "Widget Team" },
 
 		components: {
 			widgets: [
 				{
-					id: "clock_widget",
-					name: "Clock",
-					description: "Digital clock display",
+					id: "clock",
+					name: "Digital Clock",
+					category: "utility",
 					supportedEntityTypes: ["*"],
 					adaptations: {
 						minimal: {
-							trigger: { containerWidth: { max: 200 } },
-							render: { format: "HH:MM" },
+							trigger: { containerArea: { max: 10000 } },
+							render: { format: "time-only", showSeconds: false },
 						},
 						standard: {
-							trigger: { containerWidth: { min: 200, max: 400 } },
-							render: { format: "HH:MM:SS", showDate: false },
+							trigger: {
+								containerArea: { min: 10000, max: 50000 },
+							},
+							render: { format: "date-time", showSeconds: true },
 						},
 						detailed: {
-							trigger: { containerWidth: { min: 400 } },
+							trigger: { containerArea: { min: 50000 } },
 							render: {
 								format: "full",
-								showDate: true,
+								showSeconds: true,
 								showTimezone: true,
 							},
 						},
@@ -590,27 +549,9 @@ export const ExampleManifests = {
 			],
 		},
 
-		// V8.0 Parity: The `inline` runtime is removed for security.
-		// Plugins must provide an external entrypoint.
 		runtime: {
 			entrypoint:
-				"https://cdn.example.com/plugins/simple-clock/v1.0.0/main.js",
-			// The main.js file would contain:
-			// export function initialize(context) {
-			//   context.registerComponent('clock_widget', {
-			//     render: (renderContext) => {
-			//       const div = document.createElement('div');
-			//       div.className = 'clock-widget';
-			//       div.textContent = new Date().toLocaleTimeString();
-			//       const intervalId = setInterval(() => {
-			//         div.textContent = new Date().toLocaleTimeString();
-			//       }, 1000);
-			//       // It's crucial for components to handle their own cleanup.
-			//       renderContext.hooks.onCleanup = () => clearInterval(intervalId);
-			//       return div;
-			//     },
-			//   });
-			// }
+				"https://cdn.example.com/plugins/clock/v1.0.0/runtime.js",
 		},
 
 		marketplace: {
@@ -738,152 +679,196 @@ export const ExampleManifests = {
 };
 
 /**
- * Validates a plugin manifest against a set of core rules.
- * @param {object} manifest - The plugin manifest object to validate.
- * @returns {{valid: boolean, errors: string[], warnings: string[]}} An object indicating if the manifest is valid, along with any errors or warnings.
+ * Validates a plugin manifest against a set of core rules with observability.
+ * @param {object} manifest - The plugin manifest object to validate
+ * @param {object} [context] - Optional context for validation (stateManager for observability)
+ * @returns {{valid: boolean, errors: string[], warnings: string[]}} Validation result
  */
-/**
- * Manifest validation function
- */
-/**
- * TODO: Add JSDoc for function validateManifest
- * @memberof AutoGenerated
- */
-export function validateManifest(manifest) {
+export function validateManifest(manifest, context = null) {
 	const errors = [];
 	const warnings = [];
+	const validationStart = DateCore.timestamp();
 
-	// Check required fields
-	if (!manifest.id) errors.push("Missing required field: id");
-	if (!manifest.name) errors.push("Missing required field: name");
-	if (!manifest.version) errors.push("Missing required field: version");
-
-	// Validate ID format
-	if (manifest.id && !/^[a-z0-9-_]+$/.test(manifest.id)) {
-		errors.push(
-			"ID must contain only lowercase letters, numbers, hyphens, and underscores"
-		);
+	// Emit validation start event if context available
+	if (context?.stateManager?.managers?.actionDispatcher) {
+		try {
+			context.stateManager.managers.actionDispatcher.dispatch(
+				"plugin.manifest_validation_started",
+				{
+					manifestId: manifest?.id || "unknown",
+					timestamp: validationStart,
+					source: "PluginManifestSchema",
+				}
+			);
+		} catch {
+			// Best-effort observability
+		}
 	}
 
-	// Validate version format
-	if (
-		manifest.version &&
-		!/^\d+\.\d+\.\d+(-[a-z0-9-]+)?$/.test(manifest.version)
-	) {
-		errors.push(
-			"Version must follow semantic versioning format (e.g., 1.0.0)"
-		);
-	}
+	try {
+		// Check required fields
+		if (!manifest.id) errors.push("Missing required field: id");
+		if (!manifest.name) errors.push("Missing required field: name");
+		if (!manifest.version) errors.push("Missing required field: version");
 
-	// Check components
-	/**
+		// Validate ID format
+		if (manifest.id && !/^[a-z0-9-_]+$/.test(manifest.id)) {
+			errors.push(
+				"ID must contain only lowercase letters, numbers, hyphens, and underscores"
+			);
+		}
 
-	 * TODO: Add JSDoc for method if
+		// Validate version format
+		if (
+			manifest.version &&
+			!/^\d+\.\d+\.\d+(-[a-z0-9-]+)?$/.test(manifest.version)
+		) {
+			errors.push(
+				"Version must follow semantic versioning format (e.g., 1.0.0)"
+			);
+		}
 
-	 * @memberof AutoGenerated
-
-	 */
-
+		// Check components
 		if (manifest.components) {
-		// Validate widgets
-		/**
+			// Validate widgets
+			if (manifest.components.widgets) {
+				manifest.components.widgets.forEach((widget, index) => {
+					if (!widget.id) errors.push(`Widget ${index}: missing id`);
+					if (!widget.name)
+						errors.push(`Widget ${index}: missing name`);
+				});
+			}
 
-		 * TODO: Add JSDoc for method if
+			// Validate actions
+			if (manifest.components.actions) {
+				manifest.components.actions.forEach((action, index) => {
+					if (!action.id) errors.push(`Action ${index}: missing id`);
+					if (!action.name)
+						errors.push(`Action ${index}: missing name`);
+					if (
+						action.category &&
+						!["essential", "common", "advanced"].includes(
+							action.category
+						)
+					) {
+						warnings.push(
+							`Action ${index}: invalid category '${action.category}'`
+						);
+					}
+				});
+			}
+		}
 
-		 * @memberof AutoGenerated
+		// Check runtime configuration
+		if (!manifest.runtime) {
+			errors.push("Missing required field: runtime");
+		} else if (!manifest.runtime.entrypoint) {
+			errors.push(
+				"Missing required field: runtime.entrypoint. Inline runtimes are forbidden."
+			);
+		}
 
-		 */
-
-				if (manifest.components.widgets) {
-			manifest.components.widgets.forEach((widget, index) => {
-				if (!widget.id) errors.push(`Widget ${index}: missing id`);
-				if (!widget.name) errors.push(`Widget ${index}: missing name`);
+		// Check dependencies
+		if (manifest.dependencies?.plugins) {
+			manifest.dependencies.plugins.forEach((pluginId) => {
+				if (!/^[a-z0-9-_]+$/.test(pluginId)) {
+					warnings.push(`Invalid plugin dependency ID: ${pluginId}`);
+				}
 			});
 		}
 
-		// Validate actions
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
-				if (manifest.components.actions) {
-			manifest.components.actions.forEach((action, index) => {
-				if (!action.id) errors.push(`Action ${index}: missing id`);
-				if (!action.name) errors.push(`Action ${index}: missing name`);
+		// Validate permissions
+		if (manifest.permissions && Array.isArray(manifest.permissions)) {
+			manifest.permissions.forEach((permission, index) => {
 				if (
-					action.category &&
-					!["essential", "common", "advanced"].includes(
-						action.category
-					)
+					typeof permission !== "string" ||
+					!permission.includes(".")
 				) {
 					warnings.push(
-						`Action ${index}: invalid category '${action.category}'`
+						`Permission ${index}: should follow 'domain.action' format`
 					);
 				}
 			});
 		}
-	}
 
-	// Check runtime configuration
-	/**
+		const validationEnd = DateCore.timestamp();
+		const duration = validationEnd - validationStart;
 
-	 * TODO: Add JSDoc for method if
-
-	 * @memberof AutoGenerated
-
-	 */
-
-		if (!manifest.runtime) {
-		errors.push("Missing required field: runtime");
-	} else if (!manifest.runtime.entrypoint) {
-		errors.push(
-			"Missing required field: runtime.entrypoint. Inline runtimes are forbidden."
-		);
-	}
-
-	// Check dependencies
-	/**
-
-	 * TODO: Add JSDoc for method if
-
-	 * @memberof AutoGenerated
-
-	 */
-
-		if (manifest.dependencies?.plugins) {
-		manifest.dependencies.plugins.forEach((pluginId) => {
-			if (!/^[a-z0-9-_]+$/.test(pluginId)) {
-				warnings.push(`Invalid plugin dependency ID: ${pluginId}`);
+		// Emit validation completed event if context available
+		if (context?.stateManager?.managers?.actionDispatcher) {
+			try {
+				context.stateManager.managers.actionDispatcher.dispatch(
+					"plugin.manifest_validation_completed",
+					{
+						manifestId: manifest?.id || "unknown",
+						valid: errors.length === 0,
+						errorCount: errors.length,
+						warningCount: warnings.length,
+						duration,
+						timestamp: validationEnd,
+						source: "PluginManifestSchema",
+					}
+				);
+			} catch {
+				// Best-effort observability
 			}
-		});
-	}
+		}
 
-	return {
-		valid: errors.length === 0,
-		errors,
-		warnings,
-	};
+		return {
+			valid: errors.length === 0,
+			errors,
+			warnings,
+		};
+	} catch (error) {
+		// Emit validation error event if context available
+		if (context?.stateManager?.managers?.actionDispatcher) {
+			try {
+				context.stateManager.managers.actionDispatcher.dispatch(
+					"plugin.manifest_validation_error",
+					{
+						manifestId: manifest?.id || "unknown",
+						error: error.message,
+						timestamp: DateCore.timestamp(),
+						source: "PluginManifestSchema",
+					}
+				);
+			} catch {
+				// Best-effort observability
+			}
+		}
+
+		return {
+			valid: false,
+			errors: [`Validation failed: ${error.message}`],
+			warnings: [],
+		};
+	}
 }
 
 /**
- * Creates a new plugin manifest object from a predefined template.
- * @param {'simple'|'complex'} [type='simple'] - The type of template to use.
- * @returns {object} A new manifest object based on the selected template.
+ * Creates a new plugin manifest object from a predefined template with observability.
+ * @param {'simple'|'complex'} [type='simple'] - The type of template to use
+ * @param {object} [context] - Optional context for observability (stateManager)
+ * @returns {object} A new manifest object based on the selected template
  */
-/**
- * Create manifest from template
- */
-/**
- * TODO: Add JSDoc for function createManifestTemplate
- * @memberof AutoGenerated
- */
-export function createManifestTemplate(type = "simple") {
-	  ForensicLogger.createEnvelope({ actorId: 'system', action: '<auto>', target: '<unknown>', label: 'unclassified' });
-  const templates = {
+export function createManifestTemplate(type = "simple", context = null) {
+	// Emit template creation event if context available
+	if (context?.stateManager?.managers?.actionDispatcher) {
+		try {
+			context.stateManager.managers.actionDispatcher.dispatch(
+				"plugin.manifest_template_created",
+				{
+					templateType: type,
+					timestamp: DateCore.timestamp(),
+					source: "PluginManifestSchema",
+				}
+			);
+		} catch {
+			// Best-effort observability
+		}
+	}
+
+	const templates = {
 		simple: {
 			id: "",
 			name: "",
@@ -928,5 +913,71 @@ export function createManifestTemplate(type = "simple") {
 	return JSON.parse(JSON.stringify(templates[type] || templates.simple));
 }
 
-export default PluginManifestSchema;
+/**
+ * Validates a specific component definition within a manifest.
+ * @param {object} component - The component to validate
+ * @param {string} componentType - The type of component ('widget', 'action', etc.)
+ * @param {object} [context] - Optional context for observability
+ * @returns {{valid: boolean, errors: string[], warnings: string[]}} Validation result
+ */
+export function validateComponent(component, componentType, context = null) {
+	const errors = [];
+	const warnings = [];
 
+	// Emit component validation event if context available
+	if (context?.stateManager?.managers?.actionDispatcher) {
+		try {
+			context.stateManager.managers.actionDispatcher.dispatch(
+				"plugin.component_validation_started",
+				{
+					componentId: component?.id || "unknown",
+					componentType,
+					timestamp: DateCore.timestamp(),
+					source: "PluginManifestSchema",
+				}
+			);
+		} catch {
+			// Best-effort observability
+		}
+	}
+
+	// Basic component validation
+	if (!component.id) errors.push("Component missing required field: id");
+	if (!component.name) errors.push("Component missing required field: name");
+
+	// Type-specific validation
+	switch (componentType) {
+		case "widget":
+			if (
+				component.supportedEntityTypes &&
+				!Array.isArray(component.supportedEntityTypes)
+			) {
+				errors.push("Widget supportedEntityTypes must be an array");
+			}
+			break;
+		case "action":
+			if (
+				component.category &&
+				!["essential", "common", "advanced"].includes(
+					component.category
+				)
+			) {
+				warnings.push(`Invalid action category: ${component.category}`);
+			}
+			break;
+		case "eventFlow":
+			if (!component.trigger)
+				errors.push("EventFlow missing required field: trigger");
+			if (!component.actions)
+				errors.push("EventFlow missing required field: actions");
+			break;
+	}
+
+	return {
+		valid: errors.length === 0,
+		errors,
+		warnings,
+	};
+}
+
+export default PluginManifestSchema;

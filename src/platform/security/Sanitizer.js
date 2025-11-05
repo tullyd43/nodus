@@ -1,7 +1,15 @@
 /**
  * @file Sanitizer.js
+ * @version 8.0.0 - MIGRATED TO AUTOMATIC OBSERVATION PATTERN
  * @description Stateless sanitization utilities for cleansing untrusted data, stripping unsafe text,
- * and emitting deterministic hashes for forensic integrity checks.
+ * and emitting deterministic hashes for forensic integrity checks with V8.0 automatic observation.
+ *
+ * KEY V8.0 MIGRATION CHANGES:
+ * - All sanitization operations automatically observed through ActionDispatcher
+ * - Performance budgets enforced on critical sanitization paths
+ * - AsyncOrchestrator pattern for hash operations
+ * - Automatic tracking of sanitization metrics and security events
+ * - Instrumented Sanitizer class wrapper for observability
  */
 
 const MAX_DEPTH = 20;
@@ -187,7 +195,7 @@ function cleanseText(value) {
  * @param {object} [schema]
  * @returns {Promise<string>}
  */
-async function getDeterministicHash(value, schema) {
+function getDeterministicHash(value, schema) {
 	const sanitized = cloneAndCleanse(value, schema, new WeakSet(), 0);
 	const serialized = stableSerialize(sanitized);
 	return hashString(serialized);
@@ -243,26 +251,25 @@ function stableSerialize(value) {
  */
 let basicCryptoInstancePromise = null;
 
-async function hashString(input) {
+function hashString(input) {
 	const encoder = new TextEncoder();
 	const data = encoder.encode(input);
 
 	const subtle = globalThis.crypto?.subtle;
 	if (subtle) {
-		const buffer = await subtle.digest("SHA-256", data);
-		return bufferToHex(buffer);
+		// Use subtle.digest which returns a Promise
+		return subtle.digest("SHA-256", data).then(bufferToHex);
 	}
 
-	try {
-		return await hashWithBasicCrypto(input);
-	} catch {
-		// Extremely unlikely: fall back to poor man's hash (not cryptographic).
+	// Fallback to BasicCrypto implementation; return a Promise and handle
+	// fallback hashing in the rejection branch.
+	return hashWithBasicCrypto(input).catch(() => {
 		let hash = 0;
 		for (let i = 0; i < input.length; i += 1) {
 			hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
 		}
 		return hash.toString(16).padStart(8, "0");
-	}
+	});
 }
 
 /**
@@ -276,12 +283,11 @@ function bufferToHex(buffer) {
 		.join("");
 }
 
-async function hashWithBasicCrypto(input) {
+function hashWithBasicCrypto(input) {
 	if (!basicCryptoInstancePromise) {
-		basicCryptoInstancePromise = (async () => {
-			const { default: BasicCrypto } = await import(
-				"@platform/security/encryption/basic-crypto.js"
-			);
+		basicCryptoInstancePromise = import(
+			"@platform/security/encryption/basic-crypto.js"
+		).then(({ default: BasicCrypto }) => {
 			const instance = new BasicCrypto({
 				stateManager: {
 					metricsRegistry: null,
@@ -289,19 +295,217 @@ async function hashWithBasicCrypto(input) {
 				},
 			});
 			if (typeof instance.init === "function") {
-				await instance.init();
+				return Promise.resolve(instance.init()).then(() => instance);
 			}
 			return instance;
-		})();
+		});
 	}
-	const instance = await basicCryptoInstancePromise;
-	return instance.hash(input);
+	return basicCryptoInstancePromise.then((instance) => instance.hash(input));
 }
 
+// Legacy stateless export for backward compatibility
 export const Sanitizer = Object.freeze({
 	cleanse,
 	cleanseText,
 	getDeterministicHash,
 });
+
+/**
+ * @class InstrumentedSanitizer
+ * @description V8.0 instrumented sanitizer that observes all operations through ActionDispatcher.
+ * This wrapper provides automatic observation while maintaining stateless core functions.
+ * @privateFields {#stateManager, #orchestrator}
+ */
+export class InstrumentedSanitizer {
+	/** @private @type {import('../HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {import('@shared/lib/async/AsyncOrchestrator.js').AsyncOrchestrator|null} */
+	#orchestrator = null;
+
+	/**
+	 * @param {object} context - The application context.
+	 * @param {import('../HybridStateManager.js').default} context.stateManager - The main state manager instance.
+	 */
+	constructor({ stateManager }) {
+		this.#stateManager = stateManager;
+	}
+
+	/**
+	 * Initializes the instrumented sanitizer.
+	 * V8.0 Parity: Mandate 1.2 - All dependencies derived from stateManager.
+	 */
+	initialize() {
+		const managers = this.#stateManager.managers;
+		this.#orchestrator = managers?.orchestrator ?? null;
+		console.warn(
+			"[InstrumentedSanitizer] Initialized with V8.0 automatic observation pattern."
+		);
+	}
+
+	/**
+	 * Instrumented cleanse operation with automatic observation.
+	 * @template T
+	 * @param {T} input - Input to cleanse
+	 * @param {object} [schema] - Optional schema for validation
+	 * @returns {Promise<T>} Cleansed data
+	 */
+	async cleanse(input, schema) {
+		const runner = this.#orchestrator?.createRunner(
+			"sanitizer_cleanse"
+		) || {
+			run: (fn) => fn(),
+		};
+
+		/* PERFORMANCE_BUDGET: 5ms */
+		return runner.run(() => this.#performCleanse(input, schema));
+	}
+
+	/**
+	 * Internal cleanse implementation with observation
+	 * @private
+	 */
+	#performCleanse(input, schema) {
+		return Promise.resolve().then(() => {
+			const inputType = typeof input;
+			const hasSchema = !!schema;
+
+			// V8.0 Migration: Sanitization attempt automatically observed
+			this.#dispatchSanitizerEvent("security.sanitization_attempt", {
+				inputType,
+				hasSchema,
+				timestamp: Date.now(),
+			});
+
+			const result = cleanse(input, schema);
+
+			// V8.0 Migration: Sanitization result automatically observed
+			this.#dispatchSanitizerEvent("security.data_sanitized", {
+				inputType,
+				outputType: typeof result,
+				hasSchema,
+				timestamp: Date.now(),
+			});
+
+			return result;
+		});
+	}
+
+	/**
+	 * Instrumented text cleansing with automatic observation.
+	 * @param {string} value - Text to cleanse
+	 * @returns {Promise<string>} Cleansed text
+	 */
+	async cleanseText(value) {
+		const runner = this.#orchestrator?.createRunner(
+			"sanitizer_cleanse_text"
+		) || {
+			run: (fn) => fn(),
+		};
+
+		/* PERFORMANCE_BUDGET: 2ms */
+		return runner.run(() => this.#performTextCleanse(value));
+	}
+
+	/**
+	 * Internal text cleanse implementation
+	 * @private
+	 */
+	#performTextCleanse(value) {
+		return Promise.resolve().then(() => {
+			const inputLength = String(value || "").length;
+
+			// V8.0 Migration: Text sanitization automatically observed
+			this.#dispatchSanitizerEvent("security.text_sanitization", {
+				inputLength,
+				timestamp: Date.now(),
+			});
+
+			const result = cleanseText(value);
+			const outputLength = result.length;
+			const charsRemoved = Math.max(0, inputLength - outputLength);
+
+			// V8.0 Migration: Text sanitization result automatically observed
+			this.#dispatchSanitizerEvent("security.text_sanitized", {
+				inputLength,
+				outputLength,
+				charsRemoved,
+				timestamp: Date.now(),
+			});
+
+			return result;
+		});
+	}
+
+	/**
+	 * Instrumented deterministic hash with automatic observation.
+	 * @param {any} value - Value to hash
+	 * @param {object} [schema] - Optional schema
+	 * @returns {Promise<string>} Deterministic hash
+	 */
+	async getDeterministicHash(value, schema) {
+		const runner = this.#orchestrator?.createRunner("sanitizer_hash") || {
+			run: (fn) => fn(),
+		};
+
+		/* PERFORMANCE_BUDGET: 8ms */
+		return runner.run(() => this.#performDeterministicHash(value, schema));
+	}
+
+	/**
+	 * Internal deterministic hash implementation
+	 * @private
+	 */
+	#performDeterministicHash(value, schema) {
+		return Promise.resolve()
+			.then(() => {
+				const inputType = typeof value;
+				const hasSchema = !!schema;
+
+				// V8.0 Migration: Hash operation automatically observed
+				this.#dispatchSanitizerEvent("security.hash_operation", {
+					inputType,
+					hasSchema,
+					algorithm: "SHA-256",
+					timestamp: Date.now(),
+				});
+
+				return getDeterministicHash(value, schema);
+			})
+			.then((hash) => {
+				// V8.0 Migration: Hash result automatically observed
+				this.#dispatchSanitizerEvent("security.hash_computed", {
+					algorithm: "SHA-256",
+					hashLength: hash.length,
+					timestamp: Date.now(),
+				});
+
+				return hash;
+			});
+	}
+
+	/**
+	 * V8.0 Migration: Dispatch sanitizer events through ActionDispatcher for automatic observation
+	 * @private
+	 */
+	#dispatchSanitizerEvent(eventType, payload) {
+		try {
+			const actionDispatcher =
+				this.#stateManager?.managers?.actionDispatcher;
+			if (actionDispatcher?.dispatch) {
+				// Fire-and-forget to avoid blocking sanitization operations
+				actionDispatcher
+					.dispatch(eventType, {
+						...payload,
+						component: "InstrumentedSanitizer",
+					})
+					.catch(() => {
+						// Silent failure - sanitization should not be blocked by observation failures
+					});
+			}
+		} catch {
+			// Silent failure - sanitization should not be blocked by observation failures
+		}
+	}
+}
 
 export default Sanitizer;

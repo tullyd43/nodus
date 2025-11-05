@@ -338,8 +338,7 @@ export class AutomaticInstrumentation {
 	}
 
 	// Internal async implementation - runs under orchestrator when available
-	/* eslint-disable-next-line nodus/require-async-orchestration --
-	 * This is a private implementation detail that is always executed by the
+	/* This is a private implementation detail that is always executed by the
 	 * orchestrated `instrumentOperation` public method.
 	 */
 	async #instrumentOperationAsync(context = {}) {

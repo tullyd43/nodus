@@ -54,13 +54,12 @@ export class BaseForensicPlugin {
 			context.networkAnalysis = this.analyzeNetwork(context);
 		}
 
-		/* eslint-disable-next-line nodus/require-async-orchestration -- forensic runner is executed under orchestrator when available */
 		const run = async () => {
 			try {
 				if (forensic?.createEnvelope) {
 					envelope = await forensic.createEnvelope(
-						`${this._domain}.${operation}`,
-						context
+						`${this._domain}.${_operation}`,
+						_context
 					);
 				}
 
@@ -80,12 +79,12 @@ export class BaseForensicPlugin {
 				if (this._dispatcher?.dispatch) {
 					/* PERFORMANCE_BUDGET: 1ms */
 					this._dispatcher.dispatch("metrics.increment", {
-						key: `${this._domain}.${operation}.count`,
+						key: `${this._domain}.${_operation}.count`,
 						value: 1,
 					});
 					/* PERFORMANCE_BUDGET: 1ms */
 					this._dispatcher.dispatch("metrics.timer", {
-						key: `${this._domain}.${operation}.duration`,
+						key: `${this._domain}.${_operation}.duration`,
 						value: duration,
 					});
 				}
@@ -97,13 +96,13 @@ export class BaseForensicPlugin {
 				if (this._dispatcher?.dispatch) {
 					/* PERFORMANCE_BUDGET: 1ms */
 					this._dispatcher.dispatch("metrics.increment", {
-						key: `${this._domain}.${operation}.error`,
+						key: `${this._domain}.${_operation}.error`,
 						value: 1,
 					});
 				}
 				this._log?.warn?.(
 					`[${this.constructor.name}] operation failed`,
-					{ operation, error: err.message }
+					{ operation: _operation, error: err.message }
 				);
 				throw err;
 			}
@@ -128,7 +127,7 @@ export class BaseForensicPlugin {
 
 		if (allow && orchestrator?.createRunner) {
 			const runner = orchestrator.createRunner(this._domain);
-			return runner.run(run, { label: `${this._domain}.${operation}` });
+			return runner.run(run, { label: `${this._domain}.${_operation}` });
 		}
 
 		return run();
@@ -137,20 +136,20 @@ export class BaseForensicPlugin {
 	/**
 	 * Placeholder method to classify an operation based on its name or context.
 	 * This would typically be overridden by specific plugins or use a policy engine.
-	 * @param {string} operation The operation name.
+	 * @param {string} _operation The operation name.
 	 * @returns {string} The classification level (e.g., 'UNCLASSIFIED', 'CONFIDENTIAL').
 	 */
-	classifyOperation(operation) {
+	classifyOperation(_operation) {
 		// Default implementation, can be overridden by specific plugins
 		return "UNCLASSIFIED";
 	}
 
 	/**
 	 * Placeholder method to analyze network context for deep packet inspection features.
-	 * @param {object} context The operation context.
+	 * @param {object} _context The operation context.
 	 * @returns {object} Network analysis data.
 	 */
-	analyzeNetwork(context) {
+	analyzeNetwork(_context) {
 		return {};
 	}
 }

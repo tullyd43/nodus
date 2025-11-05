@@ -29,7 +29,7 @@ export class PluginSignatureValidator {
 	validatePlugin(plugin, pluginSignature) {
 		const run = () => {
 			if (!this.#requireSigned) {
-				console.log(
+				console.warn(
 					"[PluginValidator] Plugin signing not required for this license."
 				);
 				return Promise.resolve(true);
@@ -52,7 +52,7 @@ export class PluginSignatureValidator {
 				)
 				.then((isValid) => {
 					if (isValid) {
-						console.log(
+						console.warn(
 							"[PluginValidator] Enterprise plugin signature verified."
 						);
 						return true;

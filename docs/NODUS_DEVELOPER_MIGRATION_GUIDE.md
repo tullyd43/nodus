@@ -861,3 +861,72 @@ try {
 **If you can use ActionDispatcher to report it, do that. Only use try-catch when ActionDispatcher itself might fail.**
 
 This ensures maximum observability while maintaining system resilience! 🔒
+
+## The Nodus Orchestration Pattern
+
+**Key Rule:** `runner.run()` expects a **synchronous function that returns a Promise**, never an `async` function.
+
+### ❌ WRONG Patterns:
+```javascript
+// Wrong: async function directly
+runner.run(async () => {
+    const result = await someAsyncCall();
+    return result;
+});
+
+// Wrong: sync function with nested async
+const run = () => {
+    return Promise.resolve().then(async () => {
+        const result = await someAsyncCall();
+        return result;
+    });
+};
+```
+
+### ✅ CORRECT Patterns:
+
+**Pattern 1: Pure synchronous work**
+```javascript
+const run = () => {
+    // synchronous work only
+    cacheManager?.applySet?.(cache, key, value);
+};
+runner.run(run);
+```
+
+**Pattern 2: Promise chains (no async/await)**
+```javascript
+const run = () =>
+    import("@shared/ui/VirtualList.js")
+        .then(({ VirtualList }) => {
+            // synchronous work with imported module
+            const instance = new VirtualList(config);
+            return instance;
+        });
+
+runner.run(run);
+```
+
+**Pattern 3: Complex Promise chains**
+```javascript
+const run = () =>
+    validator.validatePlugin(plugin, signature)
+        .then((isValid) => {
+            if (!isValid) {
+                throw new Error("Invalid plugin");
+            }
+            return processPlugin(plugin);
+        })
+        .then(result => {
+            // more processing
+            return result;
+        });
+```
+
+### The Core Principle:
+- **Orchestrator provides the async wrapper**
+- **Your function stays synchronous and returns Promise chains**
+- **Use `.then()` chains, never `async/await` inside the function**
+- **Let the orchestrator handle the async execution context**
+
+This keeps everything within the orchestrated, observable context without creating new unorchestrated async functions.

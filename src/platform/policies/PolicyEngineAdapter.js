@@ -11,8 +11,6 @@
  * -----------------------------------------------------------------------------
  */
 
-/* eslint-disable nodus/require-action-dispatcher, nodus/require-observability-compliance -- internal policy adapter uses in-memory cache and does not perform state mutations */
-
 export class PolicyEngineAdapter {
 	/**
 	 * @param {object} policyManager - The SystemPolicies manager (expected to expose getPolicy / getPolicySync)

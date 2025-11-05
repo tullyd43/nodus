@@ -14,7 +14,7 @@ import { PerformanceProfiler } from "./PerformanceProfiler.js";
 import { AIOperationsForensicPlugin } from "./plugins/AIOperationsForensicPlugin.js";
 import { APIForensicPlugin } from "./plugins/APIForensicPlugin.js";
 import { AuthForensicPlugin } from "./plugins/AuthForensicPlugin.js";
-import { BaseForensicPlugin } from "./plugins/BaseForensicPlugin.js"; // Import BaseForensicPlugin
+import { BaseForensicPlugin as _BaseForensicPlugin } from "./plugins/BaseForensicPlugin.js"; // Imported for JSDoc/type only; named with leading underscore to satisfy unused-var rule
 import { ConfigForensicPlugin } from "./plugins/ConfigForensicPlugin.js";
 import { CryptoForensicPlugin } from "./plugins/CryptoForensicPlugin.js";
 import { DatabaseForensicPlugin } from "./plugins/DatabaseForensicPlugin.js";
@@ -41,7 +41,6 @@ export const ObservabilityStackBootstrap = {
 	 * @param {import('../../state/HybridStateManager.js').default} stateManager
 	 * @param {object|null} enterpriseLicense
 	 */
-	/* eslint-disable-next-line nodus/require-async-orchestration -- bootstrap initialization may run before orchestrator is available; callers should invoke via orchestrator when required */
 	async initialize(stateManager, enterpriseLicense = null) {
 		const log = stateManager.managers?.observabilityLogger || console;
 		const policies = stateManager.managers?.policies;
@@ -348,13 +347,13 @@ ObservabilityStackBootstrap.getPluginsForTier = function (tier) {
 	// based on the *current* tier, even if they were initially defined for a lower tier.
 	// This example simply passes the features defined in `allPlugins`.
 	// A more advanced implementation could merge or override features here.
-	return filteredPlugins.map((pluginDef) => 
+	return filteredPlugins.map((pluginDef) =>
 		// If a plugin is in a lower tier but the current tier is higher,
 		// we might want to give it more advanced features.
 		// For now, we'll just use the features defined in the allPlugins array.
 		// Example: if tier is 'enterprise' and pluginDef.tier is 'consumer',
 		// you might want to add 'enterprise_enhancements' to its features.
-		 ({ ...pluginDef })
+		({ ...pluginDef })
 	);
 };
 

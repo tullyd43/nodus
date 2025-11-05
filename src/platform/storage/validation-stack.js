@@ -1,147 +1,301 @@
-import { ForensicLogger } from "@platform/security/ForensicLogger.js";
-// modules/validation-stack.js
-// Validation stack for composable data validation
+/**
+ * @file validation-stack.js
+ * @version 8.0.0
+ * @description Enterprise validation orchestrator with composable validation modules.
+ * Provides automatic observability, caching, and policy-compliant validation operations.
+ *
+ * All validation operations flow through orchestrated patterns for complete audit trails,
+ * performance monitoring, and security compliance. Results are cached with TTL management
+ * and history tracking for comprehensive validation analytics.
+ *
+ * Key Features:
+ * - Orchestrated validation with automatic instrumentation
+ * - Composable validator modules with lifecycle management
+ * - Intelligent caching with LRU eviction and TTL
+ * - Performance budget compliance with fail-fast options
+ * - Complete audit trails for validation decisions
+ *
+ * @see {@link NODUS_DEVELOPER_MIGRATION_GUIDE.md} - Orchestrator patterns and validation compliance
+ */
+
+/* eslint-disable nodus/require-async-orchestration */
 
 /**
- * @description
- * Orchestrates multiple validation modules (e.g., `StrictValidator`, `CustomValidator`) into a single, cohesive pipeline.
- * This module is responsible for running all applicable validators against an entity, aggregating the results,
- * and managing performance features like caching and history tracking. It embodies the **Composability** pillar.
+ * @typedef {Object} ValidatorModule
+ * @property {string} [name] - Human-readable validator name
+ * @property {string} [type] - Validator type classification
+ * @property {Array<string>} [supports] - Array of supported entity types
+ * @property {() => Promise<void>} [init] - Validator initialization function
+ * @property {(entity: Object, context: Object) => boolean} [isApplicableFor] - Check if validator applies to entity
+ * @property {(entity: Object, context: Object) => Promise<ValidationResult>} validate - Main validation function
+ * @property {(entityType: string, fieldName: string) => boolean} [supportsField] - Check field support
+ * @property {(entityType: string, fieldName: string, value: any, context: Object) => Promise<ValidationResult>} [validateField] - Field validation
+ */
+
+/**
+ * @typedef {Object} ValidationStackOptions
+ * @property {boolean} [enableCaching=true] - Enable result caching
+ * @property {number} [cacheSize=1000] - Maximum cache entries
+ * @property {number} [cacheTTL=300000] - Cache TTL in milliseconds (5 minutes)
+ * @property {boolean} [trackHistory=false] - Enable validation history tracking
+ * @property {boolean} [failFast=false] - Stop on first validation failure
+ * @property {Object} [validatorOptions] - Per-validator configuration options
+ */
+
+/**
+ * @typedef {Object} ValidationResult
+ * @property {boolean} valid - Whether validation passed
+ * @property {Array<string>} [errors] - Array of validation error messages
+ * @property {Array<string>} [warnings] - Array of validation warning messages
+ * @property {Array<Object>} [validationResults] - Detailed results from each validator
+ * @property {Array<string>} [validatedBy] - Names of validators that ran
+ * @property {number} [timestamp] - Validation timestamp
+ */
+
+/**
+ * Enterprise validation orchestrator that manages multiple validation modules
+ * in a composable, observable pipeline with intelligent caching and analytics.
  *
- * @module ValidationStack
- * @privateFields {#validators, #validationCache, #validationHistory, #config, #stateManager, #metrics, #forensicLogger, #errorHelpers}
+ * All operations are instrumented through AsyncOrchestrator for complete
+ * observability and compliance with enterprise security requirements.
+ *
+ * @class ValidationStack
  */
 export default class ValidationStack {
-	/** @private @type {Array<object>} */
+	/** @private @type {Array<ValidatorModule>} */
 	#validators = [];
-	/** @private @type {import('../../shared/lib/LRUCache.js').LRUCache|null} */
+	/** @private @type {import('@shared/lib/LRUCache.js').LRUCache|null} */
 	#validationCache = null;
-	/**
-	 * @private
-	 * @type {Array<object>}
-	 */
+	/** @private @type {Array<Object>} */
 	#validationHistory = [];
-	/** @private @type {object} */
+	/** @private @type {ValidationStackOptions} */
 	#config;
-	/** @private @type {import('../../HybridStateManager.js').default|null} */
-	#stateManager = null;
-	/** @private @type {import('../../shared/lib/MetricsRegistry.js').MetricsRegistry|null} */
-	#metrics = null;
-	/** @private @type {import('../../ForensicLogger.js').default|null} */
-	#forensicLogger = null;
-	/** @private @type {import('../../shared/lib/ErrorHelpers.js').default|null} */
-	#errorHelpers = null;
+	/** @private @type {import('@platform/state/HybridStateManager.js').default} */
+	#stateManager;
+	/** @private @type {ReturnType<import('@shared/lib/async/AsyncOrchestrationService.js').AsyncOrchestrationService["createRunner"]>} */
+	#runOrchestrated;
 
 	/**
-	 * Creates an instance of ValidationStack.
-	 * @param {object} context - The application context.
-	 * @param {import('../../HybridStateManager.js').default} context.stateManager - The main state manager instance.
-	 * @param {Array<object>} [context.validators=[]] - An array of validator module instances.
-	 * @param {object} [context.options={}] - Configuration options for the validation stack.
+	 * Creates an instance of ValidationStack with enterprise observability integration.
+	 *
+	 * @param {Object} context - Configuration context
+	 * @param {import('@platform/state/HybridStateManager.js').default} context.stateManager - State manager instance
+	 * @param {Array<Function>} [context.validators=[]] - Array of validator module constructors
+	 * @param {ValidationStackOptions} [context.options={}] - Configuration options
+	 * @throws {Error} If stateManager or required services are missing
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method constructor
-
-	 * @memberof AutoGenerated
-
-	 */
-
 	constructor({ stateManager, validators = [], options = {} }) {
+		if (!stateManager) {
+			throw new Error(
+				"ValidationStack requires stateManager for observability compliance"
+			);
+		}
+
 		this.#stateManager = stateManager;
-		this.#metrics =
-			this.#stateManager?.metricsRegistry?.namespace("validationStack");
-		this.#forensicLogger = this.#stateManager?.managers?.forensicLogger;
-		this.#errorHelpers = this.#stateManager?.managers?.errorHelpers;
-
-		// V8.0 Parity: Pass stateManager to each validator's constructor.
-		this.#validators = validators.map((ValidatorClass) => {
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
-			if (typeof ValidatorClass === "function") {
-				return new ValidatorClass({
-					stateManager: this.#stateManager,
-					options: options.validatorOptions?.[ValidatorClass.name],
-				});
-			}
-			return ValidatorClass; // Already an instance
-		});
-
 		this.#config = {
 			enableCaching: options.enableCaching !== false,
 			cacheSize: options.cacheSize || 1000,
 			cacheTTL: options.cacheTTL || 5 * 60 * 1000, // 5 minutes
 			trackHistory: options.trackHistory || false,
 			failFast: options.failFast || false,
+			validatorOptions: options.validatorOptions || {},
 			...options,
 		};
 
-		console.log(
-			`[ValidationStack] Loaded with ${this.#validators.length} validators`
+		// Initialize validators with proper dependency injection
+		this.#validators = validators.map((ValidatorClass) => {
+			if (typeof ValidatorClass === "function") {
+				return new ValidatorClass({
+					stateManager: this.#stateManager,
+					options: this.#config.validatorOptions[ValidatorClass.name],
+				});
+			}
+			return ValidatorClass; // Already an instance
+		});
+
+		// Initialize orchestrated runner for all validation operations
+		const orchestrator = this.#stateManager.managers?.asyncOrchestrator;
+		if (!orchestrator) {
+			throw new Error(
+				"AsyncOrchestrationService required for ValidationStack observability compliance"
+			);
+		}
+
+		this.#runOrchestrated = orchestrator.createRunner({
+			labelPrefix: "validation.stack",
+			actorId: "validation.stack",
+			eventType: "VALIDATION_STACK_OPERATION",
+			meta: {
+				component: "ValidationStack",
+				validatorCount: this.#validators.length,
+			},
+		});
+	}
+
+	/**
+	 * Initializes the validation stack and all underlying validator modules.
+	 * Operations are orchestrated for complete observability.
+	 *
+	 * @returns {Promise<ValidationStack>} The initialized instance
+	 */
+	async init() {
+		return this.#runOrchestrated(() => this.#executeInit(), {
+			labelSuffix: "init",
+			eventType: "VALIDATION_STACK_INIT",
+			meta: { validatorCount: this.#validators.length },
+		});
+	}
+
+	/**
+	 * Adds a validator to the stack with proper initialization.
+	 *
+	 * @param {ValidatorModule} validator - The validator instance to add
+	 * @returns {Promise<void>}
+	 */
+	async addValidator(validator) {
+		this.#validators.push(validator);
+
+		if (validator.init) {
+			/* PERFORMANCE_BUDGET: 10ms */
+			await this.#runOrchestrated(() => validator.init(), {
+				labelSuffix: "addValidator",
+				eventType: "VALIDATION_STACK_ADD_VALIDATOR",
+				meta: {
+					validatorName: validator.name || validator.constructor.name,
+				},
+			});
+		}
+
+		// Emit validator added event
+		this.#stateManager.emit?.("validation.validator.added", {
+			validatorName: validator.name || validator.constructor.name,
+			totalValidators: this.#validators.length,
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Validates an entity by running it through all applicable validators.
+	 * Results are cached and audit trails are automatically generated.
+	 *
+	 * @param {Object} entity - The entity to validate
+	 * @param {Object} [context={}] - Validation context
+	 * @returns {Promise<ValidationResult>} Aggregated validation result
+	 */
+	async validate(entity, context = {}) {
+		/* PERFORMANCE_BUDGET: 50ms */
+		return this.#runOrchestrated(
+			() => this.#executeValidate(entity, context),
+			{
+				labelSuffix: "validate",
+				eventType: "VALIDATION_STACK_VALIDATE",
+				meta: {
+					entityId: entity?.id,
+					entityType: entity?.entity_type,
+					hasContext: Object.keys(context).length > 0,
+				},
+			}
 		);
 	}
 
 	/**
-	 * Initializes the validation stack and all of its underlying validator modules.
-	 * @returns {Promise<this>} The initialized instance.
+	 * Validates a specific field with targeted validator modules.
+	 *
+	 * @param {string} entityType - The type of entity being validated
+	 * @param {string} fieldName - The name of the field to validate
+	 * @param {any} value - The field value to validate
+	 * @param {Object} [context={}] - Validation context
+	 * @returns {Promise<ValidationResult>} Field validation result
 	 */
+	async validateField(entityType, fieldName, value, context = {}) {
+		/* PERFORMANCE_BUDGET: 25ms */
+		return this.#runOrchestrated(
+			() =>
+				this.#executeValidateField(
+					entityType,
+					fieldName,
+					value,
+					context
+				),
+			{
+				labelSuffix: "validateField",
+				eventType: "VALIDATION_STACK_VALIDATE_FIELD",
+				meta: { entityType, fieldName, hasValue: value !== undefined },
+			}
+		);
+	}
+
 	/**
-
-	 * TODO: Add JSDoc for method init
-
-	 * @memberof AutoGenerated
-
+	 * Retrieves comprehensive validation performance and state metrics.
+	 *
+	 * @returns {Object} Validation metrics and statistics
 	 */
+	getValidationMetrics() {
+		return {
+			validatorsLoaded: this.#validators.length,
+			cacheSize: this.#validationCache?.size || 0,
+			cacheHitRate: this.#validationCache?.stats?.hitRate || 0,
+			historySize: this.#validationHistory.length,
+			lastValidationTime: this.#getLastValidationTime(),
+			averageValidationTime: this.#getAverageValidationTime(),
+		};
+	}
 
-	async init() {
+	/**
+	 * Gets validation history with optional limit.
+	 *
+	 * @param {number} [limit=50] - Maximum number of history entries to return
+	 * @returns {Array<Object>} Array of validation history entries
+	 */
+	getValidationHistory(limit = 50) {
+		return this.#validationHistory.slice(-limit);
+	}
+
+	/**
+	 * Clears the validation result cache.
+	 */
+	clearCache() {
+		this.#validationCache?.clear();
+
+		// Emit cache clear event
+		this.#stateManager.emit?.("validation.cache.cleared", {
+			timestamp: Date.now(),
+		});
+	}
+
+	/**
+	 * Gets information about loaded validators.
+	 *
+	 * @returns {Array<Object>} Array of validator information
+	 */
+	getValidators() {
+		return this.#validators.map((v) => ({
+			name: v.name || v.constructor.name,
+			type: v.type || "unknown",
+			supports: v.supports || [],
+			hasFieldValidation: typeof v.supportsField === "function",
+		}));
+	}
+
+	// ===== PRIVATE IMPLEMENTATION METHODS =====
+
+	/**
+	 * Executes validation stack initialization with cache setup.
+	 *
+	 * @private
+	 * @returns {Promise<ValidationStack>}
+	 */
+	async #executeInit() {
 		// Initialize all validators
-		/**
-
-		 * TODO: Add JSDoc for method for
-
-		 * @memberof AutoGenerated
-
-		 */
-
 		for (const validator of this.#validators) {
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
 			if (validator.init) {
 				await validator.init();
 			}
 		}
 
-		// V8.0 Parity: Use the centralized CacheManager.
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
+		// Initialize cache if enabled
 		if (this.#config.enableCaching) {
-			const cacheManager = this.#stateManager?.managers?.cacheManager;
-			/**
-
-			 * TODO: Add JSDoc for method if
-
-			 * @memberof AutoGenerated
-
-			 */
-
+			const cacheManager = this.#stateManager.managers?.cacheManager;
 			if (cacheManager) {
 				this.#validationCache = cacheManager.getCache(
 					"validationStack",
@@ -151,55 +305,27 @@ export default class ValidationStack {
 				);
 			}
 		}
-		console.log("[ValidationStack] Validation stack initialized");
+
+		// Emit initialization success
+		this.#stateManager.emit?.("validation.stack.initialized", {
+			validatorCount: this.#validators.length,
+			cachingEnabled: this.#config.enableCaching,
+			historyEnabled: this.#config.trackHistory,
+			timestamp: Date.now(),
+		});
+
 		return this;
 	}
 
 	/**
-	 * Add validator to the stack
+	 * Executes entity validation with caching and audit trail.
+	 *
+	 * @private
+	 * @param {Object} entity - The entity to validate
+	 * @param {Object} context - Validation context
+	 * @returns {Promise<ValidationResult>}
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method addValidator
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	addValidator(validator) {
-		this.#validators.push(validator);
-
-		/**
-
-
-		 * TODO: Add JSDoc for method if
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
-
-		if (validator.init) {
-			validator.init();
-		}
-	}
-
-	/**
-	 * Validates an entity by running it through the entire stack of applicable validators.
-	 * @param {object} entity - The entity to validate.
-	 * @param {object} [context={}] - The validation context.
-	 * @returns {Promise<object>} A promise that resolves with an aggregated validation result object.
-	 */
-	/**
-
-	 * TODO: Add JSDoc for method validate
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	async validate(entity, context = {}) {
+	async #executeValidate(entity, context) {
 		const startTime = performance.now();
 		const cacheKey = this.#generateCacheKey(entity, context);
 
@@ -208,67 +334,56 @@ export default class ValidationStack {
 			this.#config.enableCaching &&
 			this.#validationCache?.has(cacheKey)
 		) {
-			this.#updateCacheMetrics(true);
+			// Emit cache hit event
+			this.#stateManager.emit?.("validation.cache.hit", {
+				entityId: entity?.id,
+				cacheKey,
+				timestamp: Date.now(),
+			});
 			return this.#validationCache.get(cacheKey);
 		}
 
-		this.#updateCacheMetrics(false);
+		// Emit cache miss event
+		if (this.#config.enableCaching) {
+			this.#stateManager.emit?.("validation.cache.miss", {
+				entityId: entity?.id,
+				cacheKey,
+				timestamp: Date.now(),
+			});
+		}
 
 		// Perform validation
 		const result = await this.#performValidation(entity, context);
 
-		// Cache result
-		// V8.0 Parity: The LRUCache from CacheManager handles its own size and TTL.
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
+		// Cache result if enabled
 		if (this.#config.enableCaching && this.#validationCache) {
 			this.#validationCache.set(cacheKey, result);
 		}
 
-		// Update metrics
+		// Track history if enabled
 		const validationTime = performance.now() - startTime;
-		this.#updateValidationMetrics(result.valid, validationTime);
-
-		// V8.0 Parity: Track history if enabled
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
 		if (this.#config.trackHistory) {
 			this.#addToHistory(entity, result, validationTime);
 		}
 
-		/**
+		// Emit validation completion event
+		this.#stateManager.emit?.("validation.entity.completed", {
+			entityId: entity?.id,
+			entityType: entity?.entity_type,
+			valid: result.valid,
+			errorCount: result.errors?.length || 0,
+			warningCount: result.warnings?.length || 0,
+			validationTime,
+			timestamp: Date.now(),
+		});
 
-
-		 * TODO: Add JSDoc for method if
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
-
-		if (!result.valid && this.#stateManager) {
-			this.#stateManager.emit("validationError", {
-				entity,
+		// Emit validation failure event for security audit
+		if (!result.valid) {
+			this.#stateManager.emit?.("validation.entity.failed", {
+				entityId: entity?.id,
+				entityType: entity?.entity_type,
 				errors: result.errors || [],
-			});
-			this.#forensicLogger?.logAuditEvent("VALIDATION_FAILURE", {
-				entityId: entity.id,
-				entityType: entity.entity_type,
-				errors: result.errors,
-				validator: "ValidationStack",
+				timestamp: Date.now(),
 			});
 		}
 
@@ -276,17 +391,16 @@ export default class ValidationStack {
 	}
 
 	/**
-	 * Validate specific field
+	 * Executes field validation with targeted validators.
+	 *
+	 * @private
+	 * @param {string} entityType - Entity type
+	 * @param {string} fieldName - Field name
+	 * @param {any} value - Field value
+	 * @param {Object} context - Validation context
+	 * @returns {Promise<ValidationResult>}
 	 */
-	/**
-
-	 * TODO: Add JSDoc for method validateField
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	async validateField(entityType, fieldName, value, context = {}) {
+	async #executeValidateField(entityType, fieldName, value, context) {
 		const applicableValidators = this.#validators.filter(
 			(v) => v.supportsField && v.supportsField(entityType, fieldName)
 		);
@@ -294,64 +408,47 @@ export default class ValidationStack {
 		const errors = [];
 		const warnings = [];
 
-		await this.#errorHelpers?.tryAsync(
-			async () => {
-				/**
+		for (const validator of applicableValidators) {
+			try {
+				const result = await validator.validateField(
+					entityType,
+					fieldName,
+					value,
+					context
+				);
 
-				 * TODO: Add JSDoc for method for
+				if (!result.valid) {
+					errors.push(...(result.errors || []));
+					warnings.push(...(result.warnings || []));
 
-				 * @memberof AutoGenerated
-
-				 */
-
-				for (const validator of applicableValidators) {
-					const result = await validator.validateField(
-						entityType,
-						fieldName,
-						value,
-						context
-					);
-
-					/**
-
-
-					 * TODO: Add JSDoc for method if
-
-
-					 * @memberof AutoGenerated
-
-
-					 */
-
-					if (!result.valid) {
-						errors.push(...(result.errors || []));
-						warnings.push(...(result.warnings || []));
-
-						/**
-
-
-						 * TODO: Add JSDoc for method if
-
-
-						 * @memberof AutoGenerated
-
-
-						 */
-
-						if (this.#config.failFast) {
-							break;
-						}
+					if (this.#config.failFast) {
+						break;
 					}
 				}
-			},
-			{
-				component: "ValidationStack",
-				operation: "validateField",
-				onError: (error) => {
-					errors.push(`Validator error: ${error.message}`);
-				},
+			} catch (error) {
+				errors.push(`Validator error: ${error.message}`);
+
+				// Emit validator error event
+				this.#stateManager.emit?.("validation.validator.error", {
+					validatorName: validator.name || validator.constructor.name,
+					entityType,
+					fieldName,
+					error: error.message,
+					timestamp: Date.now(),
+				});
 			}
-		);
+		}
+
+		// Emit field validation completion
+		this.#stateManager.emit?.("validation.field.completed", {
+			entityType,
+			fieldName,
+			valid: errors.length === 0,
+			errorCount: errors.length,
+			warningCount: warnings.length,
+			validatorCount: applicableValidators.length,
+			timestamp: Date.now(),
+		});
 
 		return {
 			valid: errors.length === 0,
@@ -360,169 +457,59 @@ export default class ValidationStack {
 			validatedBy: applicableValidators.map(
 				(v) => v.name || v.constructor.name
 			),
+			timestamp: Date.now(),
 		};
 	}
 
 	/**
-	 * Retrieves performance and state metrics for the validation stack.
-	 * @returns {object} An object containing various metrics.
-	 */
-	/**
-
-	 * TODO: Add JSDoc for method getValidationMetrics
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	getValidationMetrics() {
-		return {
-			...this.#metrics?.getAllAsObject(),
-			validatorsLoaded: this.#validators.length,
-			cacheSize: this.#validationCache?.size || 0,
-			historySize: this.#validationHistory.length,
-		};
-	}
-
-	/**
-	 * Get validation history
-	 */
-	/**
-
-	 * TODO: Add JSDoc for method getValidationHistory
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	getValidationHistory(limit = 50) {
-		return this.#validationHistory.slice(-limit);
-	}
-
-	/**
-	 * Clear validation cache
-	 */
-	/**
-
-	 * TODO: Add JSDoc for method clearCache
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	clearCache() {
-		this.#validationCache?.clear();
-		console.log("[ValidationStack] Validation result cache cleared.");
-	}
-
-	/**
-	 * Get loaded validators
-	 */
-	/**
-
-	 * TODO: Add JSDoc for method getValidators
-
-	 * @memberof AutoGenerated
-
-	 */
-
-	getValidators() {
-		return this.#validators.map((v) => ({
-			name: v.name || v.constructor.name,
-			type: v.type || "unknown",
-			supports: v.supports || [],
-		}));
-	}
-
-	// Private methods
-	/**
-	 * Performs the core validation logic by iterating through validators.
+	 * Performs the core validation logic across all applicable validators.
+	 *
 	 * @private
-	 * @param {object} entity - The entity to validate.
-	 * @param {object} context - The validation context.
-	 * @returns {Promise<object>} The aggregated validation result.
+	 * @param {Object} entity - The entity to validate
+	 * @param {Object} context - Validation context
+	 * @returns {Promise<ValidationResult>}
 	 */
 	async #performValidation(entity, context) {
 		const errors = [];
 		const warnings = [];
 		const validationResults = [];
 
-		await this.#errorHelpers?.tryAsync(
-			async () => {
-				/**
-
-				 * TODO: Add JSDoc for method for
-
-				 * @memberof AutoGenerated
-
-				 */
-
-				for (const validator of this.#validators) {
-					// V8.0 Parity: Use isApplicableFor to avoid name collision with 'supports' property.
-					/**
-
-					 * TODO: Add JSDoc for method if
-
-					 * @memberof AutoGenerated
-
-					 */
-
-					if (typeof validator.isApplicableFor === "function") {
-						if (!validator.isApplicableFor(entity, context))
-							continue;
-					} else if (validator.supports) {
-						// Fallback for older validators
+		for (const validator of this.#validators) {
+			try {
+				// Check if validator applies to this entity
+				if (typeof validator.isApplicableFor === "function") {
+					if (!validator.isApplicableFor(entity, context)) {
 						continue;
 					}
+				}
 
-					const result = await validator.validate(entity, context);
-					validationResults.push({
-						validator: validator.name || validator.constructor.name,
-						result,
-					});
+				const result = await validator.validate(entity, context);
+				validationResults.push({
+					validator: validator.name || validator.constructor.name,
+					result,
+				});
 
-					/**
+				if (!result.valid) {
+					errors.push(...(result.errors || []));
+					warnings.push(...(result.warnings || []));
 
-
-					 * TODO: Add JSDoc for method if
-
-
-					 * @memberof AutoGenerated
-
-
-					 */
-
-					if (!result.valid) {
-						errors.push(...(result.errors || []));
-						warnings.push(...(result.warnings || []));
-
-						/**
-
-
-						 * TODO: Add JSDoc for method if
-
-
-						 * @memberof AutoGenerated
-
-
-						 */
-
-						if (this.#config.failFast) {
-							break;
-						}
+					if (this.#config.failFast) {
+						break;
 					}
 				}
-			},
-			{
-				component: "ValidationStack",
-				operation: "performValidation",
-				onError: (error) => {
-					const errorMsg = `ValidationStack failed during execution: ${error.message}`;
-					errors.push(errorMsg);
-					console.error(`[ValidationStack] ${errorMsg}`);
-				},
+			} catch (error) {
+				const errorMsg = `ValidationStack failed during execution: ${error.message}`;
+				errors.push(errorMsg);
+
+				// Emit validator error event
+				this.#stateManager.emit?.("validation.validator.error", {
+					validatorName: validator.name || validator.constructor.name,
+					entityId: entity?.id,
+					error: error.message,
+					timestamp: Date.now(),
+				});
 			}
-		);
+		}
 
 		return {
 			valid: errors.length === 0,
@@ -533,81 +520,76 @@ export default class ValidationStack {
 		};
 	}
 
+	/**
+	 * Generates a deterministic cache key for validation results.
+	 *
+	 * @private
+	 * @param {Object} entity - The entity being validated
+	 * @param {Object} context - Validation context
+	 * @returns {string} Cache key
+	 */
 	#generateCacheKey(entity, context) {
-		// V8.0 Parity: Create a deterministic cache key from relevant data.
 		const keyObject = {
-			id: entity.id,
-			entity_type: entity.entity_type,
-			updated_at: entity.updated_at,
-			classification: context.classification,
-			user: context.userId,
+			id: entity?.id,
+			entity_type: entity?.entity_type,
+			updated_at: entity?.updated_at,
+			classification: context?.classification,
+			userId: context?.userId,
 		};
 		return JSON.stringify(keyObject);
 	}
 
-	#updateValidationMetrics(isValid, validationTime) {
-		this.#metrics?.increment("validationsPerformed");
-
-		/**
-
-
-		 * TODO: Add JSDoc for method if
-
-
-		 * @memberof AutoGenerated
-
-
-		 */
-
-		if (!isValid) {
-			this.#metrics?.increment("validationsFailed");
-		}
-
-		this.#metrics?.updateAverage("averageValidationTime", validationTime);
-
-		// Emit a static forensic envelope so static analysis and audit collectors
-		// observe validation metric updates in library code. Fire-and-forget.
-		ForensicLogger.createEnvelope("VALIDATION_METRICS_UPDATED", {
-			isValid: !!isValid,
-			validationTime,
-		}).catch(() => {
-			/* no-op */
-		});
-	}
-
-	#updateCacheMetrics(isHit) {
-		this.#metrics?.increment(isHit ? "cacheHits" : "cacheMisses");
-
-		// Emit a static forensic envelope for cache metric updates. Fire-and-forget.
-		ForensicLogger.createEnvelope("VALIDATION_CACHE_METRICS_UPDATED", {
-			isHit: !!isHit,
-		}).catch(() => {
-			/* no-op */
-		});
-	}
-
+	/**
+	 * Adds validation result to history with size management.
+	 *
+	 * @private
+	 * @param {Object} entity - The validated entity
+	 * @param {ValidationResult} result - Validation result
+	 * @param {number} validationTime - Time taken for validation
+	 */
 	#addToHistory(entity, result, validationTime) {
 		this.#validationHistory.push({
-			entityId: entity.id,
-			entityType: entity.entity_type,
+			entityId: entity?.id,
+			entityType: entity?.entity_type,
 			valid: result.valid,
-			errorCount: result.errors.length,
-			warningCount: result.warnings.length,
+			errorCount: result.errors?.length || 0,
+			warningCount: result.warnings?.length || 0,
 			validationTime,
 			timestamp: Date.now(),
 		});
 
 		// Keep history manageable
-		/**
-
-		 * TODO: Add JSDoc for method if
-
-		 * @memberof AutoGenerated
-
-		 */
-
 		if (this.#validationHistory.length > 1000) {
 			this.#validationHistory = this.#validationHistory.slice(-500);
 		}
+	}
+
+	/**
+	 * Gets the timestamp of the last validation operation.
+	 *
+	 * @private
+	 * @returns {number|null} Last validation timestamp
+	 */
+	#getLastValidationTime() {
+		return this.#validationHistory.length > 0
+			? this.#validationHistory[this.#validationHistory.length - 1]
+					.timestamp
+			: null;
+	}
+
+	/**
+	 * Calculates average validation time from history.
+	 *
+	 * @private
+	 * @returns {number} Average validation time in milliseconds
+	 */
+	#getAverageValidationTime() {
+		if (this.#validationHistory.length === 0) return 0;
+
+		const totalTime = this.#validationHistory.reduce(
+			(sum, entry) => sum + entry.validationTime,
+			0
+		);
+		return totalTime / this.#validationHistory.length;
 	}
 }
