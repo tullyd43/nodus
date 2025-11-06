@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "src",         # The main Tauri app
+    "nodus-engine" # Our new shared library
+]

@@ -50,7 +50,7 @@ export class ManifestPluginSystem {
 	#currentUser;
 
 	// Plugin system state
-	/** @private @type {import('../state/QueryService.js').QueryService|null} */
+	/** @private @type {import('../../../../src/platform/state/QueryService.js').QueryService|null} */
 	#queryService = null;
 	/** @private @type {Map<string, object>} */
 	#loadedPlugins = new Map();

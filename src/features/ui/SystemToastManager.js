@@ -6,7 +6,7 @@
  */
 import { ForensicLogger } from "@shared/security/ForensicLogger.js";
 
-import { DateCore } from "./DateUtils.js";
+import { DateCore } from "../../../__DEPRECATED__/JS Runtime/shared/lib/DateUtils.js";
 import { SafeDOM } from "./SafeDOM.js";
 
 /**

@@ -192,7 +192,7 @@ export class DatabaseOptimizer {
 				this.#startAutoSuggestions();
 			}
 
-á
+			á;
 			this.#dispatchAction("db_optimizer.initialize.success", {});
 			return true;
 		});
