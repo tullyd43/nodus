@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use chrono::{DateTime, Utc};
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
@@ -33,7 +34,7 @@ pub struct ResponseCache {
 #[derive(Debug, Clone)]
 struct CachedResponse {
     pub response: SecureResponse,
-    pub cached_at: Instant,
+    pub cached_at: DateTime<Utc>,
     pub ttl: Duration,
     pub classification: ClassificationLevel,
     pub access_count: u64,
@@ -106,7 +107,10 @@ impl ResponseCache {
         
         if let Some(cached) = cache.get_mut(key) {
             // Check if cache entry is still valid
-            if cached.cached_at.elapsed() < cached.ttl {
+                    // Compare using chrono DateTime since `Instant` is not serializable
+                    let age = chrono::Utc::now().signed_duration_since(cached.cached_at);
+                    let ttl_chrono = chrono::Duration::from_std(cached.ttl).unwrap_or(chrono::Duration::seconds(0));
+                    if age < ttl_chrono {
                 // Update access statistics
                 cached.access_count += 1;
                 stats.cache_hits += 1;
@@ -148,7 +152,7 @@ impl ResponseCache {
 
         let cached_response = CachedResponse {
             response: response.clone(),
-            cached_at: Instant::now(),
+            cached_at: chrono::Utc::now(),
             ttl,
             classification: ClassificationLevel::Internal, // Should be determined from response
             access_count: 0,
@@ -307,7 +311,9 @@ impl ResponseCache {
             let cache = self.cache.read().await;
             keys_to_remove = cache.iter()
                 .filter_map(|(key, cached)| {
-                    if cached.cached_at.elapsed() >= cached.ttl {
+                    let age = chrono::Utc::now().signed_duration_since(cached.cached_at);
+                    let ttl_chrono = chrono::Duration::from_std(cached.ttl).unwrap_or(chrono::Duration::seconds(0));
+                    if age >= ttl_chrono {
                         Some(key.clone())
                     } else {
                         None
@@ -442,7 +448,7 @@ pub struct CacheExportEntry {
     pub url: String,
     pub status_code: u16,
     pub size_bytes: usize,
-    pub cached_at: Instant,
+    pub cached_at: DateTime<Utc>,
     pub ttl_seconds: u64,
     pub access_count: u64,
     pub classification: ClassificationLevel,

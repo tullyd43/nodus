@@ -8,12 +8,13 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use constant_time_eq::constant_time_eq;
+use std::fmt;
 
 pub mod mac_engine;
 pub mod classification_crypto;
 pub mod security_manager;
-pub mod information_flow;
-pub mod tenant_policy;
+// pub mod information_flow; // consolidated/not present as separate file
+// pub mod tenant_policy; // consolidated/not present as separate file
 
 pub use mac_engine::MACEngine;
 pub use classification_crypto::ClassificationCrypto;
@@ -27,6 +28,7 @@ pub use tenant_policy::TenantPolicyService;
 #[serde(rename_all = "lowercase")]
 pub enum ClassificationLevel {
     Unclassified,
+    Internal,
     Confidential, 
     Secret,
     NatoSecret,
@@ -37,9 +39,10 @@ impl ClassificationLevel {
     pub fn rank(&self) -> u8 {
         match self {
             ClassificationLevel::Unclassified => 0,
-            ClassificationLevel::Confidential => 1,
-            ClassificationLevel::Secret => 2,
-            ClassificationLevel::NatoSecret => 3,
+            ClassificationLevel::Internal => 1,
+            ClassificationLevel::Confidential => 2,
+            ClassificationLevel::Secret => 3,
+            ClassificationLevel::NatoSecret => 4,
         }
     }
     
@@ -47,11 +50,25 @@ impl ClassificationLevel {
     pub fn from_str(s: &str) -> Result<Self, SecurityError> {
         match s.to_lowercase().as_str() {
             "unclassified" => Ok(ClassificationLevel::Unclassified),
+            "internal" => Ok(ClassificationLevel::Internal),
             "confidential" => Ok(ClassificationLevel::Confidential),
             "secret" => Ok(ClassificationLevel::Secret),
             "nato_secret" => Ok(ClassificationLevel::NatoSecret),
             _ => Err(SecurityError::InvalidClassification(s.to_string())),
         }
+    }
+}
+
+impl fmt::Display for ClassificationLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ClassificationLevel::Unclassified => "UNCLASSIFIED",
+            ClassificationLevel::Internal => "INTERNAL",
+            ClassificationLevel::Confidential => "CONFIDENTIAL",
+            ClassificationLevel::Secret => "SECRET",
+            ClassificationLevel::NatoSecret => "NATO_SECRET",
+        };
+        write!(f, "{}", s)
     }
 }
 

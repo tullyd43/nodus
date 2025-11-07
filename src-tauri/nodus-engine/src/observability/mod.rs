@@ -14,14 +14,16 @@ use crate::security::{SecurityLabel, ClassificationLevel};
 
 pub mod forensic_logger;
 pub mod metrics_registry;
-pub mod action_dispatcher;
-pub mod async_orchestrator;
+// action_dispatcher and async_orchestrator are implemented at crate root (consolidated)
+// pub mod action_dispatcher;
+// pub mod async_orchestrator;
 pub mod automatic_instrumentation;
 
 pub use forensic_logger::ForensicLogger;
 pub use metrics_registry::MetricsRegistry;
-pub use action_dispatcher::ActionDispatcher;
-pub use async_orchestrator::AsyncOrchestrator;
+// Re-export root-level implementations instead of expecting them under observability/
+pub use crate::action_dispatcher::ActionDispatcher;
+pub use crate::async_orchestrator::AsyncOrchestrator;
 pub use automatic_instrumentation::AutomaticInstrumentation;
 
 /// Observability context for operation tracking
@@ -40,7 +42,7 @@ pub struct ObservabilityContext {
 }
 
 /// Performance state for automatic optimization decisions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PerformanceState {
     Normal,
     HighLoad,

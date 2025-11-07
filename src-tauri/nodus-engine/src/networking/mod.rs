@@ -76,7 +76,7 @@ pub struct SecureRequest {
 }
 
 /// HTTP methods for network requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HttpMethod {
     GET,
     POST,
@@ -597,6 +597,8 @@ impl SecureNetworkTransport {
             .map_err(|e| NetworkError::ResponseError(e.to_string()))?
             .to_vec();
 
+        let bytes_received = body.len() as u64;
+
         Ok(SecureResponse {
             request_id: request.request_id,
             status_code,
@@ -613,7 +615,7 @@ impl SecureNetworkTransport {
                 request_time_ms: 0,
                 response_time_ms: 0,
                 bytes_sent: request.body.as_ref().map(|b| b.len()).unwrap_or(0) as u64,
-                bytes_received: body.len() as u64,
+                bytes_received,
                 interceptors_executed: Vec::new(),
             },
         })

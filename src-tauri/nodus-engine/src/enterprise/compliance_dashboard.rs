@@ -641,6 +641,10 @@ impl ComplianceDashboard {
         
         match current_license.tier {
             LicenseTier::Community => vec![], // No compliance features
+            LicenseTier::Pro => vec![ // Pro has a subset of enterprise frameworks for now
+                ComplianceFramework::GDPR,
+                ComplianceFramework::ISO27001,
+            ],
             LicenseTier::Enterprise => vec![
                 ComplianceFramework::SOX,
                 ComplianceFramework::HIPAA,
@@ -704,23 +708,23 @@ impl ComplianceDashboard {
             .map_err(|e| ComplianceError::EvidenceCollectionFailed {
                 reason: format!("Failed to query forensic logs: {}", e)
             })?;
-        
-        // Convert forensic logs to audit evidence
+
+        // Convert forensic envelopes to audit evidence
         let mut evidence = Vec::new();
-        for log in forensic_logs {
+        for env in forensic_logs {
             evidence.push(AuditEvidence {
-                evidence_id: log.id,
-                evidence_type: self.map_log_type_to_evidence_type(&log.event_type),
-                collection_date: log.timestamp,
+                evidence_id: env.envelope_id.to_string(),
+                evidence_type: self.map_log_type_to_evidence_type(&env.event_type),
+                collection_date: env.timestamp,
                 source_system: "Nodus".to_string(),
-                description: log.message,
-                hash: log.hash,
-                classification: log.classification,
+                description: env.action.clone(),
+                hash: env.audit_trail_hash.clone(),
+                classification: env.classification.clone(),
                 retention_period: Duration::days(2555), // 7 years for SOX
                 chain_of_custody: vec![CustodyEvent {
                     event_id: Uuid::new_v4().to_string(),
                     event_type: CustodyEventType::Created,
-                    timestamp: log.timestamp,
+                    timestamp: env.timestamp,
                     actor: "System".to_string(),
                     details: "Automatically collected by forensic logger".to_string(),
                 }],

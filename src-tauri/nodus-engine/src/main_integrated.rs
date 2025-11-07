@@ -13,38 +13,28 @@ use tokio::sync::RwLock;
 use tracing::{info, error, warn};
 use std::collections::HashMap;
 
-// Import all core modules
-mod state;
-mod security;
-mod database;
-mod license;
-mod observability;
-mod networking;
-mod commands;
-mod enterprise;
-
-// Import specific components
-use state::AppState;
-use security::{SecurityManager, MACEngine};
-use database::DatabaseManager;
-use license::LicenseManager;
-use observability::{
+// Use core crate modules
+use crate::state::AppState;
+use crate::security::{SecurityManager, MACEngine};
+use crate::database::DatabaseManager;
+use crate::license::LicenseManager;
+use crate::observability::{
     ForensicLogger, MetricsRegistry, AutomaticInstrumentation,
-    ActionDispatcher, AsyncOrchestrator
 };
-use networking::{SecureTransport, ResponseCache};
-use enterprise::{
+use crate::action_dispatcher::ActionDispatcher;
+use crate::async_orchestrator::AsyncOrchestrator;
+use crate::networking::{SecureNetworkTransport as SecureTransport, ResponseCache};
+use crate::enterprise::{
     EnterpriseManager, EnterpriseConfig,
-    EnterprisePluginSystem, ComplianceDashboard,
-    MultiTenantSystem, EnterpriseAPIGateway
+    ComplianceDashboard,
 };
 
-// Import command handlers
-use commands::{
-    security_commands::{authenticate_user, encrypt_data, assess_threat},
-    data_commands::{read_entity, write_entity, query_entities, batch_operations},
-    observability_commands::{get_metrics_snapshot, export_audit_trail, get_performance_stats},
-    license_commands::{check_feature_availability, validate_license, get_license_info},
+// Import command handlers from the commands module
+use crate::commands::{
+    security::{authenticate_user, encrypt_data, assess_threat},
+    data::{read_entity, write_entity, query_entities, batch_operations},
+    observability::{get_metrics_snapshot, export_audit_trail, get_performance_stats},
+    license::{check_feature_availability, validate_license, get_license_info},
 };
 
 /// Tauri application builder with complete Nodus integration
@@ -65,16 +55,16 @@ impl NodusApplication {
         // 1. Initialize License Manager (first - determines available features)
         info!("📜 Initializing License Manager");
         let license_manager = Arc::new(LicenseManager::new().await?);
-        let current_license = license_manager.get_current_license().await;
-        info!("License tier detected: {:?}", current_license.tier);
+    let current_license_tier = license_manager.get_tier().await;
+    info!("License tier detected: {:?}", current_license_tier);
         
         // 2. Initialize Security Infrastructure
         info!("🛡️ Initializing Security Infrastructure");
-        let mac_engine = Arc::new(MACEngine::new().await?);
+        let mac_engine = Arc::new(MACEngine::new());
         let security_manager = Arc::new(SecurityManager::new(
             mac_engine.clone(),
             license_manager.clone(),
-        ).await?);
+        ));
         
         // 3. Initialize Database with MAC Enforcement
         info!("💾 Initializing Database with MAC Enforcement");
@@ -89,53 +79,41 @@ impl NodusApplication {
             database_manager.clone(),
             security_manager.clone(),
         ).await?);
-        
-        let metrics_registry = Arc::new(MetricsRegistry::new(
-            license_manager.clone(),
-        ).await?);
-        
+
+        let metrics_registry = Arc::new(MetricsRegistry::new());
+
         let automatic_instrumentation = Arc::new(AutomaticInstrumentation::new(
-            forensic_logger.clone(),
-            metrics_registry.clone(),
             license_manager.clone(),
-        ).await?);
+        ));
         
         // 5. Initialize Execution Gateways (replaces manual ActionDispatcher/AsyncOrchestrator)
         info!("⚡ Initializing Automatic Execution Gateways");
         let action_dispatcher = Arc::new(ActionDispatcher::new(
-            automatic_instrumentation.clone(),
-            security_manager.clone(),
-        ).await?);
-        
+            license_manager.clone(),
+        ));
+
         let async_orchestrator = Arc::new(AsyncOrchestrator::new(
-            automatic_instrumentation.clone(),
-            security_manager.clone(),
-        ).await?);
+            license_manager.clone(),
+        ));
         
         // 6. Initialize Secure Networking
         info!("🌐 Initializing Secure Networking");
         let secure_transport = Arc::new(SecureTransport::new(
-            security_manager.clone(),
             license_manager.clone(),
         ).await?);
-        
-        let response_cache = Arc::new(ResponseCache::new(
-            license_manager.clone(),
-        ).await?);
+
+        let response_cache = Arc::new(ResponseCache::new(1000));
         
         // 7. Create Application State
         info!("🏗️ Creating Application State");
         let app_state = Arc::new(AppState::new(
             security_manager.clone(),
             database_manager.clone(),
-            license_manager.clone(),
-            forensic_logger.clone(),
             metrics_registry.clone(),
+            forensic_logger.clone(),
             action_dispatcher.clone(),
-            async_orchestrator.clone(),
-            secure_transport.clone(),
-            response_cache.clone(),
-        ).await?);
+            license_manager.clone(),
+        ));
         
         // 8. Initialize Enterprise Features (if licensed)
         info!("🏢 Initializing Enterprise Features");

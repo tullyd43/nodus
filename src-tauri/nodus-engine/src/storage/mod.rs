@@ -16,12 +16,19 @@ use crate::observability::instrument::instrument;
 use crate::policy::policy_snapshot::current_policy;
 
 // Sub-modules
+// The IndexedDB adapter uses `web-sys`/`wasm-bindgen` types which are
+// not Send/Sync and will fail to compile for native targets. Gate the
+// module so it's only compiled for wasm32 targets; native builds should
+// use other adapters (sqlite/memory/etc.). This avoids many platform
+// specific compilation errors when running the desktop build.
+#[cfg(target_arch = "wasm32")]
 pub mod indexeddb_adapter;
-pub mod sqlite_adapter;
-pub mod postgres_adapter;
-pub mod memory_adapter;
-pub mod storage_query;
-pub mod migrations;
+// Storage adapters consolidated or not present in this layout
+// pub mod sqlite_adapter;
+// pub mod postgres_adapter;
+// pub mod memory_adapter;
+// pub mod storage_query;
+// pub mod migrations;
 
 /// Storage errors with detailed context
 #[derive(Debug, thiserror::Error)]
@@ -165,7 +172,6 @@ pub struct StorageStats {
 }
 
 /// Main storage manager (replaces HybridStateManager storage functionality)
-#[derive(Debug)]
 pub struct StorageManager {
     adapters: HashMap<String, Box<dyn StorageAdapter>>,
     primary_backend: String,
@@ -173,6 +179,16 @@ pub struct StorageManager {
     security_manager: Arc<SecurityManager>,
     cache: Arc<RwLock<HashMap<String, CachedEntity>>>,
     metrics: StorageMetrics,
+}
+
+impl std::fmt::Debug for StorageManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageManager")
+            .field("primary_backend", &self.primary_backend)
+            .field("fallback_backends", &self.fallback_backends)
+            .field("adapters_count", &self.adapters.len())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -416,13 +432,18 @@ impl StorageManager {
         
         // Evict old entries if cache is too large
         if cache.len() > 1000 {
-            let mut entries: Vec<_> = cache.iter().collect();
+            // Clone the entries (keys + values) so we don't hold references into the map
+            // while mutating it below. This avoids the borrow-checker error when
+            // attempting to remove while iterating.
+            let mut entries: Vec<(String, CachedEntity)> = cache.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             entries.sort_by_key(|(_, v)| v.cached_at);
-            
+
             // Remove oldest 20%
             let to_remove = entries.len() / 5;
-            for (key, _) in entries.iter().take(to_remove) {
-                cache.remove(*key);
+            for (key, _) in entries.into_iter().take(to_remove) {
+                cache.remove(&key);
             }
         }
     }

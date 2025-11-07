@@ -899,6 +899,13 @@ pub enum MultiTenantError {
     },
 }
 
+// Allow converting forensic logging errors into MultiTenantError for convenient `?` usage
+impl From<crate::observability::ForensicError> for MultiTenantError {
+    fn from(e: crate::observability::ForensicError) -> Self {
+        MultiTenantError::ProvisioningFailed { tenant_id: "system".to_string(), error: format!("Forensic error: {}", e) }
+    }
+}
+
 impl MultiTenantSystem {
     /// Create new multi-tenant system
     pub async fn new(

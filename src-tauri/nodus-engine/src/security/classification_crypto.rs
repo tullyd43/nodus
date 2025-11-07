@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 use std::collections::HashMap;
 use uuid::Uuid;
 use ring::{aead, pbkdf2, rand};
+use ring::aead::BoundKey;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use super::{ClassificationLevel, SecurityLabel};
@@ -54,7 +55,7 @@ struct CryptoDomain {
 }
 
 /// Master key for key derivation (stored securely)
-#[derive(Debug, ZeroizeOnDrop)]
+#[derive(Debug)]
 struct MasterKey {
     key_material: [u8; 32], // 256-bit master key
     salt: [u8; 16],         // 128-bit salt
@@ -62,9 +63,10 @@ struct MasterKey {
 }
 
 /// Derived key cache entry
-#[derive(Debug, Clone, ZeroizeOnDrop)]
+#[derive(Debug)]
 struct DerivedKeyEntry {
-    key: aead::UnboundKey,
+    // We intentionally do not store the UnboundKey here because it is not Clone
+    // and does not implement Zeroize. The cache currently stores metadata only.
     created_at: chrono::DateTime<chrono::Utc>,
     access_count: u64,
     classification: ClassificationLevel,
@@ -301,11 +303,13 @@ impl ClassificationCrypto {
             user_id,
         ).await?;
 
-        // Cache the derivation (metadata only since we can't clone the key)
+        // Caching of the UnboundKey is skipped here because aead::UnboundKey is
+        // not Clone and does not implement Zeroize; storing it in the cache would
+        // require a different strategy (e.g. raw key bytes or an Arc-backed key
+        // type). For now we update statistics only.
         {
             let mut cache = self.derived_key_cache.write().await;
             cache.insert(cache_key, DerivedKeyEntry {
-                key: derived_key.clone(), // This won't work with UnboundKey
                 created_at: chrono::Utc::now(),
                 access_count: 1,
                 classification: classification.clone(),

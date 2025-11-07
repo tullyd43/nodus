@@ -2,19 +2,20 @@
 // License Management - Implements three-tier licensing (Community/Enterprise/Defense)
 // Replaces JavaScript license validation with cryptographic verification
 
+use base64::{engine::general_purpose, Engine as _};
+use chrono::{DateTime, Duration, Utc};
+use ring::{digest, hmac};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc, Duration};
 use uuid::Uuid;
-use ring::{digest, hmac};
-use base64::{Engine as _, engine::general_purpose};
 
-/// License tiers matching the three-tier strategy
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// License tiers matching the four-tier strategy (OpenSource / Pro / Enterprise / Defense)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LicenseTier {
-    Community,    // Open source
-    Enterprise,   // Business license
-    Defense,      // Government/classified
+    Community,  // Open source (alias for OpenSource)
+    Pro,        // Professional
+    Enterprise, // Business license
+    Defense,    // Government/classified
 }
 
 /// License status
@@ -65,18 +66,15 @@ impl LicenseFeatures {
             "basic_observability".to_string(),
             "forensic_logging".to_string(),
             "metrics_collection".to_string(),
-            
             // Basic security
             "mac_enforcement".to_string(),
             "user_authentication".to_string(),
             "basic_encryption".to_string(),
-            
             // Core functionality
             "entity_management".to_string(),
             "basic_workflows".to_string(),
             "data_storage".to_string(),
             "ui_framework".to_string(),
-            
             // Limited plugins (9 core forensic plugins)
             "storage_forensic_plugin".to_string(),
             "security_forensic_plugin".to_string(),
@@ -87,26 +85,28 @@ impl LicenseFeatures {
             "policy_forensic_plugin".to_string(),
             "service_forensic_plugin".to_string(),
             "ui_forensic_plugin".to_string(),
-        ].into_iter().collect()
+        ]
+        .into_iter()
+        .collect()
     }
 
     /// Enterprise tier features (community + business features)
     pub fn enterprise_features() -> HashSet<String> {
         let mut features = Self::community_features();
-        
+
         // Advanced observability
         features.insert("advanced_forensics".to_string());
         features.insert("real_time_monitoring".to_string());
         features.insert("compliance_reporting".to_string());
         features.insert("system_optimization".to_string());
         features.insert("performance_analytics".to_string());
-        
+
         // Enterprise security
         features.insert("signed_plugins".to_string());
         features.insert("advanced_encryption".to_string());
         features.insert("audit_compliance".to_string());
         features.insert("policy_engine".to_string());
-        
+
         // Business features
         features.insert("multi_tenant".to_string());
         features.insert("enterprise_dashboard".to_string());
@@ -114,7 +114,7 @@ impl LicenseFeatures {
         features.insert("custom_workflows".to_string());
         features.insert("batch_operations".to_string());
         features.insert("data_export".to_string());
-        
+
         // Additional plugins (10 enterprise plugins)
         features.insert("database_forensic_plugin".to_string());
         features.insert("network_forensic_plugin".to_string());
@@ -126,14 +126,28 @@ impl LicenseFeatures {
         features.insert("ai_forensic_plugin".to_string());
         features.insert("jobs_forensic_plugin".to_string());
         features.insert("health_forensic_plugin".to_string());
-        
+
+        features
+    }
+
+    /// Pro tier features (community + pro features)
+    pub fn pro_features() -> HashSet<String> {
+        let mut features = Self::community_features();
+
+        // Pro-level features
+        features.insert("advanced_storage".to_string());
+        features.insert("browser_integration".to_string());
+        features.insert("offline_sync".to_string());
+        features.insert("performance_monitoring".to_string());
+        features.insert("user_policies".to_string());
+
         features
     }
 
     /// Defense tier features (enterprise + classified operations)
     pub fn defense_features() -> HashSet<String> {
         let mut features = Self::enterprise_features();
-        
+
         // Classified operations
         features.insert("classified_operations".to_string());
         features.insert("nato_compliance".to_string());
@@ -142,13 +156,13 @@ impl LicenseFeatures {
         features.insert("mandatory_access_control".to_string());
         features.insert("compartmented_security".to_string());
         features.insert("air_gap_support".to_string());
-        
+
         // Defense-specific
         features.insert("crypto_forensic_plugin".to_string()); // Classified crypto operations
         features.insert("defense_audit_trails".to_string());
         features.insert("security_clearance_validation".to_string());
         features.insert("classified_data_handling".to_string());
-        
+
         features
     }
 
@@ -156,6 +170,7 @@ impl LicenseFeatures {
     pub fn features_for_tier(tier: &LicenseTier) -> HashSet<String> {
         match tier {
             LicenseTier::Community => Self::community_features(),
+            LicenseTier::Pro => Self::pro_features(),
             LicenseTier::Enterprise => Self::enterprise_features(),
             LicenseTier::Defense => Self::defense_features(),
         }
@@ -181,10 +196,10 @@ impl LicenseManager {
 
         // Load verification keys (in production, these would be embedded or from secure storage)
         manager.load_verification_keys().await?;
-        
+
         // Detect and validate current license
         manager.detect_license().await?;
-        
+
         Ok(manager)
     }
 
@@ -263,30 +278,32 @@ impl LicenseManager {
 
         self.current_license = Some(license);
         self.rebuild_feature_cache();
-        
+
         Ok(())
     }
 
     /// Verify license signature using HMAC
     fn verify_license_signature(&self, license: &LicenseInfo) -> Result<(), LicenseError> {
-        let verification_key = self.verification_keys
+        let verification_key = self
+            .verification_keys
             .get(&license.verification_key)
             .ok_or(LicenseError::InvalidSignature)?;
 
         // Create message to verify (simplified - in production use more fields)
+        // Use the textual representation of the tier in the signed message to avoid
+        // relying on numeric casts (keeps enum changes low-risk).
         let message = format!(
-            "{}:{}:{}:{}",
+            "{}:{:?}:{}:{}",
             license.license_id,
-            license.tier as u8,
+            license.tier,
             license.organization,
             license.issued_at.timestamp()
         );
 
         // Verify HMAC signature
         let key = hmac::Key::new(hmac::HMAC_SHA256, verification_key.as_bytes());
-        let expected_signature = general_purpose::STANDARD.encode(
-            hmac::sign(&key, message.as_bytes()).as_ref()
-        );
+        let expected_signature =
+            general_purpose::STANDARD.encode(hmac::sign(&key, message.as_bytes()).as_ref());
 
         if expected_signature != license.signature {
             return Err(LicenseError::InvalidSignature);
@@ -306,14 +323,14 @@ impl LicenseManager {
             "defense_key_v1".to_string(),
             "defense_verification_key_2024_classified".to_string(),
         );
-        
+
         Ok(())
     }
 
     /// Rebuild feature cache for fast lookups
     fn rebuild_feature_cache(&mut self) {
         self.feature_cache.clear();
-        
+
         if let Some(ref license) = self.current_license {
             for feature in &license.features {
                 self.feature_cache.insert(feature.clone(), true);
@@ -339,16 +356,63 @@ impl LicenseManager {
         self.current_license.as_ref()
     }
 
+    /// Convenience: return a cloned current license (async-friendly).
+    /// Returns a default Community license when none is set to simplify call sites.
+    pub async fn get_current_license(&self) -> LicenseInfo {
+        if let Some(ref lic) = self.current_license {
+            return lic.clone();
+        }
+
+        // Build a minimal community license fallback
+        LicenseInfo {
+            license_id: Uuid::new_v4(),
+            tier: LicenseTier::Community,
+            status: LicenseStatus::Valid,
+            organization: "Community User".to_string(),
+            issued_to: "community@nodus.com".to_string(),
+            issued_at: Utc::now(),
+            expires_at: None,
+            features: LicenseFeatures::community_features(),
+            limits: LicenseLimits {
+                max_users: Some(5),
+                max_storage_gb: Some(1),
+                max_operations_per_hour: Some(10000),
+                max_api_calls_per_day: Some(1000),
+                max_concurrent_sessions: Some(3),
+                max_tenants: Some(1),
+            },
+            signature: "community".to_string(),
+            verification_key: "community".to_string(),
+        }
+    }
+
+    /// Basic health check for the license manager (used by startup checks)
+    pub async fn health_check(&self) -> bool {
+        // Currently a noop - returns true if the manager has been initialized
+        true
+    }
+
     /// Check if within usage limits
     pub async fn check_limit(&self, limit_type: &str, current_usage: u32) -> bool {
-        let limits = &self.current_license.as_ref()?.limits;
-        
+        let limits = match self.current_license.as_ref() {
+            Some(l) => &l.limits,
+            None => return true, // no license info -> be permissive
+        };
+
         match limit_type {
             "users" => limits.max_users.map_or(true, |max| current_usage <= max),
-            "storage_gb" => limits.max_storage_gb.map_or(true, |max| current_usage <= max),
-            "operations_per_hour" => limits.max_operations_per_hour.map_or(true, |max| current_usage <= max),
-            "api_calls_per_day" => limits.max_api_calls_per_day.map_or(true, |max| current_usage <= max),
-            "concurrent_sessions" => limits.max_concurrent_sessions.map_or(true, |max| current_usage <= max),
+            "storage_gb" => limits
+                .max_storage_gb
+                .map_or(true, |max| current_usage <= max),
+            "operations_per_hour" => limits
+                .max_operations_per_hour
+                .map_or(true, |max| current_usage <= max),
+            "api_calls_per_day" => limits
+                .max_api_calls_per_day
+                .map_or(true, |max| current_usage <= max),
+            "concurrent_sessions" => limits
+                .max_concurrent_sessions
+                .map_or(true, |max| current_usage <= max),
             "tenants" => limits.max_tenants.map_or(true, |max| current_usage <= max),
             _ => true, // Unknown limits default to allowed
         }
@@ -366,7 +430,8 @@ impl LicenseManager {
     /// Get plugin list for current tier
     pub async fn get_available_plugins(&self) -> Vec<String> {
         if let Some(ref license) = self.current_license {
-            license.features
+            license
+                .features
                 .iter()
                 .filter(|f| f.ends_with("_forensic_plugin"))
                 .cloned()
@@ -382,22 +447,22 @@ impl LicenseManager {
 pub enum LicenseError {
     #[error("License has expired")]
     Expired,
-    
+
     #[error("Invalid license signature")]
     InvalidSignature,
-    
+
     #[error("License is invalid or revoked")]
     Invalid,
-    
+
     #[error("Feature not available in current license: {0}")]
     FeatureNotAvailable(String),
-    
+
     #[error("License limit exceeded: {0}")]
     LimitExceeded(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -405,8 +470,8 @@ pub enum LicenseError {
 impl Default for LicenseLimits {
     fn default() -> Self {
         Self {
-            max_users: None,          // No limit
-            max_storage_gb: None,     // No limit
+            max_users: None,      // No limit
+            max_storage_gb: None, // No limit
             max_operations_per_hour: None,
             max_api_calls_per_day: None,
             max_concurrent_sessions: None,
@@ -432,7 +497,7 @@ mod tests {
     fn test_enterprise_features() {
         let features = LicenseFeatures::enterprise_features();
         assert!(features.contains("basic_observability")); // Inherited from community
-        assert!(features.contains("advanced_forensics"));  // Enterprise specific
+        assert!(features.contains("advanced_forensics")); // Enterprise specific
         assert!(features.contains("database_forensic_plugin")); // Enterprise plugin
         assert!(!features.contains("classified_operations")); // Defense only
     }
@@ -441,7 +506,7 @@ mod tests {
     fn test_defense_features() {
         let features = LicenseFeatures::defense_features();
         assert!(features.contains("basic_observability")); // Inherited
-        assert!(features.contains("advanced_forensics"));  // Inherited
+        assert!(features.contains("advanced_forensics")); // Inherited
         assert!(features.contains("classified_operations")); // Defense specific
         assert!(features.contains("crypto_forensic_plugin")); // Defense plugin
     }
@@ -456,7 +521,7 @@ mod tests {
             max_concurrent_sessions: Some(10),
             max_tenants: Some(5),
         };
-        
+
         assert_eq!(limits.max_users, Some(100));
         assert_eq!(limits.max_tenants, Some(5));
     }

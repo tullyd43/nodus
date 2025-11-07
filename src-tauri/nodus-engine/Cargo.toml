@@ -22,28 +22,28 @@ default = ["core"]
 core = []
 
 # Observability exporters (heavy - off by default)
-observability_prometheus = ["metrics-exporter-prometheus", "axum"]
-observability_jaeger = ["tracing-opentelemetry", "opentelemetry-jaeger"]
-observability_otlp = ["tracing-opentelemetry", "opentelemetry-otlp"]
+# observability_prometheus = ["metrics-exporter-prometheus", "axum"]
+# observability_jaeger = ["tracing-opentelemetry", "opentelemetry-jaeger"]
+# observability_otlp = ["tracing-opentelemetry", "opentelemetry-otlp"]
 
 # Plugin systems (security-sensitive - off by default)
-plugins_wasm = ["wasmtime", "wasm-bindgen"]
+# plugins_wasm = ["wasmtime", "wasm-bindgen"]
 plugins_native = [] # Dangerous - enterprise only
 
 # Enterprise features
-enterprise = ["multi-tenant", "compliance-dashboard", "api-gateway"]
+enterprise = ["multi-tenant", "compliance-dashboard"]
 multi-tenant = []
 compliance-dashboard = []
-api-gateway = ["axum", "tower", "tower-http"]
+ # api-gateway = ["axum", "tower", "tower-http"]
 
 # Experimental features (off by default)
-pqc_experimental = ["pqc_kyber", "pqc_dilithium"]
+# pqc_experimental = ["pqc_kyber", "pqc_dilithium"]
 ai_security_oracle = [] # Requires special licensing
 
 # Database options (choose ONE)
-database_postgresql = ["sqlx/postgres"]
-database_sqlite = ["sqlx/sqlite"]
-database_mysql = ["sqlx/mysql"]
+# database_postgresql = ["sqlx/postgres"]
+# database_sqlite = ["sqlx/sqlite"]
+# database_mysql = ["sqlx/mysql"]
 
 [build-dependencies]
 tauri-build = { version = "1.5", features = ["codegen"] }
@@ -81,6 +81,7 @@ async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
+regex = "1"
 
 # Lock-free data structures
 arc-swap = "1.7"
@@ -97,10 +98,10 @@ tracing-subscriber = { version = "0.3", features = [
 metrics = "0.22"
 
 # Optional observability exporters
-metrics-exporter-prometheus = { version = "0.13", optional = true }
-tracing-opentelemetry = { version = "0.22", optional = true }
-opentelemetry-jaeger = { version = "0.20", optional = true }
-opentelemetry-otlp = { version = "0.21", optional = true }
+# metrics-exporter-prometheus = { version = "0.13", optional = true }
+# tracing-opentelemetry = { version = "0.22", optional = true }
+# opentelemetry-jaeger = { version = "0.20", optional = true }
+# opentelemetry-otlp = { version = "0.21", optional = true }
 
 # Database (choose ONE stack)
 sqlx = { version = "0.7", features = [
@@ -109,7 +110,7 @@ sqlx = { version = "0.7", features = [
     "chrono",
     "json",
     "migrate",
-], optional = true }
+] }
 
 # Security and crypto
 ring = "0.17"
@@ -127,8 +128,8 @@ zeroize = { version = "1.7", features = ["derive"] }
 constant_time_eq = "0.3"
 
 # Post-quantum crypto (experimental)
-pqc_kyber = { version = "0.7", optional = true }
-pqc_dilithium = { version = "0.5", optional = true }
+# pqc_kyber = { version = "0.7", optional = true }
+# pqc_dilithium = { version = "0.5", optional = true }
 
 # Time and UUIDs
 chrono = { version = "0.4", features = ["serde"] }
@@ -142,13 +143,32 @@ reqwest = { version = "0.11", features = [
 ] }
 
 # Optional HTTP server (for enterprise features)
-axum = { version = "0.7", optional = true, features = ["http2"] }
-tower = { version = "0.4", optional = true }
-tower-http = { version = "0.5", optional = true, features = ["cors", "trace"] }
+# axum = { version = "0.7", optional = true, features = ["http2"] }
+# tower = { version = "0.4", optional = true }
+# tower-http = { version = "0.5", optional = true, features = ["cors", "trace"] }
 
 # WASM runtime (optional)
-wasmtime = { version = "14.0", optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
+# wasmtime = { version = "14.0", optional = true }
+wasm-bindgen = { version = "0.2" }
+wasm-bindgen-futures = { version = "0.4" }
+web-sys = { version = "0.3", features = [
+    "IdbDatabase",
+    "IdbObjectStore",
+    "IdbRequest",
+    "IdbTransaction",
+    "IdbIndex",
+    "IdbObjectStoreParameters",
+    "IdbIndexParameters",
+    "IdbTransactionMode",
+    "Window",
+    "console",
+] }
+
+# WASM-helpers for serializing/deserializing between JS and Rust
+serde-wasm-bindgen = "0.6"
+
+# Least-recently-used cache used across several components (make non-optional)
+lru = "0.8"
 
 # Error handling
 thiserror = "1.0"
@@ -184,12 +204,11 @@ lto = "fat"      # Full LTO for maximum optimization
 strip = true     # Strip debug symbols
 
 [workspace]
-members = [
-    ".",
-    "crates/nodus-core",
-    "crates/nodus-security",
-    "crates/nodus-observability",
-]
+# Local development: restrict workspace to this crate only because the
+# referenced `crates/` members are not present in this working copy.
+# Restore the original workspace member list when the other crates are
+# added back to `src-tauri/nodus-engine/crates/`.
+members = ["."]
 resolver = "2"
 
 # Package metadata

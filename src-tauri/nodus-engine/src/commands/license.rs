@@ -489,6 +489,10 @@ fn get_upgrade_recommendations(current_tier: &LicenseTier) -> Vec<String> {
             "Access NATO SECRET classification handling".to_string(),
             "Get defense-grade audit trails and compliance".to_string(),
         ],
+        LicenseTier::Pro => vec![
+            "Upgrade to Enterprise for multi-tenant and compliance features".to_string(),
+            "Get professional support and SLA guarantees".to_string(),
+        ],
         LicenseTier::Defense => vec![
             "You have the highest tier available".to_string(),
         ],

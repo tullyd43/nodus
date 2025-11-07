@@ -3,27 +3,29 @@
 // Manages the core application state with security and observability integration
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::security::{SecurityManager, SecurityLabel, ClassificationLevel};
-use crate::observability::{ForensicLogger, MetricsRegistry, ActionDispatcher};
 use crate::database::DatabaseManager;
 use crate::license::LicenseManager;
+use crate::observability::{ActionDispatcher, ForensicLogger, MetricsRegistry};
+use crate::security::{ClassificationLevel, SecurityLabel, SecurityManager};
 
 /// Core application state (replaces HybridStateManager.js)
 #[derive(Debug)]
 pub struct AppState {
     // Core managers (replace JS manager singletons)
-    pub security_manager: SecurityManager,
-    pub db_manager: DatabaseManager,
-    pub metrics_registry: MetricsRegistry,
-    pub forensic_logger: ForensicLogger,
-    pub action_dispatcher: ActionDispatcher,
-    pub license_manager: LicenseManager,
-    
+    pub security_manager: std::sync::Arc<SecurityManager>,
+    pub db_manager: std::sync::Arc<DatabaseManager>,
+    pub metrics_registry: std::sync::Arc<MetricsRegistry>,
+    pub forensic_logger: std::sync::Arc<ForensicLogger>,
+    pub action_dispatcher: std::sync::Arc<ActionDispatcher>,
+    pub license_manager: std::sync::Arc<LicenseManager>,
+    // Global/system-level observability context used as a convenient default by many modules
+    pub context: crate::observability::ObservabilityContext,
+
     // Application state
     pub user_contexts: RwLock<HashMap<String, UserContext>>,
     pub active_sessions: RwLock<HashMap<Uuid, SessionState>>,
@@ -71,14 +73,16 @@ pub enum PerformanceMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ObservabilityLevel {
-    Minimal,     // Community tier
-    Standard,    // Enterprise tier
-    Full,        // Defense tier
+    Standard,  // Community tier
+    Rich,
+    Full, // Enterprise tier
+    Secret,     // Defense tier
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LicenseTier {
     Community,
+    Pro,
     Enterprise,
     Defense,
 }
@@ -94,12 +98,12 @@ pub struct SecuritySettings {
 impl AppState {
     /// Create new application state (replaces HybridStateManager constructor)
     pub fn new(
-        security_manager: SecurityManager,
-        db_manager: DatabaseManager,
-        metrics_registry: MetricsRegistry,
-        forensic_logger: ForensicLogger,
-        action_dispatcher: ActionDispatcher,
-        license_manager: LicenseManager,
+        security_manager: std::sync::Arc<SecurityManager>,
+        db_manager: std::sync::Arc<DatabaseManager>,
+        metrics_registry: std::sync::Arc<MetricsRegistry>,
+        forensic_logger: std::sync::Arc<ForensicLogger>,
+        action_dispatcher: std::sync::Arc<ActionDispatcher>,
+        license_manager: std::sync::Arc<LicenseManager>,
     ) -> Self {
         Self {
             security_manager,
@@ -108,6 +112,9 @@ impl AppState {
             forensic_logger,
             action_dispatcher,
             license_manager,
+            context: crate::observability::ObservabilityContext::new(
+                "system", "startup", ClassificationLevel::Internal, "system", uuid::Uuid::new_v4()
+            ),
             user_contexts: RwLock::new(HashMap::new()),
             active_sessions: RwLock::new(HashMap::new()),
             system_config: RwLock::new(SystemConfig::default()),
@@ -118,12 +125,17 @@ impl AppState {
     /// Set user context for security decisions (replaces JS setUserContext)
     pub async fn set_user_context(&self, user_context: UserContext) -> Result<(), String> {
         // Security audit for context change
-        self.forensic_logger.log_security_event(
-            "user.context.set",
-            &format!("User {} context established with clearance {:?}", 
-                user_context.user_id, user_context.clearance_level),
-            &user_context.user_id,
-        ).await.map_err(|e| format!("Failed to log security event: {}", e))?;
+        self.forensic_logger
+            .log_security_event(
+                "user.context.set",
+                &format!(
+                    "User {} context established with clearance {:?}",
+                    user_context.user_id, user_context.clearance_level
+                ),
+                &user_context.user_id,
+            )
+            .await
+            .map_err(|e| format!("Failed to log security event: {}", e))?;
 
         // Update user context
         let mut contexts = self.user_contexts.write().await;
@@ -139,7 +151,11 @@ impl AppState {
     }
 
     /// Create new session (replaces JS session management)
-    pub async fn create_session(&self, user_id: String, security_label: SecurityLabel) -> Result<Uuid, String> {
+    pub async fn create_session(
+        &self,
+        user_id: String,
+        security_label: SecurityLabel,
+    ) -> Result<Uuid, String> {
         let session_id = Uuid::new_v4();
         let now = chrono::Utc::now();
 
@@ -153,11 +169,14 @@ impl AppState {
         };
 
         // Log session creation
-        self.forensic_logger.log_security_event(
-            "session.create",
-            &format!("Session {} created for user {}", session_id, user_id),
-            &user_id,
-        ).await.map_err(|e| format!("Failed to log session creation: {}", e))?;
+        self.forensic_logger
+            .log_security_event(
+                "session.create",
+                &format!("Session {} created for user {}", session_id, user_id),
+                &user_id,
+            )
+            .await
+            .map_err(|e| format!("Failed to log session creation: {}", e))?;
 
         // Store session
         let mut sessions = self.active_sessions.write().await;
@@ -175,11 +194,14 @@ impl AppState {
         updater(&mut *config);
 
         // Log configuration change
-        self.forensic_logger.log_system_event(
-            "system.config.update",
-            "System configuration updated",
-            "system",
-        ).await.map_err(|e| format!("Failed to log config update: {}", e))?;
+        self.forensic_logger
+            .log_system_event(
+                "system.config.update",
+                "System configuration updated",
+                "system",
+            )
+            .await
+            .map_err(|e| format!("Failed to log config update: {}", e))?;
 
         Ok(())
     }
@@ -245,7 +267,7 @@ mod tests {
     async fn test_user_context_management() {
         // This would require proper initialization in real tests
         // For now, showing the pattern
-        
+
         let user_context = UserContext::new(
             "test-user".to_string(),
             ClassificationLevel::Secret,

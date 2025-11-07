@@ -16,11 +16,11 @@ use crate::security::SecurityManager;
 use crate::observability::instrument::instrument;
 use crate::policy::policy_snapshot::current_policy;
 
-// Sub-modules
-pub mod conflict_resolution;
-pub mod sync_client;
-pub mod websocket_sync;
-pub mod batch_processor;
+// Sub-modules (consolidated in this file or not present)
+// pub mod conflict_resolution;
+// pub mod sync_client;
+// pub mod websocket_sync;
+// pub mod batch_processor;
 
 /// Sync errors
 #[derive(Debug, thiserror::Error)]

@@ -133,13 +133,24 @@ struct OperationMetrics {
 }
 
 /// System-wide load metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SystemLoadMetrics {
     pub cpu_usage_percent: f64,
     pub memory_usage_percent: f64,
     pub disk_io_ops_per_sec: f64,
     pub network_ops_per_sec: f64,
     pub concurrent_operations: u64,
+}
+
+// Make OperationMetrics serializable as well (used by some instrumentation structs)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OperationMetrics {
+    pub avg_duration_ms: f64,
+    pub p95_duration_ms: f64,
+    pub p99_duration_ms: f64,
+    pub total_count: u64,
+    pub error_count: u64,
+    pub last_updated: chrono::DateTime<chrono::Utc>,
 }
 
 impl AutomaticInstrumentation {
@@ -277,6 +288,11 @@ impl AutomaticInstrumentation {
                 if !self.license_manager.has_feature("advanced_forensics").await {
                     decision.full_payload_logging = false;
                 }
+            },
+            crate::license::LicenseTier::Pro => {
+                // Pro: Intermediate features — keep conservative defaults for now
+                decision.full_payload_logging = false;
+                decision.overhead_budget_ms = std::cmp::min(decision.overhead_budget_ms, 3);
             },
             crate::license::LicenseTier::Defense => {
                 // Defense: Maximum observability with classification handling

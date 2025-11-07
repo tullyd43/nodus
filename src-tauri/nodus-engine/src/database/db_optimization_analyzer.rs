@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use crate::observability::{ForensicLogger, MetricsRegistry, PerformanceMetrics};
 use crate::security::{SecurityManager, ClassificationLevel};
-use crate::ai::SecurityOracle;
+// Temporarily comment out AI Security Oracle import - experimental
+// use crate::ai::SecurityOracle;
 use crate::state::AppState;
 
 /// Self-optimizing database that learns and adapts in real-time

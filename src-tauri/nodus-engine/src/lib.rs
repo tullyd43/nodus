@@ -1,24 +1,29 @@
-// In src-tauri/nodus-engine/src/lib.rs
+// Crate root module exports for nodus-engine
+// Keep exports in sync with files and directories that actually exist.
 
-// This makes all your modules part of the 'nodus_engine' library
-pub mod action_dispatcher;
-pub mod async_orchestrator;
-pub mod browser_service; // (This was defense_browser_api.rs)
-pub mod classification_crypto;
-pub mod commands_data;
-pub mod commands_license;
-pub mod commands_mod;
-pub mod commands_observability;
-pub mod commands_security;
-pub mod database_mod;
-pub mod enterprise_mod;
-pub mod forensic_logger;
-pub mod license_mod;
-pub mod mac_engine;
-pub mod metrics_registry;
-pub mod networking_mod;
-pub mod observability_mod;
-pub mod security_mod;
-pub mod state_mod;
+pub mod commands;
+pub mod database; // consolidated database directory (re-exports database_mod)
+pub mod enterprise;
+pub mod license;
+pub mod live_reconfig;
+pub mod main_integrated;
+pub mod multi_tenant;
+pub mod networking;
+pub mod observability;
+pub mod plugin_system;
+pub mod policy;
+// Advertising module is experimental and not used for now. Gate it behind
+// the `advertising` feature so it won't be compiled by default.
+#[cfg(feature = "advertising")]
+pub mod privacy_ad_platform;
+pub mod security;
+pub mod state;
+pub mod storage;
+pub mod sync;
+pub mod validation;
 
-// ... add 'pub mod' for every .rs file you moved ...
+// Keep small top-level utilities if present
+// pub mod database_mod; // use `crate::database::*` instead
+
+// NOTE: This file intentionally matches the current on-disk layout. If you move files
+// or rename modules, update this list accordingly.

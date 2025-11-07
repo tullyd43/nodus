@@ -11,12 +11,15 @@ use uuid::Uuid;
 
 use crate::observability::{ForensicLogger, MetricsRegistry};
 use crate::security::{SecurityManager, ClassificationLevel};
-use crate::ai::SecurityOracle;
+// Temporarily comment out AI Oracle import (experimental module)
+// use crate::ai::SecurityOracle;
 use crate::temporal::TemporalForensicEngine;
 use crate::hot_config::ZeroDowntimeSystem;
-use crate::advertising::PrivacyAdPlatform;
+// Temporarily comment out Privacy Ad Platform integration (skeleton)
+// use crate::advertising::PrivacyAdPlatform;
 use crate::database::SelfOptimizingDatabase;
-use crate::quantum::PostQuantumSecurity;
+// Temporarily comment out Post-Quantum Security integration (skeleton)
+// use crate::quantum::PostQuantumSecurity;
 use crate::state::AppState;
 
 /// Unified policy engine that configures EVERYTHING through one system
@@ -331,7 +334,8 @@ pub struct PolicyOrchestrator {
     /// Zero-downtime system integration
     zero_downtime: Arc<ZeroDowntimeSystem>,
     
-    /// Advertising platform integration
+    /// Advertising platform integration (optional)
+    #[cfg(feature = "advertising")]
     advertising: Arc<PrivacyAdPlatform>,
     
     /// Database optimization integration
@@ -1008,6 +1012,7 @@ impl PolicyOrchestrator {
             ai_oracle: Arc::new(SecurityOracle::new().await.unwrap()),
             temporal_forensics: Arc::new(TemporalForensicEngine::new().await.unwrap()),
             zero_downtime: Arc::new(ZeroDowntimeSystem::new().await.unwrap()),
+            #[cfg(feature = "advertising")]
             advertising: Arc::new(PrivacyAdPlatform::new().await.unwrap()),
             database: Arc::new(SelfOptimizingDatabase::new().await.unwrap()),
             quantum_security: Arc::new(PostQuantumSecurity::new().await.unwrap()),

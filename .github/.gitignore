@@ -69,3 +69,9 @@ scripts/
 server/
 tests/
 tools/
+
+
+/src-tauri/target/
+/src-tauri/.tauri/
+
+

@@ -11,10 +11,9 @@ use std::collections::HashMap;
 use crate::security::{SecurityLabel, ClassificationLevel};
 use crate::observability::ForensicEnvelope;
 
-// Submodules consolidated - individual files not present in this layout.
-// pub mod migrations;
-// pub mod queries;
-// pub mod polyinstantiation;
+pub mod migrations;
+pub mod queries;
+pub mod polyinstantiation;
 
 /// Database manager for secure data operations
 #[derive(Debug, Clone)]
@@ -84,6 +83,27 @@ impl DatabaseManager {
             pool,
             enable_polyinstantiation,
         })
+    }
+
+    /// Execute an ad-hoc compliance query used by the compliance dashboard.
+    /// Minimal placeholder implementation returning an empty result.
+    pub async fn execute_compliance_query(
+        &self,
+        _query: &str,
+        _period: &crate::enterprise::compliance_dashboard::ReportingPeriod,
+        _app_state: &crate::state::AppState,
+    ) -> Result<Vec<serde_json::Value>, sqlx::Error> {
+        Ok(Vec::new())
+    }
+
+    /// Provision a tenant database - placeholder for now (no-op)
+    pub async fn provision_tenant_database(&self, _tenant_id: &str, _isolation: &serde_json::Value) -> Result<(), sqlx::Error> {
+        Ok(())
+    }
+
+    /// Deprovision a tenant database - placeholder for now (no-op)
+    pub async fn deprovision_tenant_database(&self, _tenant_id: &str) -> Result<(), sqlx::Error> {
+        Ok(())
     }
 
     /// Check if polyinstantiation is enabled in the database schema

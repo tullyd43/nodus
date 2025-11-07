@@ -12,7 +12,8 @@ use uuid::Uuid;
 use crate::observability::{ForensicLogger, MetricsRegistry, PerformanceMetrics};
 use crate::security::{SecurityManager, ClassificationLevel};
 use crate::license::{LicenseManager, LicenseTier};
-use crate::ai::SecurityOracle;
+// Temporarily comment out AI Security Oracle import - skeleton / experimental module
+// use crate::ai::SecurityOracle;
 use crate::state::AppState;
 
 /// Privacy-first adaptive advertising platform

@@ -50,7 +50,7 @@ struct Histogram {
 }
 
 /// Histogram bucket for percentile calculations
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct HistogramBucket {
     upper_bound: f64,
     count: AtomicU64,
@@ -67,7 +67,7 @@ struct Timer {
 }
 
 /// Cached metric for ultra-fast access
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct CachedMetric {
     value: f64,
     last_updated: DateTime<Utc>,

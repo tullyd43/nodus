@@ -305,6 +305,13 @@ pub enum PluginError {
     },
 }
 
+// Allow converting forensic logging errors into plugin errors for convenient `?` use
+impl From<crate::observability::ForensicError> for PluginError {
+    fn from(e: crate::observability::ForensicError) -> Self {
+        PluginError::LoadingFailed { plugin_id: "unknown".to_string(), error: format!("Forensic error: {}", e) }
+    }
+}
+
 impl EnterprisePluginSystem {
     /// Create new enterprise plugin system
     pub async fn new(
@@ -682,6 +689,7 @@ impl EnterprisePluginSystem {
         match manifest.required_license {
             LicenseTier::Defense => self.sandbox_configs.get("enterprise").unwrap().clone(),
             LicenseTier::Enterprise => self.sandbox_configs.get("enterprise").unwrap().clone(),
+            LicenseTier::Pro => self.sandbox_configs.get("enterprise").unwrap().clone(),
             LicenseTier::Community => self.sandbox_configs.get("strict").unwrap().clone(),
         }
     }
@@ -691,6 +699,7 @@ impl EnterprisePluginSystem {
         let base_memory = match manifest.required_license {
             LicenseTier::Defense => 512 * 1024 * 1024,    // 512MB
             LicenseTier::Enterprise => 256 * 1024 * 1024, // 256MB
+            LicenseTier::Pro => 128 * 1024 * 1024,        // 128MB (pro)
             LicenseTier::Community => 64 * 1024 * 1024,   // 64MB
         };
         

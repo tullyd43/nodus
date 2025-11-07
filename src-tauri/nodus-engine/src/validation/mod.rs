@@ -14,7 +14,7 @@ use crate::security::{SecurityManager, SecurityError};
 use crate::observability::instrument::instrument;
 
 /// Validation errors
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum ValidationError {
     #[error("Required field missing: {field}")]
     RequiredFieldMissing { field: String },
@@ -156,7 +156,6 @@ pub struct ValidationResult {
 }
 
 /// Main validation layer
-#[derive(Debug)]
 pub struct ValidationLayer {
     schemas: HashMap<String, ValidationSchema>,
     validators: HashMap<String, Box<dyn FieldValidator>>,

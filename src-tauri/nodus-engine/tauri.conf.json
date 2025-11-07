@@ -1,0 +1,23 @@
+{
+	"package": {
+		"productName": "Nodus Enterprise",
+		"version": "8.0.0"
+	},
+	"tauri": {
+		"bundle": {
+			"identifier": "com.nodus.enterprise",
+			"active": true
+		},
+		"allowlist": {
+			"all": false,
+			"http": {
+				"all": false,
+				"request": true
+			},
+			"dialog": {
+				"ask": true,
+				"message": true
+			}
+		}
+	}
+}

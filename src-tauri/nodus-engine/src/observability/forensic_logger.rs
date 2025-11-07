@@ -307,6 +307,48 @@ impl ForensicLogger {
         Ok(())
     }
 
+    /// Log a tenant-specific operation (convenience wrapper)
+    pub async fn log_tenant_operation(
+        &self,
+        operation: &str,
+        tenant_id: &str,
+        context: &crate::observability::ObservabilityContext,
+        details: serde_json::Value,
+    ) -> Result<(), ForensicError> {
+        let envelope = ForensicEnvelope::new(
+            context.operation_id,
+            "tenant.operation",
+            &context.user_id,
+            context.session_id,
+            ClassificationLevel::Internal,
+            operation,
+        )
+        .with_metadata(serde_json::json!({"tenant_id": tenant_id, "details": details}));
+
+        self.log_envelope(envelope).await
+    }
+
+    /// Log a plugin-related operation (convenience wrapper)
+    pub async fn log_plugin_operation(
+        &self,
+        operation: &str,
+        plugin_id: &str,
+        context: &crate::observability::ObservabilityContext,
+        details: serde_json::Value,
+    ) -> Result<(), ForensicError> {
+        let envelope = ForensicEnvelope::new(
+            context.operation_id,
+            "plugin.operation",
+            &context.user_id,
+            context.session_id,
+            ClassificationLevel::Internal,
+            operation,
+        )
+        .with_metadata(serde_json::json!({"plugin_id": plugin_id, "details": details}));
+
+        self.log_envelope(envelope).await
+    }
+
     /// Check if event requires immediate persistence
     fn is_high_priority_event(&self, envelope: &ForensicEnvelope) -> bool {
         envelope.event_type.contains("security") ||
@@ -339,6 +381,18 @@ impl ForensicLogger {
         }
 
         Ok(())
+    }
+
+    /// Query forensic logs within a time range. Returns a list of envelopes.
+    /// This is a minimal implementation used by higher-level compliance code.
+    pub async fn query_logs(
+        &self,
+        _start: chrono::DateTime<chrono::Utc>,
+        _end: chrono::DateTime<chrono::Utc>,
+        _app_state: &crate::state::AppState,
+    ) -> Result<Vec<ForensicEnvelope>, ForensicError> {
+        // For now return an empty result; later this should query the database
+        Ok(Vec::new())
     }
 
     /// Search audit trail (for enterprise dashboards)
