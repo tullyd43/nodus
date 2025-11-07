@@ -1,1 +1,6 @@
 node_modules
+
+# Tauri / Rust build artifacts
+# Ignore Tauri's Rust target directory and local Tauri state
+/src-tauri/target/
+/src-tauri/.tauri/
